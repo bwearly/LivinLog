@@ -13,81 +13,11 @@ struct HomeDashboardView: View {
         NavigationStack {
             ScrollView {
                 LazyVGrid(columns: gridColumns, spacing: 16) {
-
-                    if let household {
-                        SharedViews.SectionCard(
-                            title: "Movies",
-                            subtitle: "Track what you watch",
-                            systemImage: "film",
-                            destination: MoviesListView(household: household, member: member)
-                        )
-                    } else {
-                        SharedViews.SectionCard(
-                            title: "Movies",
-                            subtitle: "Select a household first",
-                            systemImage: "film",
-                            destination: SharedViews.PlaceholderView(title: "Select Household")
-                        )
-                        .opacity(0.6)
-                    }
-                    
-                    if let household {
-                        SharedViews.SectionCard(
-                            title: "TV Shows",
-                            subtitle: "Track what you watch",
-                            systemImage: "tv",
-                            destination: TVShowsListView(household: household, member: member)
-                        )
-                    } else {
-                        SharedViews.SectionCard(
-                            title: "TV Shows",
-                            subtitle: "Select a household first",
-                            systemImage: "tv",
-                            destination: SharedViews.PlaceholderView(title: "Select Household")
-                        )
-                        .opacity(0.6)
-                    }
-
-                    SharedViews.SectionCard(
-                        title: "Lists",
-                        subtitle: "Wishlists & buckets",
-                        systemImage: "checklist",
-                        destination: SharedViews.PlaceholderView(title: "Lists")
-                    )
-
-                    SharedViews.SectionCard(
-                        title: "Dates",
-                        subtitle: "Important moments",
-                        systemImage: "calendar",
-                        destination: SharedViews.PlaceholderView(title: "Dates")
-                    )
-                    if let household {
-                        SharedViews.SectionCard(
-                            title: "Analytics",
-                            subtitle: "Trends & stats",
-                            systemImage: "chart.bar",
-                            destination: AnalyticsView(household: household, member: member)
-                        )
-                    } else {
-                        if let household {
-                            SharedViews.SectionCard(
-                                title: "Dates",
-                                subtitle: "Important moments",
-                                systemImage: "calendar",
-                                destination: CalendarMainView(household: household)
-                            )
-                        } else {
-                            SharedViews.SectionCard(
-                                title: "Dates",
-                                subtitle: "Select a household first",
-                                systemImage: "calendar",
-                                destination: SharedViews.PlaceholderView(title: "Select Household")
-                            )
-                            .opacity(0.6)
-                        }
-                        .opacity(0.6)
-                    }
-
+                    moviesCard
+                    tvShowsCard
+                    listsCard
+                    datesCard
+                    analyticsCard
                 }
                 .padding(16)
             }
@@ -124,6 +54,97 @@ struct HomeDashboardView: View {
             GridItem(.flexible(), spacing: 16),
             GridItem(.flexible(), spacing: 16)
         ]
+    }
+
+    // MARK: - Dashboard Cards (broken out to help the compiler)
+
+    @ViewBuilder
+    private var moviesCard: some View {
+        if let household {
+            SharedViews.SectionCard(
+                title: "Movies",
+                subtitle: "Track what you watch",
+                systemImage: "film",
+                destination: MoviesListView(household: household, member: member)
+            )
+        } else {
+            SharedViews.SectionCard(
+                title: "Movies",
+                subtitle: "Select a household first",
+                systemImage: "film",
+                destination: SharedViews.PlaceholderView(title: "Select Household")
+            )
+            .opacity(0.6)
+        }
+    }
+
+    @ViewBuilder
+    private var tvShowsCard: some View {
+        if let household {
+            SharedViews.SectionCard(
+                title: "TV Shows",
+                subtitle: "Track what you watch",
+                systemImage: "tv",
+                destination: TVShowsListView(household: household, member: member)
+            )
+        } else {
+            SharedViews.SectionCard(
+                title: "TV Shows",
+                subtitle: "Select a household first",
+                systemImage: "tv",
+                destination: SharedViews.PlaceholderView(title: "Select Household")
+            )
+            .opacity(0.6)
+        }
+    }
+
+    private var listsCard: some View {
+        SharedViews.SectionCard(
+            title: "Lists",
+            subtitle: "Wishlists & buckets",
+            systemImage: "checklist",
+            destination: SharedViews.PlaceholderView(title: "Lists")
+        )
+    }
+
+    @ViewBuilder
+    private var datesCard: some View {
+        if let household {
+            SharedViews.SectionCard(
+                title: "Dates",
+                subtitle: "Important moments",
+                systemImage: "calendar",
+                destination: CalendarMainView(household: household)
+            )
+        } else {
+            SharedViews.SectionCard(
+                title: "Dates",
+                subtitle: "Select a household first",
+                systemImage: "calendar",
+                destination: SharedViews.PlaceholderView(title: "Select Household")
+            )
+            .opacity(0.6)
+        }
+    }
+
+    @ViewBuilder
+    private var analyticsCard: some View {
+        if let household {
+            SharedViews.SectionCard(
+                title: "Analytics",
+                subtitle: "Trends & stats",
+                systemImage: "chart.bar",
+                destination: AnalyticsView(household: household, member: member)
+            )
+        } else {
+            SharedViews.SectionCard(
+                title: "Analytics",
+                subtitle: "Select a household first",
+                systemImage: "chart.bar",
+                destination: SharedViews.PlaceholderView(title: "Select Household")
+            )
+            .opacity(0.6)
+        }
     }
 
     // MARK: - Selection + Auto-heal

@@ -13,8 +13,10 @@ struct MonthSectionView: View {
     let hasEventsForDay: (Int) -> Bool
     let onDayTapped: (Int) -> Void
 
-    private let calendar = Calendar.current
-    private let weekdaySymbols = ["S", "M", "T", "W", "T", "F", "S"]
+    private var calendar: Calendar {
+        var cal = Calendar.current
+        return cal
+    }
 
     private var monthDate: Date {
         var components = DateComponents()
@@ -29,8 +31,10 @@ struct MonthSectionView: View {
     }
 
     private var leadingBlankDays: Int {
+        // weekday and firstWeekday are 1...7
         let weekday = calendar.component(.weekday, from: monthDate)
-        return weekday - 1
+        let first = calendar.firstWeekday
+        return (weekday - first + 7) % 7
     }
 
     var body: some View {
@@ -38,43 +42,72 @@ struct MonthSectionView: View {
             Text(monthDate.formatted(.dateTime.month(.wide)))
                 .font(.title3.weight(.semibold))
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 8) {
-                ForEach(weekdaySymbols, id: \.self) { symbol in
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 6) {
+                // Weekday headers
+                ForEach(Array(orderedWeekdaySymbols().enumerated()), id: \.offset) { _, symbol in
                     Text(symbol)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.primary.opacity(0.65))
                         .frame(maxWidth: .infinity)
+                        .frame(height: 18)
                 }
 
-                ForEach(0..<leadingBlankDays, id: \.self) { _ in
-                    Color.clear
-                        .frame(height: 34)
-                }
+                // Day cells (leading blanks + 1...daysInMonth)
+                ForEach(Array(dayCells().enumerated()), id: \.offset) { _, cellDay in
+                    if let day = cellDay {
+                        Button {
+                            onDayTapped(day)
+                        } label: {
+                            ZStack {
+                                Text("\(day)")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.primary)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                ForEach(1...daysInMonth, id: \.self) { day in
-                    Button {
-                        onDayTapped(day)
-                    } label: {
-                        VStack(spacing: 3) {
-                            Text("\(day)")
-                                .font(.subheadline)
-                                .foregroundStyle(.primary)
-
-                            Circle()
-                                .fill(hasEventsForDay(day) ? Color.accentColor : .clear)
-                                .frame(width: 5, height: 5)
+                                VStack {
+                                    Spacer(minLength: 0)
+                                    Circle()
+                                        .fill(hasEventsForDay(day) ? Color.accentColor : .clear)
+                                        .frame(width: 5, height: 5)
+                                        .padding(.bottom, 4)
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 36)
+                            .background(isToday(day: day) ? Color.accentColor.opacity(0.18) : Color.clear)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
                         }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 34)
-                        .background(isToday(day: day) ? Color.accentColor.opacity(0.18) : .clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .buttonStyle(.plain)
+                    } else {
+                        Color.clear
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 36)
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
         .padding()
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func dayCells() -> [Int?] {
+        // `leadingBlankDays` empty slots, then day numbers 1...daysInMonth
+        let blanks = Array(repeating: Optional<Int>.none, count: leadingBlankDays)
+        let days = (1...daysInMonth).map { Optional($0) }
+        return blanks + days
+    }
+
+    private func orderedWeekdaySymbols() -> [String] {
+        // Locale-aware weekday symbols in the correct order.
+        // We rotate based on firstWeekday and then normalize each symbol to a single character
+        // so the grid never clips (e.g., no "Th" / "Sat" width issues).
+        let base = calendar.shortWeekdaySymbols // e.g., ["Sun", "Mon", ...]
+        let firstIndex = max(0, min(calendar.firstWeekday - 1, base.count - 1))
+        let rotated = Array(base[firstIndex...] + base[..<firstIndex])
+        return rotated.map { symbol in
+            // Take the first grapheme cluster (works for "Sun" and also non-Latin locales like "木")
+            String(symbol.prefix(1))
+        }
     }
 
     private func isToday(day: Int) -> Bool {
