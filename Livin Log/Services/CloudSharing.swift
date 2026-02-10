@@ -1,6 +1,6 @@
 //
 //  CloudSharing.swift
-//  Keeply
+//  Livin Log
 //
 
 import CoreData

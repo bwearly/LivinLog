@@ -1,13 +1,6 @@
 //
-//  KeeplyApp.swift
-//  Keeply
-//
-//  Created by Blake Early on 1/5/26.
-//
-
-//
-//  KeeplyApp.swift
-//  Keeply
+//  LivinLogApp.swift
+//  Livin Log
 //
 //  Created by Blake Early on 1/5/26.
 //
@@ -41,7 +34,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 }
 
 @main
-struct KeeplyApp: App {
+struct LivinLogApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     let persistenceController = PersistenceController.shared
 

@@ -1,8 +1,8 @@
 //
 //  TVShowsListView.swift
-//  Keeply
+//  Livin Log
 //
-//  Created by Blake Early on 1/5/26.
+//  Created by Blake Early on 1/12/26.
 //
 
 import SwiftUI
@@ -26,7 +26,7 @@ struct TVShowsListView: View {
         case oldest = "Oldest"
         case titleAZ = "Title A–Z"
         case yearNewOld = "Year (new→old)"
-        case ratingHighLow = "Rating (high→low)"
+        case ratingHighLow = "Rating (high→low)"   // uses ratingText order (see ratingRank)
 
         var id: String { rawValue }
     }
@@ -37,15 +37,16 @@ struct TVShowsListView: View {
         self.household = household
         self.member = member
 
-        let sort = [NSSortDescriptor(keyPath: \TVShow.createdAt, ascending: false)]
+        let sortDescriptors = [NSSortDescriptor(keyPath: \TVShow.createdAt, ascending: false)]
 
+        // Ensure we have a householdID to predicate against
         if household.id == nil {
             household.id = UUID()
             try? household.managedObjectContext?.save()
         }
 
         _tvShows = FetchRequest<TVShow>(
-            sortDescriptors: sort,
+            sortDescriptors: sortDescriptors,
             predicate: NSPredicate(format: "householdID == %@", household.id! as CVarArg),
             animation: .default
         )
@@ -59,9 +60,14 @@ struct TVShowsListView: View {
             list = list.filter { show in
                 let title = (show.title ?? "").lowercased()
                 let notes = (show.notes ?? "").lowercased()
-                let year = show.year == 0 ? "" : String(show.year)
-                let seasons = show.seasons == 0 ? "" : String(show.seasons)
-                return title.contains(q) || notes.contains(q) || year.contains(q) || seasons.contains(q)
+                let year = show.year == 0 ? "" : String(Int(show.year))
+                let seasons = show.seasons == 0 ? "" : String(Int(show.seasons))
+                let rating = (show.ratingText ?? "").lowercased()
+                return title.contains(q)
+                    || notes.contains(q)
+                    || year.contains(q)
+                    || seasons.contains(q)
+                    || rating.contains(q)
             }
         }
 
@@ -75,7 +81,9 @@ struct TVShowsListView: View {
         case .yearNewOld:
             list.sort { $0.year > $1.year }
         case .ratingHighLow:
-            list.sort { $0.rating > $1.rating }
+            list.sort {
+                ratingRank($0.ratingText) > ratingRank($1.ratingText)
+            }
         }
 
         return list
@@ -89,37 +97,42 @@ struct TVShowsListView: View {
                     systemImage: "tv"
                 )
             } else {
-                ForEach(filteredShows) { show in
+                ForEach(filteredShows, id: \.objectID) { show in
                     NavigationLink {
                         TVShowDetailView(tvShow: show, household: household, member: member)
                     } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(show.title ?? "Untitled")
-                                    .font(.headline)
-                                    .lineLimit(1)
+                        HStack(alignment: .top, spacing: 12) {
+                            TVPosterThumb(tvShow: show)
 
-                                Spacer()
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    Text(show.title ?? "Untitled")
+                                        .font(.headline)
+                                        .lineLimit(1)
 
-                                Text(ratingText(show.rating))
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
+                                    Spacer()
+
+                                    Text(ratingDisplay(show.ratingText))
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                        .monospacedDigit()
+                                }
+
+                                HStack(spacing: 8) {
+                                    Text(show.year == 0 ? "—" : String(Int(show.year)))
+                                    Text("•")
+                                    Text(show.seasons == 0 ? "—" : "\(Int(show.seasons)) seasons")
+                                }
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+
+                                if show.rewatch {
+                                    Text("Rewatch")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
-
-                            HStack(spacing: 8) {
-                                Text(show.year == 0 ? "—" : String(show.year))
-                                Text("•")
-                                Text(show.seasons == 0 ? "—" : "\(show.seasons) seasons")
-                            }
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-
-                            if show.rewatch {
-                                Text("Rewatch")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                            .padding(.vertical, 2)
                         }
                         .padding(.vertical, 6)
                     }
@@ -128,7 +141,7 @@ struct TVShowsListView: View {
             }
         }
         .navigationTitle("TV Shows")
-        .searchable(text: $searchText, prompt: "Search title, year, notes…")
+        .searchable(text: $searchText, prompt: "Search title, year, seasons, rating, notes…")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) { EditButton() }
 
@@ -160,12 +173,71 @@ struct TVShowsListView: View {
             didBackfill = true
             await backfillHouseholdIDIfNeeded()
         }
+        .task {
+            // Best-effort background fetch for posters that are missing.
+            // Keeps list fast: it only fetches when posterURL is nil/empty.
+            await fetchMissingPostersIfNeeded()
+        }
     }
 
-    private func ratingText(_ value: Double) -> String {
-        if value == 0 { return "0/10" }
-        return String(format: "%.2f/10", value)
+    // MARK: - Rating display + sorting
+
+    private func ratingDisplay(_ value: String?) -> String {
+        let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "—" : trimmed
     }
+
+    /// Higher = "higher rating" for sorting purposes.
+    /// Works for TV ratings and (optionally) MPAA ratings if you used them.
+    private func ratingRank(_ value: String?) -> Int {
+        let v = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+
+        // TV ratings (increasing maturity)
+        switch v {
+        case "TV-Y": return 10
+        case "TV-Y7": return 20
+        case "TV-G": return 30
+        case "TV-PG": return 40
+        case "TV-14": return 50
+        case "TV-MA": return 60
+
+        // MPAA (if you kept them in the picker)
+        case "G": return 10
+        case "PG": return 20
+        case "PG-13": return 30
+        case "R": return 40
+        case "NC-17": return 50
+
+        case "NOT RATED", "UNRATED", "—", "": return 0
+        default: return 0
+        }
+    }
+
+    // MARK: - Posters
+
+    private func fetchMissingPostersIfNeeded() async {
+        // Only fetch for a handful at a time to keep things responsive.
+        // (You can bump this later.)
+        let needsPoster = filteredShows.filter {
+            let s = ($0.posterURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return s.isEmpty
+        }
+
+        if needsPoster.isEmpty { return }
+
+        // Fetch sequentially to keep it simple + avoid rate limits.
+        for show in needsPoster.prefix(20) {
+            let fetched = await OMDbPosterService.posterURL(title: show.title, year: show.year)
+            guard let fetched else { continue }
+
+            await MainActor.run {
+                show.posterURL = fetched.absoluteString
+                try? context.save()
+            }
+        }
+    }
+
+    // MARK: - Backfill + delete
 
     private func backfillHouseholdIDIfNeeded() async {
         if household.id == nil {
@@ -188,7 +260,10 @@ struct TVShowsListView: View {
     }
 
     private func deleteShowsFromFiltered(offsets: IndexSet) {
-        let toDelete = offsets.map { filteredShows[$0] }
+        let toDelete = offsets.compactMap { idx -> TVShow? in
+            guard filteredShows.indices.contains(idx) else { return nil }
+            return filteredShows[idx]
+        }
         toDelete.forEach(context.delete)
         save()
     }
@@ -196,5 +271,53 @@ struct TVShowsListView: View {
     private func save() {
         do { try context.save() }
         catch { print("Save failed:", error) }
+    }
+}
+
+// MARK: - Poster Thumb (uses tvShow.posterURL stored in Core Data)
+
+private struct TVPosterThumb: View {
+    let tvShow: TVShow
+
+    private var url: URL? {
+        let s = (tvShow.posterURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty else { return nil }
+        return URL(string: s)
+    }
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(.secondarySystemBackground))
+
+            if let url {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .empty:
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        Image(systemName: "tv")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            } else {
+                Image(systemName: "tv")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 50, height: 70)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(.separator), lineWidth: 0.5)
+        )
     }
 }

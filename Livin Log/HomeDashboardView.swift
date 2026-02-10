@@ -30,6 +30,23 @@ struct HomeDashboardView: View {
                         )
                         .opacity(0.6)
                     }
+                    
+                    if let household {
+                        SharedViews.SectionCard(
+                            title: "TV Shows",
+                            subtitle: "Track what you watch",
+                            systemImage: "tv",
+                            destination: TVShowsListView(household: household, member: member)
+                        )
+                    } else {
+                        SharedViews.SectionCard(
+                            title: "TV Shows",
+                            subtitle: "Select a household first",
+                            systemImage: "tv",
+                            destination: SharedViews.PlaceholderView(title: "Select Household")
+                        )
+                        .opacity(0.6)
+                    }
 
                     SharedViews.SectionCard(
                         title: "Lists",
@@ -64,7 +81,7 @@ struct HomeDashboardView: View {
                 }
                 .padding(16)
             }
-            .navigationTitle("Keeply")
+            .navigationTitle("Livin Log")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button { showingSettings = true } label: {

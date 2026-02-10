@@ -1,6 +1,6 @@
 //
 //  OMDbPosterService.swift
-//  Keeply
+//  Livin Log
 //
 
 import Foundation

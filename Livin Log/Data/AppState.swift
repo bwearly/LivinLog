@@ -63,7 +63,7 @@ final class AppState: ObservableObject {
 
     private func fetchICloudStatus() async -> CKAccountStatus {
         await withCheckedContinuation { continuation in
-            CKContainer(identifier: "iCloud.com.blakeearly.keeply").accountStatus { status, _ in
+            CKContainer(identifier: "iCloud.com.blakeearly.livinlog").accountStatus { status, _ in
                 continuation.resume(returning: status)
             }
         }

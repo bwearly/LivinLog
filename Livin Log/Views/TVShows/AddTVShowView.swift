@@ -5,14 +5,6 @@
 //  Created by Blake Early on 1/12/26.
 //
 
-
-//
-//  AddTVShowView.swift
-//  Keeply
-//
-//  Created by Blake Early on 1/5/26.
-//
-
 import SwiftUI
 import CoreData
 
@@ -25,10 +17,12 @@ struct AddTVShowView: View {
 
     @State private var title: String = ""
     @State private var yearText: String = ""
-    @State private var rating: Double = 0.0
+    @State private var contentRating: ContentRating = .unrated
     @State private var seasonsText: String = ""
     @State private var notes: String = ""
     @State private var rewatch: Bool = false
+
+    @State private var isSaving = false
 
     var body: some View {
         Form {
@@ -38,18 +32,11 @@ struct AddTVShowView: View {
                 TextField("Year", text: $yearText)
                     .keyboardType(.numberPad)
 
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text("Rating")
-                        Spacer()
-                        Text(ratingText(rating))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
+                Picker("Rating", selection: $contentRating) {
+                    ForEach(ContentRating.allCases) { r in
+                        Text(r.rawValue).tag(r)
                     }
-
-                    Slider(value: $rating, in: 0...10, step: 0.25)
                 }
-                .padding(.vertical, 4)
 
                 TextField("Seasons", text: $seasonsText)
                     .keyboardType(.numberPad)
@@ -73,29 +60,33 @@ struct AddTVShowView: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
-                Button("Save") { saveTVShow() }
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button(isSaving ? "Saving…" : "Save") {
+                    Task { await saveTVShow() }
+                }
+                .disabled(isSaving || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
     }
 
-    private func ratingText(_ value: Double) -> String {
-        if value == 0 { return "0/10" }
-        return String(format: "%.2f/10", value)
-    }
+    @MainActor
+    private func saveTVShow() async {
+        guard !isSaving else { return }
+        isSaving = true
+        defer { isSaving = false }
 
-    private func saveTVShow() {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Ensure household has an id before linking
+        if household.id == nil {
+            household.id = UUID()
+            try? context.save()
+        }
 
         let tvShow = TVShow(context: context)
         tvShow.id = UUID()
         tvShow.createdAt = Date()
         tvShow.title = trimmedTitle
         tvShow.household = household
-
-        if household.id == nil {
-            household.id = UUID()
-        }
         tvShow.householdID = household.id
 
         if let y = Int16(yearText.trimmingCharacters(in: .whitespacesAndNewlines)), y > 0 {
@@ -110,11 +101,17 @@ struct AddTVShowView: View {
             tvShow.seasons = 0
         }
 
-        tvShow.rating = rating
         tvShow.rewatch = rewatch
+
+        // Store rating as text (Core Data: TVShow.ratingText : String)
+        tvShow.ratingText = contentRating.rawValue
 
         let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         tvShow.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
+
+        // ✅ Fetch poster and store it on TVShow.posterURL (Core Data: String)
+        let fetched = await OMDbPosterService.posterURL(title: tvShow.title, year: tvShow.year)
+        tvShow.posterURL = fetched?.absoluteString
 
         do {
             try context.save()

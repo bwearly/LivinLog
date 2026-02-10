@@ -1,11 +1,6 @@
 //
 //  CloudSharingView.swift
-//  Keeply
-//
-
-//
-//  CloudSharingView.swift
-//  Keeply
+//  Livin Log
 //
 
 import SwiftUI

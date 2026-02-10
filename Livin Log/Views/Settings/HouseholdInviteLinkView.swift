@@ -1,6 +1,6 @@
 //
 //  HouseholdInviteLinkView.swift
-//  Keeply
+//  Livin Log
 //
 
 import SwiftUI

@@ -1,6 +1,6 @@
 //
 //  OnboardingView.swift
-//  Keeply
+//  Livin Log
 //
 //  Created by Blake Early on 1/5/26.
 //
@@ -28,7 +28,7 @@ struct OnboardingView: View {
                 Image(systemName: "person.2.fill")
                     .font(.system(size: 44))
 
-                Text("Welcome to Keeply")
+                Text("Welcome to Livin Log")
                     .font(.title2).bold()
 
                 Text("Create a household to start tracking movies together. You can invite your spouse after you create it.")

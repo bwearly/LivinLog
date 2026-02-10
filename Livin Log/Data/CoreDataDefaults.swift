@@ -1,6 +1,6 @@
 //
 //  CoreDataDefaults.swift
-//  Keeply
+//  Livin Log
 //
 //  Created by Blake Early on 1/5/26.
 //
@@ -38,6 +38,14 @@ extension MovieFeedback {
         setPrimitiveValue(UUID(), forKey: "id")
         setPrimitiveValue(Date(), forKey: "updatedAt")
         // slept default: false happens automatically for non-optional Bool
+    }
+}
+
+extension TVShow {
+    public override nonisolated func awakeFromInsert() {
+        super.awakeFromInsert()
+        setPrimitiveValue(UUID(), forKey: "id")
+        setPrimitiveValue(Date(), forKey: "createdAt")
     }
 }
 

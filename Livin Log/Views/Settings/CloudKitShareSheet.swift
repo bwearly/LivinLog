@@ -1,6 +1,6 @@
 //
 //  CloudKitShareSheet.swift
-//  Keeply
+//  Livin Log
 //
 
 import SwiftUI
@@ -68,7 +68,7 @@ struct CloudKitShareSheet: UIViewControllerRepresentable {
         }
 
         func itemTitle(for csc: UICloudSharingController) -> String? {
-            "Keeply Household"
+            "Livin Log Household"
         }
     }
 }

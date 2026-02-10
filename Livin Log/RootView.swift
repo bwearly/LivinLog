@@ -1,6 +1,6 @@
 //
 //  RootView.swift
-//  Keeply
+//  Livin Log
 //
 //  Created by Blake Early on 1/5/26.
 //
@@ -21,7 +21,7 @@ struct RootView: View {
         Group {
             switch appState.route {
             case .loading:
-                ProgressView("Setting up Keeply…")
+                ProgressView("Setting up Livin Log…")
                     .task { await appState.start() }
 
             case .iCloudRequired:

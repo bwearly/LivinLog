@@ -1,6 +1,6 @@
 //
 //  SettingsView.swift
-//  Keeply
+//  Livin Log
 //
 
 import SwiftUI

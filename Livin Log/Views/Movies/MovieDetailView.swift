@@ -1,6 +1,6 @@
 //
 //  MovieDetailView.swift
-//  Keeply
+//  Livin Log
 //
 
 import SwiftUI
@@ -56,6 +56,19 @@ struct MovieDetailView: View {
     @State private var viewingDateDraft = Date()
     @State private var viewingToEdit: Viewing?
     @State private var viewingEditDate = Date()
+
+    // ✅ Ensure only one "Watched" record exists per movie
+    private var hasFirstWatch: Bool {
+        viewings.contains(where: { !$0.isRewatch })
+    }
+
+    private var firstWatchDate: Date? {
+        viewings
+            .filter { !$0.isRewatch }
+            .compactMap { $0.watchedOn }
+            .sorted()
+            .first
+    }
 
     var body: some View {
         Form {
@@ -251,7 +264,8 @@ struct MovieDetailView: View {
                 Text("No watches recorded yet.")
                     .foregroundStyle(.secondary)
             } else {
-                let watchedCount = viewings.filter { !$0.isRewatch }.count
+                // ✅ Watched should be either 0 or 1
+                let watchedCount = hasFirstWatch ? 1 : 0
                 let rewatchCount = viewings.filter { $0.isRewatch }.count
 
                 HStack {
@@ -327,6 +341,8 @@ struct MovieDetailView: View {
                         } label: {
                             Label("Watched", systemImage: "checkmark.circle")
                         }
+                        .disabled(hasFirstWatch)            // ✅ only allow once
+                        .opacity(hasFirstWatch ? 0.4 : 1)   // ✅ visual cue
 
                         Spacer()
 
@@ -336,6 +352,18 @@ struct MovieDetailView: View {
                         } label: {
                             Label("Rewatch", systemImage: "arrow.triangle.2.circlepath")
                         }
+                    }
+
+                    if hasFirstWatch, let d = firstWatchDate {
+                        Text("First watch already recorded on \(viewingDateText(d)). Add rewatches only.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
+                    } else if hasFirstWatch {
+                        Text("First watch already recorded. Add rewatches only.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
                     }
                 }
                 .padding(.top, 6)
@@ -482,6 +510,12 @@ struct MovieDetailView: View {
     // MARK: - Viewing / Rewatch
 
     private func addViewing(isRewatch: Bool, notes: String?, watchedOn: Date) {
+        // ✅ Enforce single "Watched" record per movie
+        if !isRewatch && hasFirstWatch {
+            print("ℹ️ Skipped adding 'Watched' because one already exists for movie:", movie.objectID)
+            return
+        }
+
         context.performAndWait {
             let v = Viewing(context: context)
 
@@ -514,7 +548,6 @@ struct MovieDetailView: View {
             }
         }
     }
-
 
     private func deleteViewings(offsets: IndexSet) {
         // Delete based on the same array SwiftUI rendered

@@ -1,6 +1,6 @@
 //
 //  AnalyticsView.swift
-//  Keeply
+//  Livin Log
 //
 
 import SwiftUI
@@ -14,6 +14,7 @@ struct AnalyticsView: View {
 
     @State private var members: [HouseholdMember] = []
     @State private var totalMovies: Int = 0
+    @State private var totalTVShows: Int = 0
     @State private var totalViewings: Int = 0
     @State private var totalRewatches: Int = 0
     @State private var avgRatingsByMember: [NSManagedObjectID: RatingAggregate] = [:]
@@ -43,11 +44,20 @@ struct AnalyticsView: View {
         VStack(spacing: 10) {
             HStack(spacing: 10) {
                 StatCard(title: "Movies", value: "\(totalMovies)")
-                StatCard(title: "Viewings", value: "\(totalViewings)")
+                StatCard(title: "TV Shows", value: "\(totalTVShows)")
             }
             HStack(spacing: 10) {
                 StatCard(title: "Rewatches", value: "\(totalRewatches)")
                 StatCard(title: "Members", value: "\(members.count)")
+            }
+            // If you still want "Viewings" shown somewhere, keep it here:
+            HStack(spacing: 10) {
+                StatCard(title: "Viewings", value: "\(totalViewings)")
+                    .frame(maxWidth: .infinity)
+                // spacer card so layout stays symmetrical if you want 2-wide rows
+                StatCard(title: " ", value: " ")
+                    .opacity(0)
+                    .frame(maxWidth: .infinity)
             }
         }
     }
@@ -55,7 +65,7 @@ struct AnalyticsView: View {
     private var ratingsCard: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Average Rating per Member")
+                Text("Average Movie Rating per Member")
                     .font(.headline)
 
                 if members.isEmpty {
@@ -75,6 +85,9 @@ struct AnalyticsView: View {
                         .font(.subheadline)
                     }
                 }
+
+                // Optional: If you later add TV feedback, you can add another section here.
+                // For now, TVShow has ratingText (string), so averaging isn't meaningful.
             }
         }
     }
@@ -109,7 +122,7 @@ struct AnalyticsView: View {
     private var genresCard: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Top Genres")
+                Text("Top Genres (Movies)")
                     .font(.headline)
 
                 if topGenres.isEmpty {
@@ -150,7 +163,10 @@ struct AnalyticsView: View {
                                 Text(movie.title ?? "Untitled")
                                     .font(.subheadline)
                                     .fontWeight(.semibold)
-                                Text(movie.year == 0 ? "—" : "\(movie.year)")
+
+                                // ✅ Show year as a normal year, NOT localized with commas.
+                                // Since year is Int16, this will always print like "2025".
+                                Text(movie.year == 0 ? "—" : String(Int(movie.year)))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -191,6 +207,7 @@ struct AnalyticsView: View {
     }
 
     private func reloadTotals() {
+        // Movies
         let movieReq = NSFetchRequest<Movie>(entityName: "Movie")
         if let hid = household.id {
             movieReq.predicate = NSPredicate(format: "householdID == %@", hid as CVarArg)
@@ -199,6 +216,16 @@ struct AnalyticsView: View {
         }
         totalMovies = (try? context.count(for: movieReq)) ?? 0
 
+        // ✅ TV Shows (same household scoping as movies)
+        let tvReq = NSFetchRequest<TVShow>(entityName: "TVShow")
+        if let hid = household.id {
+            tvReq.predicate = NSPredicate(format: "householdID == %@", hid as CVarArg)
+        } else {
+            tvReq.predicate = NSPredicate(format: "household == %@", household)
+        }
+        totalTVShows = (try? context.count(for: tvReq)) ?? 0
+
+        // Viewings + Rewatches (movies only, since Viewings relate to Movie)
         let viewingReq = NSFetchRequest<Viewing>(entityName: "Viewing")
         viewingReq.predicate = NSPredicate(format: "household == %@", household)
         totalViewings = (try? context.count(for: viewingReq)) ?? 0

@@ -1,3 +1,11 @@
+//
+//  ContentRating.swift
+//  Livin Log
+//
+//  Created by Blake Early on 1/12/26.
+//
+
+
 import Foundation
 
 enum ContentRating: String, CaseIterable, Identifiable {

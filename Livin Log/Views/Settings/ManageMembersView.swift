@@ -1,6 +1,6 @@
 //
 //  ManageMembersView.swift
-//  Keeply
+//  Livin Log
 //
 //  Created by Blake Early on 1/5/26.
 //

@@ -1,6 +1,6 @@
 //
 //  Persistence.swift
-//  Keeply
+//  Livin Log
 //
 
 import CoreData
@@ -11,7 +11,7 @@ struct PersistenceController {
     let container: NSPersistentCloudKitContainer
 
     init(inMemory: Bool = false) {
-        container = NSPersistentCloudKitContainer(name: "Keeply")
+        container = NSPersistentCloudKitContainer(name: "LivinLog")
 
         guard let desc = container.persistentStoreDescriptions.first else {
             fatalError("No persistent store description found.")
@@ -23,7 +23,7 @@ struct PersistenceController {
 
         // ✅ Ensure this matches your CloudKit container id
         desc.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(
-            containerIdentifier: "iCloud.com.blakeearly.keeply"
+            containerIdentifier: "iCloud.com.blakeearly.livinlog"
         )
         
         desc.setOption(true as NSNumber, forKey: NSMigratePersistentStoresAutomaticallyOption)

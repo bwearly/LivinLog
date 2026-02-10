@@ -1,6 +1,6 @@
 //
 //  MoviesListView.swift
-//  Keeply
+//  Livin Log
 //
 
 import SwiftUI
