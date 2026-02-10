@@ -4,7 +4,7 @@
         <attribute name="createdAt" optional="YES" attributeType="Date" defaultDateTimeInterval="789336540" usesScalarValueType="NO"/>
         <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
         <attribute name="name" optional="YES" attributeType="String"/>
-        <relationship name="calendarEvents" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="LLCalendarEvent" inverseName="household" inverseEntity="LLCalendarEvent"/>
+        <relationship name="calendarEvents" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="LLCalendarEvent" inverseName="household" inverseEntity="LLCalendarEvent"/>
         <relationship name="feedbacks" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="MovieFeedback" inverseName="household" inverseEntity="MovieFeedback"/>
         <relationship name="members" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="HouseholdMember" inverseName="household" inverseEntity="HouseholdMember"/>
         <relationship name="movies" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Movie" inverseName="household" inverseEntity="Movie"/>
@@ -19,16 +19,16 @@
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="members" inverseEntity="Household"/>
     </entity>
     <entity name="LLCalendarEvent" representedClassName="LLCalendarEvent" syncable="YES" codeGenerationType="class">
-        <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
-        <attribute name="day" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
-        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
-        <attribute name="month" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
-        <attribute name="name" optional="YES" attributeType="String"/>
-        <attribute name="notificationsEnabledForEvent" optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
-        <attribute name="tag" optional="YES" attributeType="String"/>
-        <attribute name="updatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
-        <attribute name="year" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
-        <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="calendarEvents" inverseEntity="Household"/>
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="day" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="month" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="name" attributeType="String"/>
+        <attribute name="notificationsEnabledForEvent" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <attribute name="tag" attributeType="String" defaultValueString="Other"/>
+        <attribute name="updatedAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="year" optional="YES" attributeType="Integer 16" usesScalarValueType="YES"/>
+        <relationship name="household" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="calendarEvents" inverseEntity="Household"/>
     </entity>
     <entity name="Movie" representedClassName="Movie" syncable="YES" codeGenerationType="class">
         <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
