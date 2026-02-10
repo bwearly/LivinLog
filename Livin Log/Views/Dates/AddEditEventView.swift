@@ -120,6 +120,9 @@ struct AddEditEventView: View {
 
         do {
             try context.save()
+            Task { @MainActor in
+                await NotificationScheduler.sync(context: context, household: household)
+            }
             dismiss()
         } catch {
             context.rollback()
@@ -132,6 +135,9 @@ struct AddEditEventView: View {
 
         do {
             try context.save()
+            Task { @MainActor in
+                await NotificationScheduler.sync(context: context, household: household)
+            }
             dismiss()
         } catch {
             context.rollback()

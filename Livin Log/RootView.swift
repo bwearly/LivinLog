@@ -40,5 +40,8 @@ struct RootView: View {
                 HomeDashboardView(household: appState.household, member: appState.member)
             }
         }
+        .task {
+            await NotificationScheduler.sync(context: context, household: appState.household)
+        }
     }
 }
