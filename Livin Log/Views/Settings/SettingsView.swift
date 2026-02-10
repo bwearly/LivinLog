@@ -8,6 +8,7 @@ import CoreData
 import CloudKit
 import MessageUI
 import UIKit
+import UserNotifications
 
 struct SettingsView: View {
     @Environment(\.managedObjectContext) private var context
@@ -29,15 +30,6 @@ struct SettingsView: View {
     @State private var shareTimeoutTask: Task<Void, Never>?
 
     @AppStorage("ll_notify_enabled") private var notificationsEnabled = false
-    @AppStorage("ll_notify_tag_birthday") private var notifyBirthday = true
-    @AppStorage("ll_notify_tag_anniversary") private var notifyAnniversary = true
-    @AppStorage("ll_notify_tag_family") private var notifyFamily = true
-    @AppStorage("ll_notify_tag_milestone") private var notifyMilestone = true
-    @AppStorage("ll_notify_tag_travel") private var notifyTravel = true
-    @AppStorage("ll_notify_tag_medical") private var notifyMedical = true
-    @AppStorage("ll_notify_tag_school") private var notifySchool = true
-    @AppStorage("ll_notify_tag_work") private var notifyWork = true
-    @AppStorage("ll_notify_tag_other") private var notifyOther = true
 
     @State private var showNotificationsDeniedAlert = false
 
@@ -78,12 +70,10 @@ struct SettingsView: View {
             canSendText = MFMessageComposeViewController.canSendText()
             canSendMail = MFMailComposeViewController.canSendMail()
             print("📨 canSendText:", canSendText, "✉️ canSendMail:", canSendMail)
-            resyncNotifications()
         }
         .onChange(of: household?.objectID) { _, _ in
             if let hh = household { ensureDefaultMemberExists(in: hh) }
             reloadShareStatus()
-            resyncNotifications()
         }
         .sheet(item: $shareSheetModel, onDismiss: {
             // cleanup
@@ -121,22 +111,8 @@ struct SettingsView: View {
         .alert("Notifications Disabled", isPresented: $showNotificationsDeniedAlert) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Please enable notifications in iOS Settings to receive event reminders.")
+            Text("Notifications are currently disabled for Livin Log. Go to Notifications → Open iPhone Settings to enable them.")
         }
-        .onChange(of: notificationsEnabled) { _, newValue in
-            Task { @MainActor in
-                await handleNotificationsToggleChanged(newValue)
-            }
-        }
-        .onChange(of: notifyBirthday) { _, _ in resyncNotifications() }
-        .onChange(of: notifyAnniversary) { _, _ in resyncNotifications() }
-        .onChange(of: notifyFamily) { _, _ in resyncNotifications() }
-        .onChange(of: notifyMilestone) { _, _ in resyncNotifications() }
-        .onChange(of: notifyTravel) { _, _ in resyncNotifications() }
-        .onChange(of: notifyMedical) { _, _ in resyncNotifications() }
-        .onChange(of: notifySchool) { _, _ in resyncNotifications() }
-        .onChange(of: notifyWork) { _, _ in resyncNotifications() }
-        .onChange(of: notifyOther) { _, _ in resyncNotifications() }
     }
 
     // MARK: - Sections
@@ -241,18 +217,19 @@ struct SettingsView: View {
 
     private var notificationsSection: some View {
         Section("Notifications") {
-            Toggle("Event Notifications", isOn: $notificationsEnabled)
-
-            if notificationsEnabled {
-                Toggle("Birthdays", isOn: $notifyBirthday)
-                Toggle("Anniversaries", isOn: $notifyAnniversary)
-                Toggle("Family", isOn: $notifyFamily)
-                Toggle("Milestones", isOn: $notifyMilestone)
-                Toggle("Travel", isOn: $notifyTravel)
-                Toggle("Medical", isOn: $notifyMedical)
-                Toggle("School", isOn: $notifySchool)
-                Toggle("Work", isOn: $notifyWork)
-                Toggle("Other", isOn: $notifyOther)
+            NavigationLink {
+                NotificationsSettingsView(
+                    context: context,
+                    household: household,
+                    showNotificationsDeniedAlert: $showNotificationsDeniedAlert
+                )
+            } label: {
+                HStack {
+                    Label("Notifications", systemImage: "bell.badge")
+                    Spacer()
+                    Text(notificationsEnabled ? "On" : "Off")
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -527,29 +504,6 @@ struct SettingsView: View {
         } catch {
             context.rollback()
             self.errorText = error.localizedDescription
-        }
-    }
-
-
-    @MainActor
-    private func handleNotificationsToggleChanged(_ isEnabled: Bool) async {
-        if isEnabled {
-            let granted = await NotificationScheduler.requestAuthorizationIfNeeded()
-            if !granted {
-                notificationsEnabled = false
-                showNotificationsDeniedAlert = true
-                await NotificationScheduler.removeAllEventRequests()
-                return
-            }
-            await NotificationScheduler.sync(context: context, household: household)
-        } else {
-            await NotificationScheduler.removeAllEventRequests()
-        }
-    }
-
-    private func resyncNotifications() {
-        Task { @MainActor in
-            await NotificationScheduler.sync(context: context, household: household)
         }
     }
 
