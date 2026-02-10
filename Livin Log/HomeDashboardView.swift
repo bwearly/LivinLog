@@ -69,12 +69,22 @@ struct HomeDashboardView: View {
                             destination: AnalyticsView(household: household, member: member)
                         )
                     } else {
-                        SharedViews.SectionCard(
-                            title: "Analytics",
-                            subtitle: "Select a household first",
-                            systemImage: "chart.bar",
-                            destination: SharedViews.PlaceholderView(title: "Select Household")
-                        )
+                        if let household {
+                            SharedViews.SectionCard(
+                                title: "Dates",
+                                subtitle: "Important moments",
+                                systemImage: "calendar",
+                                destination: CalendarMainView(household: household)
+                            )
+                        } else {
+                            SharedViews.SectionCard(
+                                title: "Dates",
+                                subtitle: "Select a household first",
+                                systemImage: "calendar",
+                                destination: SharedViews.PlaceholderView(title: "Select Household")
+                            )
+                            .opacity(0.6)
+                        }
                         .opacity(0.6)
                     }
 
