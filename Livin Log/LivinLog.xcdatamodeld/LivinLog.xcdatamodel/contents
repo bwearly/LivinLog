@@ -8,6 +8,7 @@
         <relationship name="feedbacks" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="MovieFeedback" inverseName="household" inverseEntity="MovieFeedback"/>
         <relationship name="members" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="HouseholdMember" inverseName="household" inverseEntity="HouseholdMember"/>
         <relationship name="movies" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Movie" inverseName="household" inverseEntity="Movie"/>
+        <relationship name="puzzles" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="LLPuzzle" inverseName="household" inverseEntity="LLPuzzle"/>
         <relationship name="tvshows" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="TVShow" inverseName="household" inverseEntity="TVShow"/>
         <relationship name="viewings" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Viewing" inverseName="household" inverseEntity="Viewing"/>
     </entity>
@@ -53,6 +54,18 @@
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="feedbacks" inverseEntity="Household"/>
         <relationship name="member" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="HouseholdMember" inverseName="feedbacks" inverseEntity="HouseholdMember"/>
         <relationship name="movie" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Movie" inverseName="feedbacks" inverseEntity="Movie"/>
+    </entity>
+    <entity name="LLPuzzle" representedClassName="LLPuzzle" syncable="YES" codeGenerationType="class">
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="name" attributeType="String"/>
+        <attribute name="brand" optional="YES" attributeType="String"/>
+        <attribute name="pieceCount" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="completedAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="notes" optional="YES" attributeType="String"/>
+        <attribute name="photoData" optional="YES" attributeType="Binary" allowsExternalBinaryDataStorage="YES"/>
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="updatedAt" attributeType="Date" usesScalarValueType="NO"/>
+        <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="puzzles" inverseEntity="Household"/>
     </entity>
     <entity name="TVShow" representedClassName="TVShow" syncable="YES" codeGenerationType="class">
         <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
