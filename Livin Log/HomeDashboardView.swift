@@ -12,10 +12,17 @@ struct HomeDashboardView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
+                if let household {
+                    QuoteOfDayCard(household: household)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 16)
+                }
+
                 LazyVGrid(columns: gridColumns, spacing: 16) {
                     moviesCard
                     tvShowsCard
                     puzzlesCard
+                    quotesCard
                     datesCard
                     analyticsCard
                 }
@@ -132,6 +139,27 @@ struct HomeDashboardView: View {
                 title: "Puzzles",
                 subtitle: "Select a household first",
                 systemImage: "puzzlepiece.fill",
+                destination: SharedViews.PlaceholderView(title: "Select Household")
+            )
+            .opacity(0.6)
+        }
+    }
+
+
+    @ViewBuilder
+    private var quotesCard: some View {
+        if let household {
+            SharedViews.SectionCard(
+                title: "Quotes",
+                subtitle: "Capture household sayings",
+                systemImage: "quote.bubble",
+                destination: QuotesListView(household: household)
+            )
+        } else {
+            SharedViews.SectionCard(
+                title: "Quotes",
+                subtitle: "Select a household first",
+                systemImage: "quote.bubble",
                 destination: SharedViews.PlaceholderView(title: "Select Household")
             )
             .opacity(0.6)
