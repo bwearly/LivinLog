@@ -44,32 +44,34 @@ struct NotificationsSettingsView: View {
                 await refreshPermissionStatus()
             }
         }
-        .onChange(of: notificationsEnabled) { _, newValue in
+        .onChange(of: notificationsEnabled) { newValue in
             Task { @MainActor in
                 await handleNotificationsToggleChanged(newValue)
             }
         }
-        .onChange(of: notifyBirthday) { _, _ in resyncNotificationsIfEnabled() }
-        .onChange(of: notifyAnniversary) { _, _ in resyncNotificationsIfEnabled() }
-        .onChange(of: notifyFamily) { _, _ in resyncNotificationsIfEnabled() }
-        .onChange(of: notifyMilestone) { _, _ in resyncNotificationsIfEnabled() }
-        .onChange(of: notifyTravel) { _, _ in resyncNotificationsIfEnabled() }
-        .onChange(of: notifyMedical) { _, _ in resyncNotificationsIfEnabled() }
-        .onChange(of: notifySchool) { _, _ in resyncNotificationsIfEnabled() }
-        .onChange(of: notifyWork) { _, _ in resyncNotificationsIfEnabled() }
-        .onChange(of: notifyOther) { _, _ in resyncNotificationsIfEnabled() }
+        .onChange(of: notifyBirthday) { _ in resyncNotificationsIfEnabled() }
+        .onChange(of: notifyAnniversary) { _ in resyncNotificationsIfEnabled() }
+        .onChange(of: notifyFamily) { _ in resyncNotificationsIfEnabled() }
+        .onChange(of: notifyMilestone) { _ in resyncNotificationsIfEnabled() }
+        .onChange(of: notifyTravel) { _ in resyncNotificationsIfEnabled() }
+        .onChange(of: notifyMedical) { _ in resyncNotificationsIfEnabled() }
+        .onChange(of: notifySchool) { _ in resyncNotificationsIfEnabled() }
+        .onChange(of: notifyWork) { _ in resyncNotificationsIfEnabled() }
+        .onChange(of: notifyOther) { _ in resyncNotificationsIfEnabled() }
     }
 
     private var eventNotificationsSection: some View {
-        Section("Event Notifications") {
+        Section {
             Toggle("Event Notifications", isOn: $notificationsEnabled)
+        } header: {
+            Text("Event Notifications")
         } footer: {
             Text("Turn on reminders for your household events. These settings are saved on this device.")
         }
     }
 
     private var systemSection: some View {
-        Section("System") {
+        Section {
             HStack {
                 Text("Permission")
                 Spacer()
@@ -82,11 +84,13 @@ struct NotificationsSettingsView: View {
             } label: {
                 Label("Open iPhone Settings", systemImage: "arrow.up.right.square")
             }
+        } header: {
+            Text("System")
         }
     }
 
     private var eventTypesSection: some View {
-        Section("Event Types") {
+        Section {
             eventTypeToggle(icon: "gift.fill", title: "Birthdays", isOn: $notifyBirthday)
             eventTypeToggle(icon: "heart.fill", title: "Anniversaries", isOn: $notifyAnniversary)
             eventTypeToggle(icon: "person.3.fill", title: "Family", isOn: $notifyFamily)
@@ -96,6 +100,8 @@ struct NotificationsSettingsView: View {
             eventTypeToggle(icon: "graduationcap.fill", title: "School", isOn: $notifySchool)
             eventTypeToggle(icon: "briefcase.fill", title: "Work", isOn: $notifyWork)
             eventTypeToggle(icon: "tag.fill", title: "Other", isOn: $notifyOther)
+        } header: {
+            Text("Event Types")
         }
     }
 
