@@ -15,6 +15,7 @@ struct HomeDashboardView: View {
                 LazyVGrid(columns: gridColumns, spacing: 16) {
                     moviesCard
                     tvShowsCard
+                    puzzlesCard
                     datesCard
                     analyticsCard
                 }
@@ -111,6 +112,26 @@ struct HomeDashboardView: View {
                 title: "Dates",
                 subtitle: "Select a household first",
                 systemImage: "calendar",
+                destination: SharedViews.PlaceholderView(title: "Select Household")
+            )
+            .opacity(0.6)
+        }
+    }
+
+    @ViewBuilder
+    private var puzzlesCard: some View {
+        if let household {
+            SharedViews.SectionCard(
+                title: "Puzzles",
+                subtitle: "Track completed puzzles",
+                systemImage: "puzzlepiece.fill",
+                destination: PuzzlesListView(household: household, member: member)
+            )
+        } else {
+            SharedViews.SectionCard(
+                title: "Puzzles",
+                subtitle: "Select a household first",
+                systemImage: "puzzlepiece.fill",
                 destination: SharedViews.PlaceholderView(title: "Select Household")
             )
             .opacity(0.6)
