@@ -15,7 +15,6 @@ struct HomeDashboardView: View {
                 LazyVGrid(columns: gridColumns, spacing: 16) {
                     moviesCard
                     tvShowsCard
-                    listsCard
                     datesCard
                     analyticsCard
                 }
@@ -96,15 +95,6 @@ struct HomeDashboardView: View {
             )
             .opacity(0.6)
         }
-    }
-
-    private var listsCard: some View {
-        SharedViews.SectionCard(
-            title: "Lists",
-            subtitle: "Wishlists & buckets",
-            systemImage: "checklist",
-            destination: SharedViews.PlaceholderView(title: "Lists")
-        )
     }
 
     @ViewBuilder
