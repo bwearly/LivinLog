@@ -9,6 +9,8 @@
         <relationship name="members" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="HouseholdMember" inverseName="household" inverseEntity="HouseholdMember"/>
         <relationship name="movies" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Movie" inverseName="household" inverseEntity="Movie"/>
         <relationship name="puzzles" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="LLPuzzle" inverseName="household" inverseEntity="LLPuzzle"/>
+        <relationship name="children" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="LLChild" inverseName="household" inverseEntity="LLChild"/>
+        <relationship name="quotes" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="LLQuote" inverseName="household" inverseEntity="LLQuote"/>
         <relationship name="tvshows" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="TVShow" inverseName="household" inverseEntity="TVShow"/>
         <relationship name="viewings" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Viewing" inverseName="household" inverseEntity="Viewing"/>
     </entity>
@@ -31,6 +33,15 @@
         <attribute name="year" optional="YES" attributeType="Integer 16" usesScalarValueType="YES"/>
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="calendarEvents" inverseEntity="Household"/>
     </entity>
+    <entity name="LLChild" representedClassName="LLChild" syncable="YES" codeGenerationType="class">
+        <attribute name="birthday" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="name" optional="YES" attributeType="String"/>
+        <attribute name="updatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="children" inverseEntity="Household"/>
+        <relationship name="quotes" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="LLQuote" inverseName="child" inverseEntity="LLQuote"/>
+    </entity>
     <entity name="LLPuzzle" representedClassName="LLPuzzle" syncable="YES" codeGenerationType="class">
         <attribute name="brand" optional="YES" attributeType="String"/>
         <attribute name="completedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
@@ -42,6 +53,18 @@
         <attribute name="pieceCount" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="updatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="puzzles" inverseEntity="Household"/>
+    </entity>
+    <entity name="LLQuote" representedClassName="LLQuote" syncable="YES" codeGenerationType="class">
+        <attribute name="ageInMonthsAtSaidAt" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="contextText" optional="YES" attributeType="String"/>
+        <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="saidAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="speakerName" optional="YES" attributeType="String"/>
+        <attribute name="text" optional="YES" attributeType="String"/>
+        <attribute name="updatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <relationship name="child" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="LLChild" inverseName="quotes" inverseEntity="LLChild"/>
+        <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="quotes" inverseEntity="Household"/>
     </entity>
     <entity name="Movie" representedClassName="Movie" syncable="YES" codeGenerationType="class">
         <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
