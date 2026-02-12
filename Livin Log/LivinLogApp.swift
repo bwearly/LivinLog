@@ -14,16 +14,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication,
                      userDidAcceptCloudKitShareWith cloudKitShareMetadata: CKShare.Metadata) {
+        let pc = PersistenceController.shared
+        let container = pc.container
 
-        let container = PersistenceController.shared.container
+        // IMPORTANT: accept shares into the SHARED store.
+        let sharedStore = pc.sharedStore
 
-        // Some SDKs require specifying the store using `into:`
-        guard let store = container.persistentStoreCoordinator.persistentStores.first else {
-            print("❌ No persistent store available to accept CloudKit share.")
-            return
-        }
-
-        container.acceptShareInvitations(from: [cloudKitShareMetadata], into: store) { _, error in
+        container.acceptShareInvitations(from: [cloudKitShareMetadata], into: sharedStore) { _, error in
             if let error {
                 print("❌ Failed to accept share invite:", error)
             } else {

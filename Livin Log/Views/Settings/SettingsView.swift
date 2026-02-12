@@ -145,13 +145,7 @@ struct SettingsView: View {
                 .disabled(isSharing)
 
                 Button {
-                    if let url = share?.url {
-                        inviteURL = url
-                        showingInviteLinkSheet = true
-                    } else {
-                        shareErrorText = "Invite link isn’t available yet. Try Invite Member first, then come back."
-                        lastCloudKitError = shareErrorText
-                    }
+                    shareInviteLink()
                 } label: {
                     HStack {
                         Text("Share Invite Link")
@@ -159,7 +153,7 @@ struct SettingsView: View {
                         Image(systemName: "link")
                     }
                 }
-                .disabled(share == nil)
+                .disabled(isSharing)
 
             } else {
                 Text("Create a household to begin.")
@@ -542,6 +536,75 @@ struct SettingsView: View {
             self.errorText = error.localizedDescription
         }
     }
+
+    private func shareInviteLink() {
+        guard let household else { return }
+
+        shareErrorText = nil
+        lastCloudKitError = nil
+        isSharing = true
+
+        Task { @MainActor in
+            defer { isSharing = false }
+
+            do {
+                // Re-fetch household on the context queue
+                let hh: Household = try await withCheckedThrowingContinuation { cont in
+                    context.perform {
+                        do {
+                            guard let obj = try context.existingObject(with: household.objectID) as? Household else {
+                                throw NSError(domain: "SettingsView", code: 2, userInfo: [NSLocalizedDescriptionKey: "Household not found"])
+                            }
+                            cont.resume(returning: obj)
+                        } catch {
+                            cont.resume(throwing: error)
+                        }
+                    }
+                }
+
+                // Ensure a share exists
+                let ckShare = try await CloudSharing.fetchOrCreateShare(
+                    for: hh,
+                    in: context,
+                    persistentContainer: persistentContainer
+                )
+
+                // Try to get the URL. It can be nil briefly while CloudKit propagates.
+                var url = ckShare.url
+                if url == nil {
+                    // Small backoff loop to allow the share to be fully saved and URL populated.
+                    for _ in 0..<10 {
+                        try? await Task.sleep(nanoseconds: 400_000_000) // 0.4s
+                        // Re-fetch the share from Core Data/CloudKit metadata
+                        if let refreshed = try? CloudSharing.fetchShare(for: hh.objectID, persistentContainer: persistentContainer) {
+                            url = refreshed.url
+                            if url != nil {
+                                self.share = refreshed
+                                break
+                            }
+                        }
+                    }
+                } else {
+                    self.share = ckShare
+                }
+
+                guard let finalURL = url else {
+                    shareErrorText = "Invite link isn’t ready yet. Try again in a moment."
+                    lastCloudKitError = shareErrorText
+                    return
+                }
+
+                inviteURL = finalURL
+                showingInviteLinkSheet = true
+                reloadShareStatus()
+
+            } catch {
+                print("🟥 Invite link failed:", error)
+                shareErrorText = error.localizedDescription
+                lastCloudKitError = error.localizedDescription
+            }
+        }
+    }
 }
 
 // ✅ Identifiable model that *contains* the values the sheet needs.
@@ -567,3 +630,4 @@ struct ActivityView: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
+
