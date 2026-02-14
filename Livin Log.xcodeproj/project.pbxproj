@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		ADFCEB612F12D488006D3F51 /* Livin Log.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = "Livin Log.app"; path = "/Users/blakeearly/Desktop/Livin Log/Livin Log/build/Debug-iphoneos/Livin Log.app"; sourceTree = "<absolute>"; };
+		ADBC2E412F40CFF8003F642E /* Livin Log.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Livin Log.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -15,6 +15,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				"Livin Log.app",
 			);
 			target = ADFCEAE12F0C3E00006D3F51 /* Livin Log */;
 		};
@@ -46,6 +47,7 @@
 			isa = PBXGroup;
 			children = (
 				ADFCEAE42F0C3E00006D3F51 /* Livin Log */,
+				ADBC2E412F40CFF8003F642E /* Livin Log.app */,
 			);
 			sourceTree = "<group>";
 		};
@@ -71,7 +73,7 @@
 			packageProductDependencies = (
 			);
 			productName = Keeply;
-			productReference = ADFCEB612F12D488006D3F51 /* Livin Log.app */;
+			productReference = ADBC2E412F40CFF8003F642E /* Livin Log.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -136,7 +138,8 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "Livin Log/livinlog.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				COPY_PHASE_STRIP = YES;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = CBGQQ86XZY;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -171,7 +174,8 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "Livin Log/livinlog.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				COPY_PHASE_STRIP = YES;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = CBGQQ86XZY;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
