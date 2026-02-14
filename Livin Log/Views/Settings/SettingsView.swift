@@ -703,7 +703,7 @@ private struct ShareDiagnosticsView: View {
 
             Section("Last error") {
                 Text(lastError ?? "None")
-                    .foregroundStyle(lastError == nil ? .secondary : .red)
+                    .foregroundStyle(lastError == nil ? Color.secondary : Color.red)
                     .font(.footnote)
             }
         }
