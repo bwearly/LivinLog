@@ -16,10 +16,14 @@ import UIKit
 /// - CKShare records exist alongside the shared root record in the Shared database.
 
 enum CloudSharing {
-    private static let shareTitle = "Livin Log Household"
-    private static let publicPermission: CKShare.ParticipantPermission = .readWrite
+    // If you want "anyone with the link" to be able to open/join the share without being explicitly invited,
+    // set `publicPermission` to `.readOnly` (safer) or `.readWrite` (anyone with link can edit).
+    // We'll default to `.readOnly` and rely on explicit participant permissions for write access.
+    private static let publicPermission: CKShare.ParticipantPermission = .readOnly
 
     private static func shareThumbnailData() -> Data? {
+        // NOTE: This thumbnail is used by CloudKit's share UI (UICloudSharingController).
+        // iMessage link previews for icloud.com URLs are controlled by Apple and may still show the iCloud icon.
         UIImage(named: "LivinLogLogo")?.pngData()
     }
 
@@ -37,12 +41,6 @@ enum CloudSharing {
         } else {
             print("🟥 \(prefix):", error)
         }
-    }
-
-    private static func shareThumbnailData() -> Data? {
-        // Make sure you have an image in Assets named "LivinLogLogo"
-        guard let image = UIImage(named: "LivinLogLogo") else { return nil }
-        return image.pngData()
     }
 
     static func containerIdentifier(from persistentContainer: NSPersistentCloudKitContainer) -> String {
@@ -105,11 +103,15 @@ enum CloudSharing {
 
         if let existing = try? fetchShare(for: objectID, persistentContainer: persistentContainer) {
             print("ℹ️ Reusing existing CloudKit share:", existing.recordID.recordName)
+
+            // Ensure metadata is up to date.
+            applyShareMetadata(existing)
+
+            // Persist metadata updates by re-sharing to the same CKShare.
             return try await withCheckedThrowingContinuation { continuation in
                 context.perform {
                     do {
                         let householdInContext = try context.existingObject(with: objectID) as! Household
-                        applyShareMetadata(existing)
                         persistentContainer.share([householdInContext], to: existing) { _, share, _, error in
                             if let error {
                                 logCloudKitError(error, prefix: "Failed updating existing share")
@@ -134,7 +136,6 @@ enum CloudSharing {
                     }
                 }
             }
-            return existing
         }
 
         return try await withCheckedThrowingContinuation { continuation in
