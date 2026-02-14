@@ -5,7 +5,6 @@
 
 import SwiftUI
 import CoreData
-import CloudKit
 import UIKit
 
 struct HouseholdInviteLinkView: UIViewControllerRepresentable {
@@ -30,13 +29,23 @@ struct HouseholdInviteLinkView: UIViewControllerRepresentable {
                         try viewContext.save()
                     }
 
-                    let share = try await fetchOrCreateShare(for: hh)
+                    _ = try await CloudSharing.fetchOrCreateShare(
+                        for: hh,
+                        in: viewContext,
+                        persistentContainer: persistentContainer
+                    )
 
-                    // ✅ Share the URL (this gives you the normal share options)
-                    guard let url = share.url else {
+                    guard let url = try await CloudSharing.fetchShareURLWithRetry(
+                        for: hh.objectID,
+                        persistentContainer: persistentContainer
+                    ) else {
+                        CloudSharing.saveLastShareError("Invite link not ready yet. Try again in a moment.")
                         onError("Invite link not ready yet. Try again in a moment.")
                         return
                     }
+
+                    CloudSharing.saveLastShareStatus("Invite link ready")
+                    CloudSharing.saveLastShareError(nil)
 
                     let message = "Join my Livin Log household: \(hh.name ?? "Household")"
 
@@ -54,6 +63,7 @@ struct HouseholdInviteLinkView: UIViewControllerRepresentable {
 
                     host.present(activity, animated: true)
                 } catch {
+                    CloudSharing.saveLastShareError("Invite failed: \(error.localizedDescription)")
                     onError("Invite failed: \(error.localizedDescription)")
                 }
             }
@@ -63,32 +73,4 @@ struct HouseholdInviteLinkView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
-
-    private func fetchOrCreateShare(for household: Household) async throws -> CKShare {
-        let sharesByID = try persistentContainer.fetchShares(matching: [household.objectID])
-        if let existing = sharesByID[household.objectID] {
-            return existing
-        }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            persistentContainer.share([household], to: nil) { _, share, _, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-
-                guard let share else {
-                    continuation.resume(throwing: NSError(
-                        domain: "HouseholdInvite",
-                        code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "Share was nil."]
-                    ))
-                    return
-                }
-
-                share[CKShare.SystemFieldKey.title] = (household.name ?? "Household") as CKRecordValue
-                continuation.resume(returning: share)
-            }
-        }
-    }
 }

@@ -12,11 +12,16 @@ import UIKit
 /// CloudKit Console tips:
 /// - Use the CloudKit Console for the same container identifier as in `PersistenceController`.
 /// - For dev builds, look under the Development environment; for TestFlight/App Store, use Production.
+/// - For TestFlight before App Store approval, configure a Sharing Fallback URL in CloudKit Dashboard
+///   (CloudKit Dashboard -> Settings -> Sharing Fallback). Without it, iOS can route invite links to the
+///   App Store and show a "newer version required" error. See Apple's CloudKit sharing docs.
 /// - Household records are in the Private database; shared household data appears in the Shared database.
 /// - CKShare records exist alongside the shared root record in the Shared database.
 
 enum CloudSharing {
     private static let shareTitle = "Livin Log Household"
+    static let lastShareErrorDefaultsKey = "ll_last_cloudkit_share_error"
+    static let lastShareStatusDefaultsKey = "ll_last_cloudkit_share_status"
     // If you want "anyone with the link" to be able to open/join the share without being explicitly invited,
     // set `publicPermission` to `.readOnly` (safer) or `.readWrite` (anyone with link can edit).
     // We'll default to `.readOnly` and rely on explicit participant permissions for write access.
@@ -168,5 +173,45 @@ enum CloudSharing {
                 }
             }
         }
+    }
+
+    static func fetchShareURLWithRetry(
+        for objectID: NSManagedObjectID,
+        persistentContainer: NSPersistentCloudKitContainer,
+        attempts: Int = 8,
+        initialDelayNanoseconds: UInt64 = 250_000_000
+    ) async throws -> URL? {
+        if let existing = try fetchShare(for: objectID, persistentContainer: persistentContainer),
+           let url = existing.url {
+            return url
+        }
+
+        var delay = initialDelayNanoseconds
+        for _ in 0..<attempts {
+            try? await Task.sleep(nanoseconds: delay)
+            if let refreshed = try? fetchShare(for: objectID, persistentContainer: persistentContainer),
+               let url = refreshed.url {
+                return url
+            }
+            delay = min(delay * 2, 1_500_000_000)
+        }
+
+        return nil
+    }
+
+    static func saveLastShareStatus(_ text: String) {
+        UserDefaults.standard.set(text, forKey: lastShareStatusDefaultsKey)
+    }
+
+    static func saveLastShareError(_ text: String?) {
+        UserDefaults.standard.set(text, forKey: lastShareErrorDefaultsKey)
+    }
+
+    static func stopSharing(
+        share: CKShare,
+        persistentContainer: NSPersistentCloudKitContainer
+    ) async throws {
+        let container = cloudKitContainer(from: persistentContainer)
+        _ = try await container.privateCloudDatabase.deleteRecord(withID: share.recordID)
     }
 }
