@@ -5,6 +5,7 @@
 
 import CoreData
 import CloudKit
+import UIKit
 
 /// CloudKit sharing helpers.
 ///
@@ -16,6 +17,12 @@ import CloudKit
 
 enum CloudSharing {
     private static let shareTitle = "Livin Log Household"
+
+    private static func shareThumbnailData() -> Data? {
+        // Make sure you have an image in Assets named "LivinLogLogo"
+        guard let image = UIImage(named: "LivinLogLogo") else { return nil }
+        return image.pngData()
+    }
 
     static func containerIdentifier(from persistentContainer: NSPersistentCloudKitContainer) -> String {
         persistentContainer
@@ -78,6 +85,9 @@ enum CloudSharing {
         if let existing = try? fetchShare(for: objectID, persistentContainer: persistentContainer) {
             print("ℹ️ Reusing existing CloudKit share:", existing.recordID.recordName)
             existing[CKShare.SystemFieldKey.title] = shareTitle as CKRecordValue
+            if let data = shareThumbnailData() {
+                existing[CKShare.SystemFieldKey.thumbnailImageData] = data as CKRecordValue
+            }
             return existing
         }
 
@@ -101,6 +111,9 @@ enum CloudSharing {
                         }
 
                         share[CKShare.SystemFieldKey.title] = shareTitle as CKRecordValue
+                        if let data = shareThumbnailData() {
+                            share[CKShare.SystemFieldKey.thumbnailImageData] = data as CKRecordValue
+                        }
                         print("✅ Created new CloudKit share:", share.recordID.recordName)
                         continuation.resume(returning: share)
                     }

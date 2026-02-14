@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		ADFCEB612F12D488006D3F51 /* Livin Log.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Livin Log.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		ADFCEB612F12D488006D3F51 /* Livin Log.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = "Livin Log.app"; path = "/Users/blakeearly/Desktop/Livin Log/Livin Log/build/Debug-iphoneos/Livin Log.app"; sourceTree = "<absolute>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -46,7 +46,6 @@
 			isa = PBXGroup;
 			children = (
 				ADFCEAE42F0C3E00006D3F51 /* Livin Log */,
-				ADFCEB612F12D488006D3F51 /* Livin Log.app */,
 			);
 			sourceTree = "<group>";
 		};
