@@ -16,6 +16,7 @@ import UIKit
 /// - CKShare records exist alongside the shared root record in the Shared database.
 
 enum CloudSharing {
+    private static let shareTitle = "Livin Log Household"
     // If you want "anyone with the link" to be able to open/join the share without being explicitly invited,
     // set `publicPermission` to `.readOnly` (safer) or `.readWrite` (anyone with link can edit).
     // We'll default to `.readOnly` and rely on explicit participant permissions for write access.
