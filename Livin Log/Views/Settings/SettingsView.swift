@@ -39,7 +39,9 @@ struct SettingsView: View {
 
     // ✅ Fallback invite link share
     @State private var showingInviteLinkSheet = false
-    @State private var inviteURL: URL?
+
+    @AppStorage(CloudSharing.lastShareErrorDefaultsKey) private var persistedLastShareError = ""
+    @AppStorage(CloudSharing.lastShareStatusDefaultsKey) private var persistedLastShareStatus = ""
 
     // ✅ SINGLE SOURCE OF TRUTH for the sheet:
     // If this is non-nil, the sheet shows. If nil, it dismisses.
@@ -100,12 +102,24 @@ struct SettingsView: View {
             }
         }
         .sheet(isPresented: $showingInviteLinkSheet) {
-            if let inviteURL {
-                ActivityView(items: [inviteURL])
-                    .ignoresSafeArea()
-            } else {
-                Text("Invite link not available yet.")
-                    .padding()
+            if let household {
+                HouseholdInviteLinkView(
+                    household: household,
+                    onDone: {
+                        showingInviteLinkSheet = false
+                        isSharing = false
+                        reloadShareStatus()
+                    },
+                    onError: { message in
+                        shareErrorText = message
+                        lastCloudKitError = message
+                        persistedLastShareError = message
+                        CloudSharing.saveLastShareError(message)
+                        showingInviteLinkSheet = false
+                        isSharing = false
+                    }
+                )
+                .ignoresSafeArea()
             }
         }
         .alert("Notifications Disabled", isPresented: $showNotificationsDeniedAlert) {
@@ -205,6 +219,16 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            if !persistedLastShareStatus.isEmpty {
+                HStack {
+                    Text("Last status")
+                    Spacer()
+                    Text(persistedLastShareStatus)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
         }
     }
 
@@ -277,10 +301,30 @@ struct SettingsView: View {
                 Text(shareErrorText)
                     .foregroundStyle(.red)
                     .font(.footnote)
+            } else if !persistedLastShareError.isEmpty {
+                Text(persistedLastShareError)
+                    .foregroundStyle(.red)
+                    .font(.footnote)
             } else {
                 Text("No sharing errors.")
                     .foregroundStyle(.secondary)
                     .font(.footnote)
+            }
+
+            if household != nil {
+                Button("Reset Household Share", role: .destructive) {
+                    resetHouseholdShare()
+                }
+                .disabled(isSharing)
+            }
+
+            NavigationLink("Share Diagnostics") {
+                ShareDiagnosticsView(
+                    household: household,
+                    accountStatus: accountStatus,
+                    lastError: lastCloudKitError ?? (persistedLastShareError.isEmpty ? nil : persistedLastShareError),
+                    persistentContainer: persistentContainer
+                )
             }
         }
     }
@@ -344,6 +388,10 @@ struct SettingsView: View {
 
         shareErrorText = nil
         lastCloudKitError = nil
+        persistedLastShareError = ""
+        persistedLastShareStatus = "Preparing iCloud share"
+        CloudSharing.saveLastShareStatus("Preparing iCloud share")
+        CloudSharing.saveLastShareError(nil)
 
         // reset sheet (forces fresh present)
         shareSheetModel = nil
@@ -400,6 +448,8 @@ struct SettingsView: View {
                 let container = CloudSharing.cloudKitContainer(from: persistentContainer)
 
                 print("✅ Share prepared:", share.recordID.recordName)
+                persistedLastShareStatus = "Share ready for invite"
+                CloudSharing.saveLastShareStatus("Share ready for invite")
 
                 // Update invite capabilities right before presentation
                 canSendText = MFMessageComposeViewController.canSendText()
@@ -419,6 +469,8 @@ struct SettingsView: View {
                 print("🟥 Share prepare failed:", error)
                 shareErrorText = error.localizedDescription
                 lastCloudKitError = error.localizedDescription
+                persistedLastShareError = error.localizedDescription
+                CloudSharing.saveLastShareError(error.localizedDescription)
                 isSharing = false
             }
         }
@@ -542,66 +594,50 @@ struct SettingsView: View {
 
         shareErrorText = nil
         lastCloudKitError = nil
+        persistedLastShareError = ""
+        persistedLastShareStatus = "Preparing invite link"
+        CloudSharing.saveLastShareStatus("Preparing invite link")
+        CloudSharing.saveLastShareError(nil)
+        isSharing = true
+        showingInviteLinkSheet = true
+    }
+
+    private func resetHouseholdShare() {
+        guard let household else { return }
+
+        shareErrorText = nil
+        lastCloudKitError = nil
+        persistedLastShareError = ""
+        persistedLastShareStatus = "Resetting share"
+        CloudSharing.saveLastShareStatus("Resetting share")
+        CloudSharing.saveLastShareError(nil)
         isSharing = true
 
         Task { @MainActor in
             defer { isSharing = false }
 
             do {
-                // Re-fetch household on the context queue
-                let hh: Household = try await withCheckedThrowingContinuation { cont in
-                    context.perform {
-                        do {
-                            guard let obj = try context.existingObject(with: household.objectID) as? Household else {
-                                throw NSError(domain: "SettingsView", code: 2, userInfo: [NSLocalizedDescriptionKey: "Household not found"])
-                            }
-                            cont.resume(returning: obj)
-                        } catch {
-                            cont.resume(throwing: error)
-                        }
-                    }
+                let hh = try context.existingObject(with: household.objectID) as! Household
+                if let existing = try CloudSharing.fetchShare(for: hh.objectID, persistentContainer: persistentContainer) {
+                    try await CloudSharing.stopSharing(share: existing, persistentContainer: persistentContainer)
+                    persistedLastShareStatus = "Stopped previous share"
+                    CloudSharing.saveLastShareStatus("Stopped previous share")
                 }
 
-                // Ensure a share exists
-                let ckShare = try await CloudSharing.fetchOrCreateShare(
+                _ = try await CloudSharing.fetchOrCreateShare(
                     for: hh,
                     in: context,
                     persistentContainer: persistentContainer
                 )
-
-                // Try to get the URL. It can be nil briefly while CloudKit propagates.
-                var url = ckShare.url
-                if url == nil {
-                    // Small backoff loop to allow the share to be fully saved and URL populated.
-                    for _ in 0..<10 {
-                        try? await Task.sleep(nanoseconds: 400_000_000) // 0.4s
-                        // Re-fetch the share from Core Data/CloudKit metadata
-                        if let refreshed = try? CloudSharing.fetchShare(for: hh.objectID, persistentContainer: persistentContainer) {
-                            url = refreshed.url
-                            if url != nil {
-                                self.share = refreshed
-                                break
-                            }
-                        }
-                    }
-                } else {
-                    self.share = ckShare
-                }
-
-                guard let finalURL = url else {
-                    shareErrorText = "Invite link isn’t ready yet. Try again in a moment."
-                    lastCloudKitError = shareErrorText
-                    return
-                }
-
-                inviteURL = finalURL
-                showingInviteLinkSheet = true
+                persistedLastShareStatus = "Created fresh share"
+                CloudSharing.saveLastShareStatus("Created fresh share")
                 reloadShareStatus()
-
             } catch {
-                print("🟥 Invite link failed:", error)
-                shareErrorText = error.localizedDescription
+                let message = "Reset failed: \(error.localizedDescription)"
+                shareErrorText = message
                 lastCloudKitError = error.localizedDescription
+                persistedLastShareError = message
+                CloudSharing.saveLastShareError(message)
             }
         }
     }
@@ -620,14 +656,75 @@ private struct ShareSheetModel: Identifiable {
     }
 }
 
-// ✅ Fallback activity sheet for sharing a URL (invite link)
-struct ActivityView: UIViewControllerRepresentable {
-    let items: [Any]
+private struct ShareDiagnosticsView: View {
+    let household: Household?
+    let accountStatus: CKAccountStatus
+    let lastError: String?
+    let persistentContainer: NSPersistentCloudKitContainer
 
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    @State private var shareRecordName: String?
+    @State private var canFetchShare = false
+
+    var body: some View {
+        Form {
+            Section("CloudKit") {
+                HStack {
+                    Text("Container")
+                    Spacer()
+                    Text(CloudSharing.containerIdentifier(from: persistentContainer))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                HStack {
+                    Text("Account status")
+                    Spacer()
+                    Text(accountStatusLabel)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Share") {
+                HStack {
+                    Text("Existing share")
+                    Spacer()
+                    Text(canFetchShare ? "Yes" : "No")
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack {
+                    Text("Share record")
+                    Spacer()
+                    Text(shareRecordName ?? "None")
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Section("Last error") {
+                Text(lastError ?? "None")
+                    .foregroundStyle(lastError == nil ? .secondary : .red)
+                    .font(.footnote)
+            }
+        }
+        .navigationTitle("Share Diagnostics")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            guard let household else { return }
+            if let share = try? CloudSharing.fetchShare(for: household.objectID, persistentContainer: persistentContainer) {
+                canFetchShare = true
+                shareRecordName = share.recordID.recordName
+            }
+        }
     }
 
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+    private var accountStatusLabel: String {
+        switch accountStatus {
+        case .available: return "Available"
+        case .noAccount: return "No account"
+        case .restricted: return "Restricted"
+        case .couldNotDetermine: return "Could not determine"
+        @unknown default: return "Unknown"
+        }
+    }
 }
-

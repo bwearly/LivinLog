@@ -23,8 +23,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         container.acceptShareInvitations(from: [cloudKitShareMetadata], into: sharedStore) { _, error in
             if let error {
                 print("❌ Failed to accept share invite:", error)
+                CloudSharing.saveLastShareError("Accept invite failed: \(error.localizedDescription)")
+                CloudSharing.saveLastShareStatus("Share acceptance failed")
             } else {
                 print("✅ Accepted share invite.")
+                CloudSharing.saveLastShareError(nil)
+                CloudSharing.saveLastShareStatus("Accepted CloudKit share")
             }
         }
     }
