@@ -17,6 +17,27 @@ import UIKit
 
 enum CloudSharing {
     private static let shareTitle = "Livin Log Household"
+    private static let publicPermission: CKShare.ParticipantPermission = .readWrite
+
+    private static func shareThumbnailData() -> Data? {
+        UIImage(named: "LivinLogLogo")?.pngData()
+    }
+
+    private static func applyShareMetadata(_ share: CKShare) {
+        share[CKShare.SystemFieldKey.title] = shareTitle as CKRecordValue
+        if let thumbnail = shareThumbnailData() {
+            share[CKShare.SystemFieldKey.thumbnailImageData] = thumbnail as CKRecordValue
+        }
+        share.publicPermission = publicPermission
+    }
+
+    private static func logCloudKitError(_ error: Error, prefix: String) {
+        if let ckError = error as? CKError {
+            print("🟥 \(prefix) CKError code=\(ckError.code.rawValue) (\(ckError.code)) userInfo=\(ckError.userInfo)")
+        } else {
+            print("🟥 \(prefix):", error)
+        }
+    }
 
     private static func shareThumbnailData() -> Data? {
         // Make sure you have an image in Assets named "LivinLogLogo"
@@ -84,9 +105,34 @@ enum CloudSharing {
 
         if let existing = try? fetchShare(for: objectID, persistentContainer: persistentContainer) {
             print("ℹ️ Reusing existing CloudKit share:", existing.recordID.recordName)
-            existing[CKShare.SystemFieldKey.title] = shareTitle as CKRecordValue
-            if let data = shareThumbnailData() {
-                existing[CKShare.SystemFieldKey.thumbnailImageData] = data as CKRecordValue
+            return try await withCheckedThrowingContinuation { continuation in
+                context.perform {
+                    do {
+                        let householdInContext = try context.existingObject(with: objectID) as! Household
+                        applyShareMetadata(existing)
+                        persistentContainer.share([householdInContext], to: existing) { _, share, _, error in
+                            if let error {
+                                logCloudKitError(error, prefix: "Failed updating existing share")
+                                continuation.resume(throwing: error)
+                                return
+                            }
+
+                            guard let share else {
+                                continuation.resume(throwing: NSError(
+                                    domain: "CloudSharing",
+                                    code: 2,
+                                    userInfo: [NSLocalizedDescriptionKey: "Updated share was nil."]
+                                ))
+                                return
+                            }
+
+                            applyShareMetadata(share)
+                            continuation.resume(returning: share)
+                        }
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }
             }
             return existing
         }
@@ -97,6 +143,7 @@ enum CloudSharing {
                     let householdInContext = try context.existingObject(with: objectID) as! Household
                     persistentContainer.share([householdInContext], to: nil) { _, share, _, error in
                         if let error {
+                            logCloudKitError(error, prefix: "Failed creating new share")
                             continuation.resume(throwing: error)
                             return
                         }
@@ -110,10 +157,7 @@ enum CloudSharing {
                             return
                         }
 
-                        share[CKShare.SystemFieldKey.title] = shareTitle as CKRecordValue
-                        if let data = shareThumbnailData() {
-                            share[CKShare.SystemFieldKey.thumbnailImageData] = data as CKRecordValue
-                        }
+                        applyShareMetadata(share)
                         print("✅ Created new CloudKit share:", share.recordID.recordName)
                         continuation.resume(returning: share)
                     }
