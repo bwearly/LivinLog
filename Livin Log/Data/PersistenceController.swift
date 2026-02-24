@@ -19,6 +19,8 @@ struct PersistenceController {
 
     init(inMemory: Bool = false) {
         let container = NSPersistentCloudKitContainer(name: "LivinLog")
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "<unknown>"
+        print("ℹ️ PersistenceController init bundleIdentifier=\(bundleIdentifier) persistentContainerName=\(container.name)")
 
         // Two stores are required for Core Data + CloudKit sharing:
         // - Private: the owner's database
@@ -43,6 +45,7 @@ struct PersistenceController {
         }
 
         let containerId = "iCloud.com.blakeearly.livinlog"
+        print("ℹ️ PersistenceController CloudKit containerIdentifier=\(containerId)")
 
         // Private scope
         let privateOptions = NSPersistentCloudKitContainerOptions(containerIdentifier: containerId)
@@ -64,10 +67,20 @@ struct PersistenceController {
 
         container.persistentStoreDescriptions = [privateDesc, sharedDesc]
 
-        container.loadPersistentStores { _, error in
+        container.loadPersistentStores { description, error in
             if let error = error as NSError? {
                 fatalError("Unresolved error \(error), \(error.userInfo)")
             }
+
+            let scope = description.cloudKitContainerOptions?.databaseScope
+            let scopeLabel: String
+            switch scope {
+            case .private: scopeLabel = "private"
+            case .shared: scopeLabel = "shared"
+            case .public: scopeLabel = "public"
+            default: scopeLabel = "unknown"
+            }
+            print("ℹ️ Loaded persistent store url=\(description.url?.absoluteString ?? "<nil>") scope=\(scopeLabel) ckContainer=\(description.cloudKitContainerOptions?.containerIdentifier ?? "<nil>")")
         }
 
         // Resolve stores by URL from the coordinator after load.
