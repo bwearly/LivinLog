@@ -7,6 +7,7 @@ import SwiftUI
 import CoreData
 import CloudKit
 import UIKit
+import MessageUI
 
 struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
     private static let alwaysCreateNewShare = false
@@ -30,6 +31,8 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
     }
 
     func makeUIViewController(context: Context) -> UINavigationController {
+        print("ℹ️ Share routes availability canSendText=\(MFMessageComposeViewController.canSendText()) canSendMail=\(MFMailComposeViewController.canSendMail())")
+
         let controller = UICloudSharingController { _, completion in
             prepareShare(completion: completion)
         }
@@ -139,6 +142,8 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
 
                         let shareTitle = householdTitle(from: householdInContext)
                         share[CKShare.SystemFieldKey.title] = shareTitle as CKRecordValue
+                        share.publicPermission = .readWrite
+                        print("ℹ️ Prepared new CKShare recordID=\(share.recordID.recordName) publicPermission=\(share.publicPermission.rawValue) url=\(share.url?.absoluteString ?? \"nil\") containerIdentifier=\(configuredContainerIdentifier)")
                         print("✅ Prepared new CKShare for UICloudSharingController: \(share.recordID.recordName)")
                         finish(share, nil)
                     }
@@ -170,6 +175,8 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
                         if let existingShare = sharesByID[householdInContext.objectID] {
                             let shareTitle = householdTitle(from: householdInContext)
                             existingShare[CKShare.SystemFieldKey.title] = shareTitle as CKRecordValue
+                            existingShare.publicPermission = .readWrite
+                            print("ℹ️ Reusing existing CKShare recordID=\(existingShare.recordID.recordName) publicPermission=\(existingShare.publicPermission.rawValue) url=\(existingShare.url?.absoluteString ?? \"nil\") containerIdentifier=\(configuredContainerIdentifier)")
                             print("ℹ️ Reusing existing CKShare for household recordID=\(existingShare.recordID.recordName)")
                             finish(existingShare, nil)
                         } else {
@@ -177,12 +184,6 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
                             createShare()
                         }
                     }
-
-                    print("ℹ️ No existing CKShare found. Creating one.")
-                    createShare()
-                } catch {
-                    print("❌ fetchShares threw error, falling back to create: \(error)")
-                    createShare()
                 }
 
             } catch {
@@ -228,7 +229,8 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
         }
 
         func cloudSharingControllerDidSaveShare(_ csc: UICloudSharingController) {
-            print("✅ UICloudSharingController saved share.")
+            let share = csc.share
+            print("✅ UICloudSharingController didSaveShare recordID=\(share?.recordID.recordName ?? \"nil\") publicPermission=\(share?.publicPermission.rawValue.description ?? \"nil\") url=\(share?.url?.absoluteString ?? \"nil\")")
         }
 
         func cloudSharingControllerDidStopSharing(_ csc: UICloudSharingController) {
@@ -237,7 +239,8 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
         }
 
         func cloudSharingController(_ csc: UICloudSharingController, failedToSaveShareWithError error: Error) {
-            print("❌ UICloudSharingController failed to save share: \(error)")
+            let share = csc.share
+            print("❌ UICloudSharingController failedToSaveShareWithError error=\(error) recordID=\(share?.recordID.recordName ?? \"nil\") publicPermission=\(share?.publicPermission.rawValue.description ?? \"nil\") url=\(share?.url?.absoluteString ?? \"nil\")")
             onError(error)
             finish()
         }

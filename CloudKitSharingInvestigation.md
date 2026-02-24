@@ -77,3 +77,34 @@ Expected outcome: conclusive evidence whether failure is callback flow, persiste
   - app opens
   - `userDidAcceptCloudKitShareWith` fires
   - `acceptShareInvitations(... into: sharedStore)` succeeds
+
+## Phase 1 implementation update (this change set)
+
+- Set `share.publicPermission = .readWrite` in both paths in `prepareShare`:
+  - when reusing `existingShare`
+  - when creating a new `CKShare`
+- Added explicit logs in share preparation for:
+  - `share.recordID.recordName`
+  - `share.publicPermission`
+  - `share.url` (or `nil`)
+  - resolved CloudKit `containerIdentifier`
+- Added route-availability logging at sheet presentation time:
+  - `MFMessageComposeViewController.canSendText()`
+  - `MFMailComposeViewController.canSendMail()`
+- Expanded `UICloudSharingControllerDelegate` logs to include share details in:
+  - `cloudSharingControllerDidSaveShare`
+  - `cloudSharingController(_:failedToSaveShareWithError:)`
+- Preserved single-completion behavior (`finish` lock + `didFinish` guard), and removed an unreachable duplicate completion path in the `fetchShares` closure.
+
+## Device test checklist (to run on physical device)
+
+1. Open Settings → Invite Member.
+2. Capture logs for:
+   - `Share routes availability canSendText=... canSendMail=...`
+   - `Prepared new CKShare ... publicPermission=... url=...`
+   - `Reusing existing CKShare ... publicPermission=... url=...`
+   - `UICloudSharingController didSaveShare ...`
+   - `UICloudSharingController failedToSaveShareWithError ...` (if any)
+3. Determine hypothesis outcome:
+   - If routes unavailable **and** `url=nil`, Hypothesis 1/2 likely true.
+   - If `publicPermission` is set but `url` remains nil after save, investigate share/container validity (Hypothesis 3).
