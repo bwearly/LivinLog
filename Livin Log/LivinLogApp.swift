@@ -15,6 +15,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      userDidAcceptCloudKitShareWith cloudKitShareMetadata: CKShare.Metadata) {
 
+        print("📩 userDidAcceptCloudKitShareWith fired for container: \(cloudKitShareMetadata.containerIdentifier)")
+
         let pc = PersistenceController.shared
         let container = pc.container
 
