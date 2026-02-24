@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication,
                      userDidAcceptCloudKitShareWith cloudKitShareMetadata: CKShare.Metadata) {
+
         let pc = PersistenceController.shared
         let container = pc.container
 
@@ -29,6 +30,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                 print("✅ Accepted share invite.")
                 CloudSharing.saveLastShareError(nil)
                 CloudSharing.saveLastShareStatus("Accepted CloudKit share")
+
+                // ✅ Notify the app UI/state to refresh and pick up the shared household
+                // from the shared store.
+                NotificationCenter.default.post(name: .didAcceptCloudKitShare, object: nil)
             }
         }
     }
