@@ -37,47 +37,97 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
 
     private func prepareShare(completion: @escaping (CKShare?, CKContainer?, Error?) -> Void) {
         let context = persistentContainer.viewContext
+        let alwaysCreateNewShare = false
+        let finishLock = NSLock()
+        var didFinish = false
+
+        func finish(_ share: CKShare?, _ error: Error?) {
+            finishLock.lock()
+            defer { finishLock.unlock() }
+
+            guard !didFinish else {
+                print("⚠️ prepareShare attempted to call completion more than once. Ignoring duplicate callback.")
+                return
+            }
+
+            didFinish = true
+            DispatchQueue.main.async {
+                completion(share, cloudKitContainer, error)
+            }
+        }
+
+        print("ℹ️ Entering prepareShare for household objectID: \(household.objectID)")
 
         context.perform {
             do {
                 guard let householdInContext = try context.existingObject(with: household.objectID) as? Household else {
-                    throw NSError(domain: "CloudKitHouseholdSharingSheet", code: 1, userInfo: [NSLocalizedDescriptionKey: "Household not found."])
+                    let error = NSError(domain: "CloudKitHouseholdSharingSheet", code: 1, userInfo: [NSLocalizedDescriptionKey: "Household not found."])
+                    print("❌ prepareShare could not locate household in context.")
+                    finish(nil, error)
+                    return
+                }
+
+                if context.hasChanges {
+                    print("ℹ️ Context has changes before sharing. Saving context.")
+                    try context.save()
                 }
 
                 if householdInContext.objectID.isTemporaryID {
                     try context.obtainPermanentIDs(for: [householdInContext])
+                    try context.save()
+                    print("✅ Obtained permanent objectID for household: \(householdInContext.objectID)")
                 }
 
-                if let existingShare = try? persistentContainer.fetchShares(matching: [householdInContext.objectID])[householdInContext.objectID] {
-                    let shareTitle = householdTitle(from: householdInContext)
-                    existingShare[CKShare.SystemFieldKey.title] = shareTitle as CKRecordValue
-                    print("ℹ️ Reusing existing CKShare for household: \(existingShare.recordID.recordName)")
-                    completion(existingShare, cloudKitContainer, nil)
+                let createShare: () -> Void = {
+                    print("ℹ️ Creating new CKShare for household.")
+                    persistentContainer.share([householdInContext], to: nil) { _, share, _, error in
+                        if let error {
+                            print("❌ Failed creating CKShare in preparation handler: \(error)")
+                            finish(nil, error)
+                            return
+                        }
+
+                        guard let share else {
+                            let nilShareError = NSError(domain: "CloudKitHouseholdSharingSheet", code: 2, userInfo: [NSLocalizedDescriptionKey: "Share was nil."])
+                            print("❌ CKShare creation callback returned nil share without error.")
+                            finish(nil, nilShareError)
+                            return
+                        }
+
+                        let shareTitle = householdTitle(from: householdInContext)
+                        share[CKShare.SystemFieldKey.title] = shareTitle as CKRecordValue
+                        print("✅ Prepared new CKShare for UICloudSharingController: \(share.recordID.recordName)")
+                        finish(share, nil)
+                    }
+                }
+
+                if alwaysCreateNewShare {
+                    print("ℹ️ alwaysCreateNewShare=true, bypassing existing share lookup.")
+                    createShare()
                     return
                 }
 
-                persistentContainer.share([householdInContext], to: nil) { _, share, _, error in
-                    if let error {
-                        print("❌ Failed creating CKShare in preparation handler: \(error)")
-                        completion(nil, nil, error)
-                        return
+                persistentContainer.fetchShares(matching: [householdInContext.objectID]) { result in
+                    switch result {
+                    case .failure(let error):
+                        print("❌ Failed fetching existing CKShare, falling back to create: \(error)")
+                        createShare()
+
+                    case .success(let sharesByID):
+                        if let existingShare = sharesByID[householdInContext.objectID] {
+                            let shareTitle = householdTitle(from: householdInContext)
+                            existingShare[CKShare.SystemFieldKey.title] = shareTitle as CKRecordValue
+                            print("ℹ️ Reusing existing CKShare for household: \(existingShare.recordID.recordName)")
+                            finish(existingShare, nil)
+                        } else {
+                            print("ℹ️ No existing CKShare found. Creating one.")
+                            createShare()
+                        }
                     }
-
-                    guard let share else {
-                        let error = NSError(domain: "CloudKitHouseholdSharingSheet", code: 2, userInfo: [NSLocalizedDescriptionKey: "Share was nil."])
-                        completion(nil, nil, error)
-                        return
-                    }
-
-                    let shareTitle = householdTitle(from: householdInContext)
-                    share[CKShare.SystemFieldKey.title] = shareTitle as CKRecordValue
-
-                    print("✅ Prepared CKShare for UICloudSharingController: \(share.recordID.recordName)")
-                    completion(share, cloudKitContainer, nil)
                 }
             } catch {
                 print("❌ Failed preparing share in UICloudSharingController preparation handler: \(error)")
-                completion(nil, nil, error)
+                finish(nil, error)
             }
         }
     }
