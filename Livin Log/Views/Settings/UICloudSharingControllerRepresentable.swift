@@ -9,12 +9,21 @@ import CloudKit
 import UIKit
 
 struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
+    private static let alwaysCreateNewShare = false
+
     let household: Household
     let onDone: () -> Void
     let onError: (Error) -> Void
 
     private let persistentContainer = PersistenceController.shared.container
-    private let cloudKitContainer = CKContainer(identifier: "iCloud.com.blakeearly.livinlog")
+    private var configuredContainerIdentifier: String {
+        persistentContainer.persistentStoreDescriptions.first?.cloudKitContainerOptions?.containerIdentifier
+        ?? "iCloud.com.blakeearly.livinlog"
+    }
+
+    private var cloudKitContainer: CKContainer {
+        CKContainer(identifier: configuredContainerIdentifier)
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onDone: onDone, onError: onError)
@@ -37,7 +46,7 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
 
     private func prepareShare(completion: @escaping (CKShare?, CKContainer?, Error?) -> Void) {
         let context = persistentContainer.viewContext
-        let alwaysCreateNewShare = false
+        let watchdogSeconds: TimeInterval = 8
         let finishLock = NSLock()
         var didFinish = false
 
@@ -51,12 +60,31 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
             }
 
             didFinish = true
+            let onMain = Thread.isMainThread
+            print("ℹ️ prepareShare.finish share=\(share == nil ? "nil" : "non-nil") error=\(error == nil ? "nil" : "non-nil") callbackThread=\(onMain ? "main" : "background")")
+            if let nsError = error as NSError? {
+                print("ℹ️ prepareShare.finish NSError domain=\(nsError.domain) code=\(nsError.code) userInfo=\(nsError.userInfo)")
+            }
+            if let ckError = error as? CKError {
+                print("ℹ️ prepareShare.finish CKError code=\(ckError.code.rawValue) (\(ckError.code)) userInfo=\(ckError.userInfo)")
+            }
             DispatchQueue.main.async {
                 completion(share, cloudKitContainer, error)
             }
         }
 
-        print("ℹ️ Entering prepareShare for household objectID: \(household.objectID)")
+        print("ℹ️ Entering prepareShare for household objectID=\(household.objectID) isTemporary=\(household.objectID.isTemporaryID)")
+        print("ℹ️ prepareShare containerIdentifier=\(configuredContainerIdentifier)")
+
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + watchdogSeconds) {
+            let timeoutError = NSError(
+                domain: "CloudKitHouseholdSharingSheet",
+                code: 99,
+                userInfo: [NSLocalizedDescriptionKey: "Share preparation timed out after \(Int(watchdogSeconds))s."]
+            )
+            print("⏱️ prepareShare watchdog timed out after \(Int(watchdogSeconds))s")
+            finish(nil, timeoutError)
+        }
 
         context.perform {
             do {
@@ -67,22 +95,32 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
                     return
                 }
 
+                print("ℹ️ prepareShare before persistence checks objectID=\(householdInContext.objectID) isTemporary=\(householdInContext.objectID.isTemporaryID) context.hasChanges=\(context.hasChanges)")
+
+                if householdInContext.objectID.isTemporaryID {
+                    print("ℹ️ prepareShare obtaining permanent objectID before sharing")
+                    try context.obtainPermanentIDs(for: [householdInContext])
+                    print("ℹ️ prepareShare obtained permanent objectID=\(householdInContext.objectID) isTemporary=\(householdInContext.objectID.isTemporaryID)")
+                }
+
                 if context.hasChanges {
                     print("ℹ️ Context has changes before sharing. Saving context.")
                     try context.save()
+                    print("✅ prepareShare saved context prior to share")
                 }
 
-                if householdInContext.objectID.isTemporaryID {
-                    try context.obtainPermanentIDs(for: [householdInContext])
-                    try context.save()
-                    print("✅ Obtained permanent objectID for household: \(householdInContext.objectID)")
-                }
+                print("ℹ️ prepareShare after persistence checks objectID=\(householdInContext.objectID) isTemporary=\(householdInContext.objectID.isTemporaryID) context.hasChanges=\(context.hasChanges)")
 
                 let createShare: () -> Void = {
                     print("ℹ️ Creating new CKShare for household.")
                     persistentContainer.share([householdInContext], to: nil) { _, share, _, error in
                         if let error {
                             print("❌ Failed creating CKShare in preparation handler: \(error)")
+                            let nsError = error as NSError
+                            print("❌ CKShare creation NSError domain=\(nsError.domain) code=\(nsError.code) userInfo=\(nsError.userInfo)")
+                            if let ckError = error as? CKError {
+                                print("❌ CKShare creation CKError code=\(ckError.code.rawValue) (\(ckError.code)) userInfo=\(ckError.userInfo)")
+                            }
                             finish(nil, error)
                             return
                         }
@@ -101,7 +139,7 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
                     }
                 }
 
-                if alwaysCreateNewShare {
+                if Self.alwaysCreateNewShare {
                     print("ℹ️ alwaysCreateNewShare=true, bypassing existing share lookup.")
                     createShare()
                     return
@@ -111,13 +149,23 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
                     switch result {
                     case .failure(let error):
                         print("❌ Failed fetching existing CKShare, falling back to create: \(error)")
+                        let nsError = error as NSError
+                        print("❌ fetchShares NSError domain=\(nsError.domain) code=\(nsError.code) userInfo=\(nsError.userInfo)")
+                        if let ckError = error as? CKError {
+                            print("❌ fetchShares CKError code=\(ckError.code.rawValue) (\(ckError.code)) userInfo=\(ckError.userInfo)")
+                        }
                         createShare()
 
                     case .success(let sharesByID):
+                        let keys = sharesByID.keys.map { $0.uriRepresentation().absoluteString }
+                        let containsObjectID = sharesByID.keys.contains(householdInContext.objectID)
+                        let existingShare = sharesByID[householdInContext.objectID] ?? nil
+                        print("ℹ️ fetchShares success keys=\(keys)")
+                        print("ℹ️ fetchShares containsObjectID=\(containsObjectID) valueForObjectID=\(existingShare == nil ? "nil" : "non-nil")")
                         if let existingShare = sharesByID[householdInContext.objectID] {
                             let shareTitle = householdTitle(from: householdInContext)
                             existingShare[CKShare.SystemFieldKey.title] = shareTitle as CKRecordValue
-                            print("ℹ️ Reusing existing CKShare for household: \(existingShare.recordID.recordName)")
+                            print("ℹ️ Reusing existing CKShare for household recordID=\(existingShare.recordID.recordName)")
                             finish(existingShare, nil)
                         } else {
                             print("ℹ️ No existing CKShare found. Creating one.")
