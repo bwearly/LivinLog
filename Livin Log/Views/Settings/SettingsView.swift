@@ -27,7 +27,6 @@ struct SettingsView: View {
     @State private var share: CKShare?
     @State private var accountStatus: CKAccountStatus = .couldNotDetermine
     @State private var lastCloudKitError: String?
-    @State private var shareTimeoutTask: Task<Void, Never>?
 
     @AppStorage("ll_notify_enabled") private var notificationsEnabled = false
 
@@ -37,15 +36,12 @@ struct SettingsView: View {
     @State private var canSendText: Bool = false
     @State private var canSendMail: Bool = false
 
-    // ✅ Fallback invite link share
-    @State private var showingInviteLinkSheet = false
+    // Presents Apple's official CloudKit sharing UI.
+    @State private var showingCloudKitSharingSheet = false
 
     @AppStorage(CloudSharing.lastShareErrorDefaultsKey) private var persistedLastShareError = ""
     @AppStorage(CloudSharing.lastShareStatusDefaultsKey) private var persistedLastShareStatus = ""
 
-    // ✅ SINGLE SOURCE OF TRUTH for the sheet:
-    // If this is non-nil, the sheet shows. If nil, it dismisses.
-    @State private var shareSheetModel: ShareSheetModel?
 
     private let persistentContainer = PersistenceController.shared.container // NSPersistentCloudKitContainer
 
@@ -77,45 +73,24 @@ struct SettingsView: View {
             if let hh = household { ensureDefaultMemberExists(in: hh) }
             reloadShareStatus()
         }
-        .sheet(item: $shareSheetModel, onDismiss: {
-            // cleanup
+        .sheet(isPresented: $showingCloudKitSharingSheet, onDismiss: {
             isSharing = false
-        }) { model in
-            CloudKitShareSheet(
-                share: model.share,
-                container: model.container,
-                onDone: {
-                    shareSheetModel = nil
-                    isSharing = false
-                    reloadShareStatus()
-                },
-                onError: { err in
-                    shareErrorText = err.localizedDescription
-                    lastCloudKitError = err.localizedDescription
-                    shareSheetModel = nil
-                    isSharing = false
-                }
-            )
-            .ignoresSafeArea()
-            .onAppear {
-                print("✅ CloudKitShareSheet presented with NON-NIL share+container")
-            }
-        }
-        .sheet(isPresented: $showingInviteLinkSheet) {
+            reloadShareStatus()
+        }) {
             if let household {
-                HouseholdInviteLinkView(
+                // Replaced old custom "copy/send invite link" flow with Apple's CloudKit sharing controller.
+                CloudKitHouseholdSharingSheet(
                     household: household,
                     onDone: {
-                        showingInviteLinkSheet = false
-                        isSharing = false
-                        reloadShareStatus()
+                        showingCloudKitSharingSheet = false
                     },
-                    onError: { message in
+                    onError: { error in
+                        let message = error.localizedDescription
                         shareErrorText = message
                         lastCloudKitError = message
                         persistedLastShareError = message
                         CloudSharing.saveLastShareError(message)
-                        showingInviteLinkSheet = false
+                        showingCloudKitSharingSheet = false
                         isSharing = false
                     }
                 )
@@ -158,16 +133,7 @@ struct SettingsView: View {
                 }
                 .disabled(isSharing)
 
-                Button {
-                    shareInviteLink()
-                } label: {
-                    HStack {
-                        Text("Share Invite Link")
-                        Spacer()
-                        Image(systemName: "link")
-                    }
-                }
-                .disabled(isSharing)
+                // Old "Share Invite Link" action removed: we only use CloudKit's official invite flow.
 
             } else {
                 Text("Create a household to begin.")
@@ -384,96 +350,18 @@ struct SettingsView: View {
     // MARK: - Share handling
 
     private func inviteMember() {
-        guard let household else { return }
+        guard household != nil else { return }
 
         shareErrorText = nil
         lastCloudKitError = nil
         persistedLastShareError = ""
-        persistedLastShareStatus = "Preparing iCloud share"
-        CloudSharing.saveLastShareStatus("Preparing iCloud share")
+        persistedLastShareStatus = "Presenting CloudKit share sheet"
+        CloudSharing.saveLastShareStatus("Presenting CloudKit share sheet")
         CloudSharing.saveLastShareError(nil)
 
-        // reset sheet (forces fresh present)
-        shareSheetModel = nil
-
         isSharing = true
-
-        print("ℹ️ Preparing CloudKit share for household:", household.objectID)
-
-        // timeout safety
-        shareTimeoutTask?.cancel()
-        shareTimeoutTask = Task {
-            try? await Task.sleep(nanoseconds: 12_000_000_000)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard isSharing else { return }
-                shareErrorText = "Invite is taking too long. Check iCloud and try again."
-                lastCloudKitError = shareErrorText
-                isSharing = false
-            }
-        }
-
-        Task { @MainActor in
-            do {
-                // Fetch household safely on MOC queue
-                let hh: Household = try await withCheckedThrowingContinuation { cont in
-                    context.perform {
-                        do {
-                            guard let obj = try context.existingObject(with: household.objectID) as? Household else {
-                                throw NSError(domain: "SettingsView", code: 1, userInfo: [NSLocalizedDescriptionKey: "Household not found"])
-                            }
-                            cont.resume(returning: obj)
-                        } catch {
-                            cont.resume(throwing: error)
-                        }
-                    }
-                }
-
-                let share = try await CloudSharing.fetchOrCreateShare(
-                    for: hh,
-                    in: context,
-                    persistentContainer: persistentContainer
-                )
-
-                // Ensure title
-                let title = (hh.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
-                ? (hh.name ?? "Household")
-                : "Household"
-
-                if (share[CKShare.SystemFieldKey.title] as? String)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
-                    share[CKShare.SystemFieldKey.title] = title as CKRecordValue
-                }
-
-                let container = CloudSharing.cloudKitContainer(from: persistentContainer)
-
-                print("✅ Share prepared:", share.recordID.recordName)
-                persistedLastShareStatus = "Share ready for invite"
-                CloudSharing.saveLastShareStatus("Share ready for invite")
-
-                // Update invite capabilities right before presentation
-                canSendText = MFMessageComposeViewController.canSendText()
-                canSendMail = MFMailComposeViewController.canSendMail()
-                print("📨 canSendText:", canSendText, "✉️ canSendMail:", canSendMail)
-
-                shareTimeoutTask?.cancel()
-                shareTimeoutTask = nil
-
-                // ✅ THIS is what presents the sheet (only after we have share+container)
-                shareSheetModel = ShareSheetModel(share: share, container: container)
-
-            } catch {
-                shareTimeoutTask?.cancel()
-                shareTimeoutTask = nil
-
-                print("🟥 Share prepare failed:", error)
-                shareErrorText = error.localizedDescription
-                lastCloudKitError = error.localizedDescription
-                persistedLastShareError = error.localizedDescription
-                CloudSharing.saveLastShareError(error.localizedDescription)
-                isSharing = false
-            }
-        }
+        showingCloudKitSharingSheet = true
+        print("ℹ️ Presenting UICloudSharingController for household invite")
     }
 
     private func reloadShareStatus() {
@@ -589,18 +477,6 @@ struct SettingsView: View {
         }
     }
 
-    private func shareInviteLink() {
-        guard let household else { return }
-
-        shareErrorText = nil
-        lastCloudKitError = nil
-        persistedLastShareError = ""
-        persistedLastShareStatus = "Preparing invite link"
-        CloudSharing.saveLastShareStatus("Preparing invite link")
-        CloudSharing.saveLastShareError(nil)
-        isSharing = true
-        showingInviteLinkSheet = true
-    }
 
     private func resetHouseholdShare() {
         guard let household else { return }
@@ -640,19 +516,6 @@ struct SettingsView: View {
                 CloudSharing.saveLastShareError(message)
             }
         }
-    }
-}
-
-// ✅ Identifiable model that *contains* the values the sheet needs.
-private struct ShareSheetModel: Identifiable {
-    let id: String
-    let share: CKShare
-    let container: CKContainer
-
-    init(share: CKShare, container: CKContainer) {
-        self.share = share
-        self.container = container
-        self.id = share.recordID.recordName
     }
 }
 
