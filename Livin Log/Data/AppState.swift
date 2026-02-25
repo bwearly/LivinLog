@@ -10,6 +10,10 @@ import CloudKit
 import CoreData
 import Combine
 
+extension Notification.Name {
+    static let didAcceptCloudKitShare = Notification.Name("didAcceptCloudKitShare")
+}
+
 @MainActor
 final class AppState: ObservableObject {
 
@@ -26,15 +30,16 @@ final class AppState: ObservableObject {
 
     private let container: NSPersistentCloudKitContainer
     private let cloudKitContainerId = "iCloud.com.blakeearly.livinlog"
+    private var cancellables = Set<AnyCancellable>()
 
     init(container: NSPersistentCloudKitContainer) {
         self.container = container
+        observeShareAcceptanceAndStoreChanges()
     }
 
     func start() async {
         route = .loading
 
-        // 1) iCloud available?
         let status = await fetchICloudStatus()
         guard status == .available else {
             route = .iCloudRequired
@@ -43,56 +48,76 @@ final class AppState: ObservableObject {
             return
         }
 
-        // 2) Load the "active" household from either private OR shared store.
-        //    (Important for recipients of CloudKit shares.)
-        if let h = fetchMostRecentHousehold() {
-            household = h
-
-            // 3) Ensure we have a member object if your UI expects one.
-            //    For shared households, recipients often won't have a member row yet.
-            member = ensureMemberExists(for: h)
-
-            route = .main
-        } else {
+        guard hasAnyHousehold(), let h = fetchMostRecentHousehold() else {
             household = nil
             member = nil
             route = .onboarding
+            return
+        }
+
+        household = h
+        member = ensureMemberExists(for: h)
+        route = .main
+    }
+
+    private func observeShareAcceptanceAndStoreChanges() {
+        NotificationCenter.default.publisher(for: .didAcceptCloudKitShare)
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    await self?.start()
+                }
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(
+            for: .NSPersistentStoreRemoteChange,
+            object: container.persistentStoreCoordinator
+        )
+        .sink { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if self.route == .onboarding {
+                    await self.start()
+                }
+            }
+        }
+        .store(in: &cancellables)
+    }
+
+    private func hasAnyHousehold() -> Bool {
+        let ctx = container.viewContext
+        let req = NSFetchRequest<NSFetchRequestResult>(entityName: "Household")
+        req.fetchLimit = 1
+        req.includesPendingChanges = true
+        req.affectedStores = container.persistentStoreCoordinator.persistentStores
+
+        do {
+            return try ctx.count(for: req) > 0
+        } catch {
+            print("❌ hasAnyHousehold failed: \(error)")
+            return false
         }
     }
 
-    // MARK: - Household selection
-
-    /// Fetches the most recent Household from Core Data.
-    /// By default this searches across *all* persistent stores (private + shared),
-    /// as long as you do not restrict `affectedStores`.
     private func fetchMostRecentHousehold() -> Household? {
         let ctx = container.viewContext
 
         let req = Household.fetchRequest()
         req.fetchLimit = 1
-
-        // Prefer newest if createdAt exists, otherwise you'll still get "some" household.
-        req.sortDescriptors = [
-            NSSortDescriptor(key: "createdAt", ascending: false)
-        ]
+        req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
+        req.affectedStores = container.persistentStoreCoordinator.persistentStores
 
         do {
             return try ctx.fetch(req).first as? Household
         } catch {
-            print("❌ fetchMostRecentHousehold failed:", error)
+            print("❌ fetchMostRecentHousehold failed: \(error)")
             return nil
         }
     }
 
-    // MARK: - Member helper
-
-    /// Creates a HouseholdMember for this household if one doesn't exist.
-    /// If your HouseholdMember model uses different fields, update the marked section.
     private func ensureMemberExists(for household: Household) -> HouseholdMember? {
         let ctx = container.viewContext
 
-        // If you have a stable identifier for "this device/user" you can use that here.
-        // For now, we just ensure there's at least one member linked to the household.
         let req = HouseholdMember.fetchRequest()
         req.fetchLimit = 1
         req.predicate = NSPredicate(format: "household == %@", household)
@@ -102,11 +127,7 @@ final class AppState: ObservableObject {
                 return existing
             }
 
-            // No member yet — create one so UI logic doesn't fail on recipients.
             let m = HouseholdMember(context: ctx)
-
-            // ✅ Adjust these fields to match your model.
-            // If you don't have these properties, remove them.
             m.id = UUID()
             m.createdAt = Date()
             m.household = household
@@ -114,13 +135,11 @@ final class AppState: ObservableObject {
             try ctx.save()
             return m
         } catch {
-            print("❌ ensureMemberExists failed:", error)
+            print("❌ ensureMemberExists failed: \(error)")
             ctx.rollback()
             return nil
         }
     }
-
-    // MARK: - iCloud
 
     private func fetchICloudStatus() async -> CKAccountStatus {
         await withCheckedContinuation { continuation in

@@ -14,29 +14,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication,
                      userDidAcceptCloudKitShareWith cloudKitShareMetadata: CKShare.Metadata) {
+        let persistence = PersistenceController.shared
 
-        print("📩 userDidAcceptCloudKitShareWith fired for container: \(cloudKitShareMetadata.containerIdentifier)")
-
-        let pc = PersistenceController.shared
-        let container = pc.container
-
-        // IMPORTANT: accept shares into the SHARED store.
-        let sharedStore = pc.sharedStore
-
-        container.acceptShareInvitations(from: [cloudKitShareMetadata], into: sharedStore) { _, error in
+        persistence.container.acceptShareInvitations(
+            from: [cloudKitShareMetadata],
+            into: persistence.sharedStore
+        ) { _, error in
             if let error {
-                print("❌ Failed to accept share invite:", error)
-                CloudSharing.saveLastShareError("Accept invite failed: \(error.localizedDescription)")
-                CloudSharing.saveLastShareStatus("Share acceptance failed")
-            } else {
-                print("✅ Accepted share invite.")
-                CloudSharing.saveLastShareError(nil)
-                CloudSharing.saveLastShareStatus("Accepted CloudKit share")
-
-                // ✅ Notify the app UI/state to refresh and pick up the shared household
-                // from the shared store.
-                NotificationCenter.default.post(name: .didAcceptCloudKitShare, object: nil)
+                print("❌ Failed to accept CloudKit share invitation: \(error.localizedDescription)")
+                return
             }
+
+            print("✅ Successfully accepted CloudKit share invitation.")
+            NotificationCenter.default.post(name: .didAcceptCloudKitShare, object: nil)
         }
     }
 }
