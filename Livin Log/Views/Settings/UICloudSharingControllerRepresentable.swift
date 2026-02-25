@@ -17,60 +17,89 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
 
     private let persistentContainer = PersistenceController.shared.container
 
-    private var configuredContainerIdentifier: String {
-        persistentContainer.persistentStoreDescriptions.first?.cloudKitContainerOptions?.containerIdentifier
-        ?? "iCloud.com.blakeearly.livinlog"
-    }
-
-    private var cloudKitContainer: CKContainer {
-        CKContainer(identifier: configuredContainerIdentifier)
-    }
-
     func makeCoordinator() -> Coordinator {
-        Coordinator(
-            household: household,
-            persistentContainer: persistentContainer,
-            cloudKitContainer: cloudKitContainer,
-            onDone: onDone,
-            onError: onError
-        )
+        Coordinator(onDone: onDone, onError: onError)
     }
 
-    func makeUIViewController(context: Context) -> UIViewController {
-        let vc = SharePresenterViewController()
-        vc.onViewDidAppear = {
-            context.coordinator.presentShareFlow(from: vc)
+    func makeUIViewController(context: Context) -> UINavigationController {
+        let controller = UICloudSharingController { _, completion in
+            prepareShare(completion: completion)
         }
-        return vc
+
+        controller.availablePermissions = [.allowReadWrite]
+        controller.delegate = context.coordinator
+
+        let nav = UINavigationController(rootViewController: controller)
+        nav.presentationController?.delegate = context.coordinator
+        return nav
     }
 
-    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+    func updateUIViewController(_ uiViewController: UINavigationController, context: Context) {}
 
-    // MARK: - UIKit Presenter VC
+    private func prepareShare(completion: @escaping (CKShare?, CKContainer?, Error?) -> Void) {
+        let context = persistentContainer.viewContext
 
-    private final class SharePresenterViewController: UIViewController {
-        var onViewDidAppear: (() -> Void)?
-        private var hasPresented = false
+        context.perform {
+            do {
+                guard let householdInContext = try context.existingObject(with: household.objectID) as? Household else {
+                    let error = NSError(
+                        domain: "CloudKitHouseholdSharingSheet",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Household not found."]
+                    )
+                    completion(nil, self.cloudKitContainer(), error)
+                    return
+                }
 
-        override func viewDidAppear(_ animated: Bool) {
-            super.viewDidAppear(animated)
-            guard !hasPresented else { return }
-            hasPresented = true
-            onViewDidAppear?()
+                if householdInContext.objectID.isTemporaryID {
+                    try context.obtainPermanentIDs(for: [householdInContext])
+                }
+
+                if context.hasChanges {
+                    try context.save()
+                }
+
+                self.persistentContainer.share([householdInContext], to: nil) { _, share, _, error in
+                    if let error {
+                        completion(nil, self.cloudKitContainer(), error)
+                        return
+                    }
+
+                    guard let share else {
+                        let error = NSError(
+                            domain: "CloudKitHouseholdSharingSheet",
+                            code: 2,
+                            userInfo: [NSLocalizedDescriptionKey: "Share was nil."]
+                        )
+                        completion(nil, self.cloudKitContainer(), error)
+                        return
+                    }
+
+                    share[CKShare.SystemFieldKey.title] = (householdInContext.name ?? "Livin Log Household") as CKRecordValue
+                    completion(share, self.cloudKitContainer(), nil)
+                }
+            } catch {
+                completion(nil, self.cloudKitContainer(), error)
+            }
         }
     }
 
-    // MARK: - Coordinator
+    private func cloudKitContainer() -> CKContainer {
+        if let containerIdentifier = persistentContainer
+            .persistentStoreDescriptions
+            .first?
+            .cloudKitContainerOptions?
+            .containerIdentifier {
+            return CKContainer(identifier: containerIdentifier)
+        }
 
-    final class Coordinator: NSObject {
-        private let household: Household
-        private let persistentContainer: NSPersistentCloudKitContainer
-        private let cloudKitContainer: CKContainer
+        return CKContainer.default()
+    }
+
+    final class Coordinator: NSObject, UICloudSharingControllerDelegate, UIAdaptivePresentationControllerDelegate {
         private let onDone: () -> Void
         private let onError: (Error) -> Void
-
-        private let finishLock = NSLock()
-        private var didFinish = false
+        private var finished = false
 
         init(
             household: Household,
@@ -86,135 +115,27 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
             self.onError = onError
         }
 
-        func presentShareFlow(from presentingVC: UIViewController) {
-            // If you want, you can keep this watchdog. It helps avoid “silent blank” hangs.
-            let watchdogSeconds: TimeInterval = 10
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + watchdogSeconds) { [weak self] in
-                guard let self else { return }
-                self.finishOnce(
-                    error: NSError(
-                        domain: "CloudKitHouseholdSharingSheet",
-                        code: 99,
-                        userInfo: [NSLocalizedDescriptionKey: "Share flow timed out after \(Int(watchdogSeconds))s."]
-                    )
-                )
-            }
-
-            prepareShare { [weak self] share in
-                guard let self else { return }
-
-                guard let url = share.url else {
-                    self.finishOnce(
-                        error: NSError(
-                            domain: "CloudKitHouseholdSharingSheet",
-                            code: 3,
-                            userInfo: [NSLocalizedDescriptionKey: "CloudKit share URL was nil (share may not be saved yet)."]
-                        )
-                    )
-                    return
-                }
-
-                DispatchQueue.main.async {
-                    // Present a normal iOS share sheet with the exact household’s CloudKit share URL.
-                    let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-
-                    // iPad safety
-                    if let pop = activity.popoverPresentationController {
-                        pop.sourceView = presentingVC.view
-                        pop.sourceRect = CGRect(
-                            x: presentingVC.view.bounds.midX,
-                            y: presentingVC.view.bounds.midY,
-                            width: 1,
-                            height: 1
-                        )
-                        pop.permittedArrowDirections = []
-                    }
-
-                    activity.completionWithItemsHandler = { [weak self] _, _, _, _ in
-                        self?.finishOnceSuccess()
-                    }
-
-                    presentingVC.present(activity, animated: true)
-                }
-            }
-        }
-
-        // MARK: - Share Preparation
-
-        private func prepareShare(completion: @escaping (CKShare) -> Void) {
-            let context = persistentContainer.viewContext
-
-            context.perform {
-                do {
-                    guard let householdInContext = try context.existingObject(with: self.household.objectID) as? Household else {
-                        throw NSError(
-                            domain: "CloudKitHouseholdSharingSheet",
-                            code: 1,
-                            userInfo: [NSLocalizedDescriptionKey: "Household not found in Core Data context."]
-                        )
-                    }
-
-                    // Ensure permanent IDs + save
-                    if householdInContext.objectID.isTemporaryID {
-                        try context.obtainPermanentIDs(for: [householdInContext])
-                    }
-                    if context.hasChanges {
-                        try context.save()
-                    }
-
-                    // IMPORTANT: use the synchronous/throwing fetchShares API (this avoids the “extra trailing closure” error).
-                    let sharesByID = try self.persistentContainer.fetchShares(matching: [householdInContext.objectID])
-
-                    if let existingShare = sharesByID[householdInContext.objectID] {
-                        self.applyShareMetadata(existingShare, household: householdInContext)
-                        completion(existingShare)
-                        return
-                    }
-
-                    // Create a new share
-                    self.persistentContainer.share([householdInContext], to: nil) { _, share, _, error in
-                        if let error {
-                            self.finishOnce(error: error)
-                            return
-                        }
-                        guard let share else {
-                            self.finishOnce(
-                                error: NSError(
-                                    domain: "CloudKitHouseholdSharingSheet",
-                                    code: 2,
-                                    userInfo: [NSLocalizedDescriptionKey: "Share creation returned nil share."]
-                                )
-                            )
-                            return
-                        }
-
-                        self.applyShareMetadata(share, household: householdInContext)
-                        completion(share)
-                    }
-                } catch {
-                    self.finishOnce(error: error)
-                }
-            }
-        }
-
-        private func applyShareMetadata(_ share: CKShare, household: Household) {
-            let title = (household.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            let shareTitle = title.isEmpty ? "Livin Log Household" : title
-            share[CKShare.SystemFieldKey.title] = shareTitle as CKRecordValue
-
-            // If you want a URL that can be shared broadly, a public permission helps CloudKit generate/maintain the URL.
-            // You can choose `.readOnly` if you want recipients to not be able to edit.
-            share.publicPermission = .readWrite
-        }
-
-        // MARK: - Finish helpers
-
-        private func finishOnceSuccess() {
-            finishLock.lock()
-            defer { finishLock.unlock() }
-            guard !didFinish else { return }
-            didFinish = true
+        private func finish() {
+            guard !finished else { return }
+            finished = true
             DispatchQueue.main.async { self.onDone() }
+        }
+
+        func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+            finish()
+        }
+
+        func cloudSharingControllerDidSaveShare(_ csc: UICloudSharingController) {
+            finish()
+        }
+
+        func cloudSharingControllerDidStopSharing(_ csc: UICloudSharingController) {
+            finish()
+        }
+
+        func cloudSharingController(_ csc: UICloudSharingController, failedToSaveShareWithError error: Error) {
+            onError(error)
+            finish()
         }
 
         private func finishOnce(error: Error) {
