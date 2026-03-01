@@ -101,16 +101,7 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
         private let onError: (Error) -> Void
         private var finished = false
 
-        init(
-            household: Household,
-            persistentContainer: NSPersistentCloudKitContainer,
-            cloudKitContainer: CKContainer,
-            onDone: @escaping () -> Void,
-            onError: @escaping (Error) -> Void
-        ) {
-            self.household = household
-            self.persistentContainer = persistentContainer
-            self.cloudKitContainer = cloudKitContainer
+        init(onDone: @escaping () -> Void, onError: @escaping (Error) -> Void) {
             self.onDone = onDone
             self.onError = onError
         }
@@ -138,15 +129,11 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
             finish()
         }
 
-        private func finishOnce(error: Error) {
-            finishLock.lock()
-            defer { finishLock.unlock() }
-            guard !didFinish else { return }
-            didFinish = true
-            DispatchQueue.main.async {
-                self.onError(error)
-                self.onDone()
-            }
+        // Required by UICloudSharingControllerDelegate to provide a title for the shared item
+        func itemTitle(for csc: UICloudSharingController) -> String? {
+            // Provide a sensible default title for the share sheet
+            return "Livin Log Household"
         }
     }
 }
+
