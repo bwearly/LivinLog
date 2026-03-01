@@ -12,6 +12,7 @@ import Combine
 
 extension Notification.Name {
     static let didAcceptCloudKitShare = Notification.Name("didAcceptCloudKitShare")
+    static let didReceiveCloudKitShare = Notification.Name("didReceiveCloudKitShare")
 }
 
 @MainActor
