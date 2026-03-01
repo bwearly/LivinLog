@@ -1,5 +1,6 @@
 import SwiftUI
 import CloudKit
+import CoreData
 
 struct PendingShareInvite: Identifiable {
     let id = UUID()
@@ -14,22 +15,22 @@ struct AcceptHouseholdInviteSheet: View {
     @State private var isAccepting = false
     @State private var errorMessage: String?
 
+    /// True if the currently selected household (if any) lives in the PRIVATE store.
+    /// We resolve the store by comparing the objectID's persistentStore to PersistenceController.shared.privateStore.
     private var hasActivePrivateHousehold: Bool {
-        let context = PersistenceController.shared.container.viewContext
-        let (selectedHousehold, _) = SelectionStore.load(context: context)
-        guard let selectedHousehold,
-              let coordinator = context.persistentStoreCoordinator,
-              let selectedStore = coordinator.persistentStore(for: selectedHousehold.objectID)
-        else {
-            return false
-        }
+        let ctx = PersistenceController.shared.container.viewContext
+        let (selectedHousehold, _) = SelectionStore.load(context: ctx)
+        guard let selectedHousehold else { return false }
 
-        return selectedStore == PersistenceController.shared.privateStore
+        // ✅ Correct way to map objectID -> NSPersistentStore in your environment
+        guard let store = selectedHousehold.objectID.persistentStore else { return false }
+
+        return store == PersistenceController.shared.privateStore
     }
 
     private var inviteTitle: String {
         let ownerName = pendingInvite.metadata.ownerIdentity.nameComponents?.formatted() ?? "Someone"
-        let householdTitle = (pendingInvite.metadata.share?[CKShare.SystemFieldKey.title] as? String) ?? "a household"
+        let householdTitle = (pendingInvite.metadata.share[CKShare.SystemFieldKey.title] as? String) ?? "a household"
         return "\(ownerName) invited you to join \(householdTitle)"
     }
 
@@ -99,9 +100,7 @@ struct AcceptHouseholdInviteSheet: View {
                 isAccepting = false
                 dismiss()
 
-                Task {
-                    await onAccepted()
-                }
+                Task { await onAccepted() }
             }
         }
     }
