@@ -14,6 +14,19 @@ struct AcceptHouseholdInviteSheet: View {
     @State private var isAccepting = false
     @State private var errorMessage: String?
 
+    private var hasActivePrivateHousehold: Bool {
+        let context = PersistenceController.shared.container.viewContext
+        let (selectedHousehold, _) = SelectionStore.load(context: context)
+        guard let selectedHousehold,
+              let coordinator = context.persistentStoreCoordinator,
+              let selectedStore = coordinator.persistentStore(for: selectedHousehold.objectID)
+        else {
+            return false
+        }
+
+        return selectedStore == PersistenceController.shared.privateStore
+    }
+
     private var inviteTitle: String {
         let ownerName = pendingInvite.metadata.ownerIdentity.nameComponents?.formatted() ?? "Someone"
         let householdTitle = (pendingInvite.metadata.share?[CKShare.SystemFieldKey.title] as? String) ?? "a household"
@@ -26,6 +39,13 @@ struct AcceptHouseholdInviteSheet: View {
                 Text(inviteTitle)
                     .font(.headline)
                     .multilineTextAlignment(.center)
+
+                if hasActivePrivateHousehold {
+                    Text("You already have a household. Accepting will switch your active household.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
 
                 if let errorMessage {
                     Text(errorMessage)
@@ -41,7 +61,7 @@ struct AcceptHouseholdInviteSheet: View {
                     .buttonStyle(.bordered)
                     .disabled(isAccepting)
 
-                    Button("Accept") {
+                    Button(hasActivePrivateHousehold ? "Switch & Join" : "Accept") {
                         acceptInvite()
                     }
                     .buttonStyle(.borderedProminent)
