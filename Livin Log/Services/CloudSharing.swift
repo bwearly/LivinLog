@@ -114,7 +114,8 @@ enum CloudSharing {
                         } else {
                             print("[CloudSharing] share.url=nil")
                         }
-                        print("[CloudSharing] persisting updated share into storeURL=\(store.url?.absoluteString ?? \"nil\")")
+                        let storeURLString = store.url?.absoluteString ?? "nil"
+                        print("[CloudSharing] persisting updated share into storeURL=\(storeURLString)")
 
                         // ✅ Persist updated share fields back to CloudKit
                         persistentContainer.persistUpdatedShare(share, in: store) { _, persistError in

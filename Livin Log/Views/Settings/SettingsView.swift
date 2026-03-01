@@ -37,7 +37,7 @@ struct SettingsView: View {
     @State private var canSendMail: Bool = false
 
     // Presents Apple's official CloudKit sharing UI.
-    @State private var showingCloudKitSharingSheet = false
+    @State private var showingInviteShareSheet = false
 
     @AppStorage(CloudSharing.lastShareErrorDefaultsKey) private var persistedLastShareError = ""
     @AppStorage(CloudSharing.lastShareStatusDefaultsKey) private var persistedLastShareStatus = ""
@@ -73,7 +73,7 @@ struct SettingsView: View {
             if let hh = household { ensureDefaultMemberExists(in: hh) }
             reloadShareStatus()
         }
-        .sheet(isPresented: $showingCloudKitSharingSheet, onDismiss: {
+        .sheet(isPresented: $showingInviteShareSheet, onDismiss: {
             isSharing = false
             reloadShareStatus()
         }) {
@@ -82,7 +82,7 @@ struct SettingsView: View {
                 CloudKitHouseholdSharingSheet(
                     household: household,
                     onDone: {
-                        showingCloudKitSharingSheet = false
+                        showingInviteShareSheet = false
                     },
                     onError: { error in
                         let message = error.localizedDescription
@@ -90,7 +90,7 @@ struct SettingsView: View {
                         lastCloudKitError = message
                         persistedLastShareError = message
                         CloudSharing.saveLastShareError(message)
-                        showingCloudKitSharingSheet = false
+                        showingInviteShareSheet = false
                         isSharing = false
                     }
                 )
@@ -355,13 +355,13 @@ struct SettingsView: View {
         shareErrorText = nil
         lastCloudKitError = nil
         persistedLastShareError = ""
-        persistedLastShareStatus = "Presenting CloudKit share sheet"
-        CloudSharing.saveLastShareStatus("Presenting CloudKit share sheet")
+        persistedLastShareStatus = "Preparing invite link…"
+        CloudSharing.saveLastShareStatus("Preparing invite link…")
         CloudSharing.saveLastShareError(nil)
 
         isSharing = true
-        showingCloudKitSharingSheet = true
-        print("ℹ️ Presenting UICloudSharingController for household invite")
+        showingInviteShareSheet = true
+        print("ℹ️ Presenting iOS share sheet (Messages) for household invite")
     }
 
     private func reloadShareStatus() {
