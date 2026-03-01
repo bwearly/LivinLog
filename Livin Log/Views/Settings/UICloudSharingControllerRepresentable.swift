@@ -76,7 +76,47 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
                     }
 
                     share[CKShare.SystemFieldKey.title] = (householdInContext.name ?? "Livin Log Household") as CKRecordValue
-                    completion(share, self.cloudKitContainer(), nil)
+                    share.publicPermission = .readWrite
+
+                    // TEMP DEBUG LOGGING
+                    print("[CloudKitHouseholdSharingSheet] share.publicPermission=\(share.publicPermission.rawValue)")
+                    if let shareURL = share.url {
+                        print("[CloudKitHouseholdSharingSheet] share.url=\(shareURL.absoluteString)")
+                    } else {
+                        print("[CloudKitHouseholdSharingSheet] share.url=nil")
+                    }
+
+                    let privateStoreURL = self.persistentContainer.persistentStoreDescriptions
+                        .first(where: { $0.cloudKitContainerOptions?.databaseScope == .private })?
+                        .url
+
+                    let storeForShare: NSPersistentStore? = {
+                        if let url = privateStoreURL {
+                            return self.persistentContainer.persistentStoreCoordinator.persistentStore(for: url)
+                        }
+                        return self.persistentContainer.persistentStoreCoordinator.persistentStores.first
+                    }()
+
+                    guard let store = storeForShare else {
+                        let error = NSError(
+                            domain: "CloudKitHouseholdSharingSheet",
+                            code: 3,
+                            userInfo: [NSLocalizedDescriptionKey: "Could not resolve a persistent store to persist the share."]
+                        )
+                        completion(nil, self.cloudKitContainer(), error)
+                        return
+                    }
+
+                    print("[CloudKitHouseholdSharingSheet] persisting updated share into storeURL=\(store.url?.absoluteString ?? "nil")")
+
+                    self.persistentContainer.persistUpdatedShare(share, in: store) { _, persistError in
+                        if let persistError {
+                            completion(nil, self.cloudKitContainer(), persistError)
+                            return
+                        }
+
+                        completion(share, self.cloudKitContainer(), nil)
+                    }
                 }
             } catch {
                 completion(nil, self.cloudKitContainer(), error)

@@ -107,6 +107,15 @@ enum CloudSharing {
                             (householdInContext.name ?? "Livin Log Household") as CKRecordValue
                         share.publicPermission = .readWrite
 
+                        // TEMP DEBUG LOGGING
+                        print("[CloudSharing] share.publicPermission=\(share.publicPermission.rawValue)")
+                        if let shareURL = share.url {
+                            print("[CloudSharing] share.url=\(shareURL.absoluteString)")
+                        } else {
+                            print("[CloudSharing] share.url=nil")
+                        }
+                        print("[CloudSharing] persisting updated share into storeURL=\(store.url?.absoluteString ?? \"nil\")")
+
                         // ✅ Persist updated share fields back to CloudKit
                         persistentContainer.persistUpdatedShare(share, in: store) { _, persistError in
                             if let persistError {
@@ -139,9 +148,4 @@ enum CloudSharing {
         _ = try await container.privateCloudDatabase.deleteRecord(withID: share.recordID)
     }
     
-    private static func configureShare(_ share: CKShare, title: String) {
-        share[CKShare.SystemFieldKey.title] = title as CKRecordValue
-        // ✅ This enables “anyone with link can join”
-        share.publicPermission = .readWrite
-    }
 }
