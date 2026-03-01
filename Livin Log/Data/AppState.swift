@@ -46,18 +46,21 @@ final class AppState: ObservableObject {
             route = .iCloudRequired
             household = nil
             member = nil
+            SelectionStore.save(household: nil, member: nil)
             return
         }
 
-        guard hasAnyHousehold(), let h = fetchMostRecentHousehold() else {
+        guard hasAnyHousehold(), let h = fetchPreferredHousehold() else {
             household = nil
             member = nil
+            SelectionStore.save(household: nil, member: nil)
             route = .onboarding
             return
         }
 
         household = h
         member = ensureMemberExists(for: h)
+        SelectionStore.save(household: household, member: member)
         route = .main
     }
 
@@ -100,13 +103,24 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func fetchMostRecentHousehold() -> Household? {
+    private func fetchPreferredHousehold() -> Household? {
+        if let sharedHousehold = fetchMostRecentHousehold(in: PersistenceController.shared.sharedStore) {
+            let identifier = sharedHousehold.name ?? sharedHousehold.objectID.uriRepresentation().absoluteString
+            print("✅ Switched active household to shared: \(identifier)")
+            return sharedHousehold
+        }
+
+        print("ℹ️ No shared households found; using private household")
+        return fetchMostRecentHousehold(in: PersistenceController.shared.privateStore)
+    }
+
+    private func fetchMostRecentHousehold(in store: NSPersistentStore) -> Household? {
         let ctx = container.viewContext
 
         let req = Household.fetchRequest()
         req.fetchLimit = 1
         req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
-        req.affectedStores = container.persistentStoreCoordinator.persistentStores
+        req.affectedStores = [store]
 
         do {
             return try ctx.fetch(req).first as? Household
