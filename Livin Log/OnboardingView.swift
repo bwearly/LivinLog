@@ -16,6 +16,8 @@ struct OnboardingView: View {
     @State private var householdName: String = "Our Household"
     @State private var myName: String = ""
     @State private var isCreating = false
+    @State private var showingPasteInvite = false
+    @State private var pendingInvite: PendingShareInvite?
     @State private var errorText: String?
 
     let onFinished: () -> Void
@@ -66,9 +68,8 @@ struct OnboardingView: View {
                 .padding(.horizontal)
                 .disabled(myName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCreating)
 
-                // Join is Phase 2: accepts CloudKit share
                 Button {
-                    errorText = "Joining via invite is next — we’ll add the Share/Accept flow right after the Movies list is in."
+                    showingPasteInvite = true
                 } label: {
                     Text("Join Household (Invite)")
                         .frame(maxWidth: .infinity)
@@ -80,6 +81,16 @@ struct OnboardingView: View {
             }
             .navigationTitle("Setup")
             .navigationBarTitleDisplayMode(.inline)
+        }
+        .sheet(isPresented: $showingPasteInvite) {
+            PasteInviteLinkSheet { invite in
+                pendingInvite = invite
+            }
+        }
+        .sheet(item: $pendingInvite) { invite in
+            AcceptHouseholdInviteSheet(pendingInvite: invite) {
+                onFinished()
+            }
         }
     }
 
