@@ -33,7 +33,8 @@ final class InviteRouter {
 
     private func isICloudShareURL(_ url: URL) -> Bool {
         let hostContainsICloud = (url.host ?? "").localizedCaseInsensitiveContains("icloud.com")
-        let pathContainsShare = url.path.localizedCaseInsensitiveContains("/share/")
+        let path = url.path.lowercased()
+        let pathContainsShare = path.contains("/share/") || path.hasPrefix("/share")
         return hostContainsICloud && pathContainsShare
     }
 }
