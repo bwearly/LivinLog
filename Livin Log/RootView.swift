@@ -25,7 +25,10 @@ struct RootView: View {
             switch appState.route {
             case .loading:
                 ProgressView("Setting up Livin Log…")
-                    .task { await appState.start() }
+                    .task {
+                        guard pendingInvite == nil else { return }
+                        await appState.start()
+                    }
 
             case .iCloudRequired:
                 ICloudRequiredView {
@@ -44,6 +47,7 @@ struct RootView: View {
             }
         }
         .task {
+            guard pendingInvite == nil else { return }
             await NotificationScheduler.sync(context: context, household: appState.household)
         }
         .onReceive(NotificationCenter.default.publisher(for: .didReceiveCloudKitShare)) { note in
@@ -72,7 +76,10 @@ struct RootView: View {
 
         Task {
             guard let invite = await inviteRouter.pendingInvite(from: url) else { return }
-            pendingInvite = invite
+            Task { @MainActor in
+                pendingInvite = invite
+                print("✅ Presenting invite sheet")
+            }
         }
     }
 }
