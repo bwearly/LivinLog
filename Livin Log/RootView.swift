@@ -15,6 +15,7 @@ struct RootView: View {
     private let inviteRouter = InviteRouter()
     @State private var pendingInvite: PendingShareInvite?
     @State private var lastProcessedShareURL: URL?
+    @State private var showingCreateMemberProfileSheet = false
     
     init(container: NSPersistentCloudKitContainer) {
         _appState = StateObject(wrappedValue: AppState(container: container))
@@ -61,9 +62,26 @@ struct RootView: View {
             guard let url = activity.webpageURL else { return }
             routeIncomingInviteURL(url)
         }
+
+        .onChange(of: appState.route) { _, newRoute in
+            guard newRoute == .main else { return }
+            if appState.shouldPromptForSharedMemberProfile() {
+                showingCreateMemberProfileSheet = true
+            }
+        }
         .sheet(item: $pendingInvite) { pendingInvite in
             AcceptHouseholdInviteSheet(pendingInvite: pendingInvite) {
                 await appState.start()
+                if appState.shouldPromptForSharedMemberProfile() {
+                    showingCreateMemberProfileSheet = true
+                }
+            }
+        }
+        .sheet(isPresented: $showingCreateMemberProfileSheet) {
+            if let sharedHousehold = appState.household {
+                CreateMemberProfileSheet(household: sharedHousehold) { createdMember in
+                    appState.applyCreatedSharedMember(createdMember, for: sharedHousehold)
+                }
             }
         }
     }

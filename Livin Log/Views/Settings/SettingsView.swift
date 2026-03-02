@@ -30,6 +30,7 @@ struct SettingsView: View {
 
     @AppStorage("ll_notify_enabled") private var notificationsEnabled = false
     @State private var showNotificationsDeniedAlert = false
+    @State private var showDeleteAllConfirmation = false
 
     // Presents Apple's official CloudKit sharing UI.
     @State private var showingInviteShareSheet = false
@@ -37,6 +38,7 @@ struct SettingsView: View {
     // Bulletproof join flow (paste link)
     @State private var showingPasteInviteSheet = false
     @State private var pendingInvite: PendingShareInvite?
+    @State private var sharedHouseholdNeedingProfile: Household?
 
     @AppStorage(CloudSharing.lastShareErrorDefaultsKey) private var persistedLastShareError = ""
     @AppStorage(CloudSharing.lastShareStatusDefaultsKey) private var persistedLastShareStatus = ""
@@ -111,8 +113,29 @@ struct SettingsView: View {
         .sheet(item: $pendingInvite) { invite in
             AcceptHouseholdInviteSheet(pendingInvite: invite) {
                 NotificationCenter.default.post(name: .didAcceptCloudKitShare, object: nil)
-                await MainActor.run { reloadShareStatus() }
+                await MainActor.run {
+                    reloadShareStatus()
+                    resolveSharedMemberPromptNeed()
+                }
             }
+        }
+        .sheet(item: $sharedHouseholdNeedingProfile) { sharedHousehold in
+            CreateMemberProfileSheet(household: sharedHousehold) { createdMember in
+                household = sharedHousehold
+                member = createdMember
+                SelectionStore.save(household: sharedHousehold, member: createdMember)
+                SelectionStore.saveDeviceMember(createdMember, for: sharedHousehold)
+            }
+        }
+
+
+        .alert("Delete All Data & Restart", isPresented: $showDeleteAllConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete All", role: .destructive) {
+                deleteAllDataAndRestart()
+            }
+        } message: {
+            Text("This will delete local household data on this device and reset your selection. Shared iCloud data for other members may still exist.")
         }
 
         .alert("Notifications Disabled", isPresented: $showNotificationsDeniedAlert) {
@@ -263,6 +286,49 @@ struct SettingsView: View {
             } label: {
                 Label("Advanced", systemImage: "gearshape.2")
             }
+
+            Button("Delete All Data & Restart", role: .destructive) {
+                showDeleteAllConfirmation = true
+            }
+        }
+    }
+
+
+    private func resolveSharedMemberPromptNeed() {
+        let (selectedHousehold, selectedMember) = SelectionStore.load(context: context)
+        guard let selectedHousehold else {
+            sharedHouseholdNeedingProfile = nil
+            return
+        }
+
+        household = selectedHousehold
+
+        let isShared = selectedHousehold.objectID.persistentStore == PersistenceController.shared.sharedStore
+        let selectedMatches = selectedMember?.household?.objectID == selectedHousehold.objectID
+
+        if selectedMatches, let selectedMember {
+            member = selectedMember
+            print("✅ Using existing selected member for this household")
+            SelectionStore.saveDeviceMember(selectedMember, for: selectedHousehold)
+            sharedHouseholdNeedingProfile = nil
+            return
+        }
+
+        if let deviceMember = SelectionStore.loadDeviceMember(for: selectedHousehold, context: context) {
+            member = deviceMember
+            SelectionStore.save(household: selectedHousehold, member: deviceMember)
+            print("✅ Using existing selected member for this household")
+            sharedHouseholdNeedingProfile = nil
+            return
+        }
+
+        member = nil
+
+        if isShared {
+            print("ℹ️ Selected household is shared; no local member found; prompting for name")
+            sharedHouseholdNeedingProfile = selectedHousehold
+        } else {
+            sharedHouseholdNeedingProfile = nil
         }
     }
 
@@ -334,13 +400,28 @@ struct SettingsView: View {
     }
 
     private func ensureDefaultMemberExists(in household: Household) {
+        let isSharedHousehold = household.objectID.persistentStore == PersistenceController.shared.sharedStore
         let members = fetchMembers(for: household)
 
-        if !members.isEmpty {
-            if self.member == nil {
-                self.member = members.first
-                SelectionStore.save(household: self.household, member: self.member)
-            }
+        if let selected = member, selected.household?.objectID == household.objectID {
+            SelectionStore.saveDeviceMember(selected, for: household)
+            return
+        }
+
+        if let selected = SelectionStore.loadDeviceMember(for: household, context: context) {
+            member = selected
+            SelectionStore.save(household: household, member: selected)
+            return
+        }
+
+        if isSharedHousehold {
+            member = nil
+            return
+        }
+
+        if let first = members.first {
+            member = first
+            SelectionStore.save(household: self.household, member: self.member)
             return
         }
 
@@ -357,6 +438,43 @@ struct SettingsView: View {
         } catch {
             context.rollback()
             self.errorText = error.localizedDescription
+        }
+    }
+
+
+    private func deleteAllDataAndRestart() {
+        let coordinator = persistentContainer.persistentStoreCoordinator
+        let stores = coordinator.persistentStores
+
+        context.performAndWait {
+            context.reset()
+
+            let entityNames = persistentContainer.managedObjectModel.entities.compactMap(\.name)
+            for store in stores {
+                for entityName in entityNames {
+                    let fetch = NSFetchRequest<NSFetchRequestResult>(entityName: entityName)
+                    fetch.includesPropertyValues = false
+                    fetch.affectedStores = [store]
+                    let delete = NSBatchDeleteRequest(fetchRequest: fetch)
+                    delete.resultType = .resultTypeObjectIDs
+
+                    do {
+                        let result = try context.execute(delete) as? NSBatchDeleteResult
+                        if let deletedObjectIDs = result?.result as? [NSManagedObjectID], !deletedObjectIDs.isEmpty {
+                            let changes = [NSDeletedObjectsKey: deletedObjectIDs]
+                            NSManagedObjectContext.mergeChanges(fromRemoteContextSave: changes, into: [context])
+                        }
+                    } catch {
+                        print("❌ Delete All failed for \(entityName): \(error)")
+                    }
+                }
+            }
+
+            SelectionStore.clearAll()
+            household = nil
+            member = nil
+            print("🧨 Delete All: cleared selection + deleted local stores; restarting")
+            NotificationCenter.default.post(name: .didRequestAppRestart, object: nil)
         }
     }
 

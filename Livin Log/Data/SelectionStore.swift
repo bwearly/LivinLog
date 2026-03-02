@@ -12,6 +12,7 @@ import CoreData
 enum SelectionStore {
     private static let householdKey = "selectedHouseholdURI"
     private static let memberKey = "selectedMemberURI"
+    private static let deviceMemberMapKey = "selectedDeviceMemberByHouseholdURI"
 
     static func save(household: Household?, member: HouseholdMember?) {
         let defaults = UserDefaults.standard
@@ -52,5 +53,52 @@ enum SelectionStore {
         }
 
         return (household, member)
+    }
+
+    static func saveDeviceMember(_ member: HouseholdMember?, for household: Household?) {
+        guard let household else { return }
+
+        let defaults = UserDefaults.standard
+        var map = defaults.dictionary(forKey: deviceMemberMapKey) as? [String: String] ?? [:]
+        let householdURI = household.objectID.uriRepresentation().absoluteString
+
+        if let member {
+            map[householdURI] = member.objectID.uriRepresentation().absoluteString
+        } else {
+            map.removeValue(forKey: householdURI)
+        }
+
+        defaults.set(map, forKey: deviceMemberMapKey)
+    }
+
+    static func loadDeviceMember(for household: Household, context: NSManagedObjectContext) -> HouseholdMember? {
+        let defaults = UserDefaults.standard
+        guard let map = defaults.dictionary(forKey: deviceMemberMapKey) as? [String: String] else {
+            return nil
+        }
+
+        let householdURI = household.objectID.uriRepresentation().absoluteString
+        guard let memberURI = map[householdURI],
+              let url = URL(string: memberURI),
+              let psc = context.persistentStoreCoordinator,
+              let oid = psc.managedObjectID(forURIRepresentation: url)
+        else {
+            return nil
+        }
+
+        guard let member = try? context.existingObject(with: oid) as? HouseholdMember,
+              member.household?.objectID == household.objectID
+        else {
+            return nil
+        }
+
+        return member
+    }
+
+    static func clearAll() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: householdKey)
+        defaults.removeObject(forKey: memberKey)
+        defaults.removeObject(forKey: deviceMemberMapKey)
     }
 }

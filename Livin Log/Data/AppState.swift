@@ -13,6 +13,7 @@ import Combine
 extension Notification.Name {
     static let didAcceptCloudKitShare = Notification.Name("didAcceptCloudKitShare")
     static let didReceiveCloudKitShare = Notification.Name("didReceiveCloudKitShare")
+    static let didRequestAppRestart = Notification.Name("didRequestAppRestart")
 }
 
 @MainActor
@@ -59,9 +60,21 @@ final class AppState: ObservableObject {
         }
 
         household = h
-        member = ensureMemberExists(for: h)
+        member = resolveMember(for: h)
         SelectionStore.save(household: household, member: member)
         route = .main
+    }
+
+    func applyCreatedSharedMember(_ createdMember: HouseholdMember, for household: Household) {
+        self.household = household
+        self.member = createdMember
+        SelectionStore.save(household: household, member: createdMember)
+        SelectionStore.saveDeviceMember(createdMember, for: household)
+    }
+
+    func shouldPromptForSharedMemberProfile() -> Bool {
+        guard let household else { return false }
+        return isSharedHousehold(household) && !validateSelectionMember(member, for: household)
     }
 
     private func observeShareAcceptanceAndStoreChanges() {
@@ -70,6 +83,15 @@ final class AppState: ObservableObject {
             .sink { [weak self] _ in
                 Task { @MainActor in
                     print("ℹ️ didAcceptCloudKitShare received; re-evaluating app state")
+                    await self?.start()
+                }
+            }
+            .store(in: &cancellables)
+
+        // Handle local data reset requests.
+        NotificationCenter.default.publisher(for: .didRequestAppRestart)
+            .sink { [weak self] _ in
+                Task { @MainActor in
                     await self?.start()
                 }
             }
@@ -150,7 +172,31 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func ensureMemberExists(for household: Household) -> HouseholdMember? {
+    private func resolveMember(for household: Household) -> HouseholdMember? {
+        let ctx = container.viewContext
+
+        let (_, selectedMember) = SelectionStore.load(context: ctx)
+        if validateSelectionMember(selectedMember, for: household) {
+            print("✅ Using existing selected member for this household")
+            SelectionStore.saveDeviceMember(selectedMember, for: household)
+            return selectedMember
+        }
+
+        if let deviceMember = SelectionStore.loadDeviceMember(for: household, context: ctx),
+           validateSelectionMember(deviceMember, for: household) {
+            print("✅ Using existing selected member for this household")
+            return deviceMember
+        }
+
+        if isSharedHousehold(household) {
+            print("ℹ️ Selected household is shared; no local member found; prompting for name")
+            return nil
+        }
+
+        return ensureDefaultPrivateMemberExists(for: household)
+    }
+
+    private func ensureDefaultPrivateMemberExists(for household: Household) -> HouseholdMember? {
         let ctx = container.viewContext
 
         let req = HouseholdMember.fetchRequest()
@@ -162,18 +208,28 @@ final class AppState: ObservableObject {
                 return existing
             }
 
-            let m = HouseholdMember(context: ctx)
-            m.id = UUID()
-            m.createdAt = Date()
-            m.household = household
+            let me = HouseholdMember(context: ctx)
+            me.id = UUID()
+            me.createdAt = Date()
+            me.displayName = "Me"
+            me.household = household
 
             try ctx.save()
-            return m
+            return me
         } catch {
-            print("❌ ensureMemberExists failed: \(error)")
+            print("❌ ensureDefaultPrivateMemberExists failed: \(error)")
             ctx.rollback()
             return nil
         }
+    }
+
+    private func validateSelectionMember(_ candidate: HouseholdMember?, for household: Household) -> Bool {
+        guard let candidate else { return false }
+        return candidate.household?.objectID == household.objectID
+    }
+
+    private func isSharedHousehold(_ household: Household) -> Bool {
+        household.objectID.persistentStore == PersistenceController.shared.sharedStore
     }
 
     private func fetchICloudStatus() async -> CKAccountStatus {
