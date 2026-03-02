@@ -19,7 +19,7 @@ extension Notification.Name {
 @MainActor
 final class AppState: ObservableObject {
 
-    enum Route {
+    enum Route: Equatable {
         case loading
         case iCloudRequired
         case onboarding
@@ -33,36 +33,71 @@ final class AppState: ObservableObject {
     private let container: NSPersistentCloudKitContainer
     private let cloudKitContainerId = "iCloud.com.blakeearly.livinlog"
     private var cancellables = Set<AnyCancellable>()
+    private var isStarting = false
+    private var needsRestartAfterCurrentStart = false
+    private var debouncedStartTask: Task<Void, Never>?
 
     init(container: NSPersistentCloudKitContainer) {
         self.container = container
         observeShareAcceptanceAndStoreChanges()
     }
 
-    func start() async {
-        route = .loading
+    func start(callSite: String = #function) async {
+        debugLog("start() invoked [\(callSite)] route=\(routeLabel(route))")
+
+        if isStarting {
+            needsRestartAfterCurrentStart = true
+            debugLog("start() already in progress; coalescing into one follow-up run")
+            return
+        }
+
+        isStarting = true
+        defer { isStarting = false }
+
+        // Root cause observed: remote-change/import notifications arrive in bursts after
+        // share accept + profile creation. Re-entering `.loading` while already on `.main`
+        // causes visible route churn/flicker. Keep `.main` stable during refreshes.
+        if route != .main {
+            setRoute(.loading, reason: "start() begin [\(callSite)]")
+        } else {
+            debugLog("start() keeping route=.main during refresh")
+        }
 
         let status = await fetchICloudStatus()
         guard status == .available else {
-            route = .iCloudRequired
-            household = nil
-            member = nil
+            setRoute(.iCloudRequired, reason: "iCloud unavailable")
+            setSelection(household: nil, member: nil, reason: "iCloud unavailable")
             SelectionStore.save(household: nil, member: nil)
+            await runQueuedStartIfNeeded()
             return
         }
 
         guard hasAnyHousehold(), let h = fetchPreferredHousehold() else {
-            household = nil
-            member = nil
+            setSelection(household: nil, member: nil, reason: "no household available")
             SelectionStore.save(household: nil, member: nil)
-            route = .onboarding
+            setRoute(.onboarding, reason: "no household available")
+            await runQueuedStartIfNeeded()
             return
         }
 
-        household = h
-        member = resolveMember(for: h)
+        let resolvedMember = resolveMember(for: h)
+        setSelection(household: h, member: resolvedMember, reason: "resolved preferred household/member")
         SelectionStore.save(household: household, member: member)
-        route = .main
+        setRoute(.main, reason: "ready with valid household")
+        await runQueuedStartIfNeeded()
+    }
+
+    func scheduleStartDebounced(label: String, delayNanoseconds: UInt64 = 350_000_000) {
+        debugLog("scheduleStartDebounced requested [\(label)]")
+        debouncedStartTask?.cancel()
+        debouncedStartTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: delayNanoseconds)
+            } catch {
+                return
+            }
+            await start(callSite: "debounced: \(label)")
+        }
     }
 
     func applyCreatedSharedMember(_ createdMember: HouseholdMember, for household: Household) {
@@ -81,19 +116,16 @@ final class AppState: ObservableObject {
         // When an invite is accepted, re-evaluate routing/selection.
         NotificationCenter.default.publisher(for: .didAcceptCloudKitShare)
             .sink { [weak self] _ in
-                Task { @MainActor in
-                    print("ℹ️ didAcceptCloudKitShare received; re-evaluating app state")
-                    await self?.start()
-                }
+                self?.debugLog("notification received: didAcceptCloudKitShare")
+                self?.scheduleStartDebounced(label: "didAcceptCloudKitShare")
             }
             .store(in: &cancellables)
 
         // Handle local data reset requests.
         NotificationCenter.default.publisher(for: .didRequestAppRestart)
             .sink { [weak self] _ in
-                Task { @MainActor in
-                    await self?.start()
-                }
+                self?.debugLog("notification received: didRequestAppRestart")
+                self?.scheduleStartDebounced(label: "didRequestAppRestart")
             }
             .store(in: &cancellables)
 
@@ -105,8 +137,9 @@ final class AppState: ObservableObject {
         .sink { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                self.debugLog("notification received: NSPersistentStoreRemoteChange")
                 if self.route == .onboarding || (self.route == .main && self.isCurrentHouseholdInPrivateStore()) {
-                    await self.start()
+                    self.scheduleStartDebounced(label: "NSPersistentStoreRemoteChange(primary)")
                     return
                 }
 
@@ -116,11 +149,75 @@ final class AppState: ObservableObject {
                    let currentHousehold = self.household,
                    let store = currentHousehold.objectID.persistentStore,
                    store == PersistenceController.shared.privateStore {
-                    await self.start()
+                    self.scheduleStartDebounced(label: "NSPersistentStoreRemoteChange(private-main)")
                 }
             }
         }
         .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(
+            for: NSPersistentCloudKitContainer.eventChangedNotification,
+            object: container
+        )
+        .sink { [weak self] _ in
+            self?.debugLog("notification received: NSPersistentCloudKitContainer.eventChangedNotification")
+        }
+        .store(in: &cancellables)
+    }
+
+    private func runQueuedStartIfNeeded() async {
+        guard needsRestartAfterCurrentStart else { return }
+        needsRestartAfterCurrentStart = false
+        debugLog("running queued start() after previous run completed")
+        await start(callSite: "queued-after-inflight")
+    }
+
+    private func setRoute(_ newRoute: Route, reason: String) {
+        let oldRoute = route
+        route = newRoute
+        if oldRoute != newRoute {
+            debugLog("route changed \(routeLabel(oldRoute)) -> \(routeLabel(newRoute)) [\(reason)]")
+        }
+    }
+
+    private func setSelection(household: Household?, member: HouseholdMember?, reason: String) {
+        let oldHousehold = self.household
+        let oldMember = self.member
+        self.household = household
+        self.member = member
+
+        if oldHousehold?.objectID != household?.objectID {
+            debugLog("household changed \(describe(oldHousehold)) -> \(describe(household)) [\(reason)]")
+        }
+        if oldMember?.objectID != member?.objectID {
+            debugLog("member changed \(describe(oldMember)) -> \(describe(member)) [\(reason)]")
+        }
+    }
+
+    private func routeLabel(_ route: Route) -> String {
+        switch route {
+        case .loading: return "loading"
+        case .iCloudRequired: return "iCloudRequired"
+        case .onboarding: return "onboarding"
+        case .main: return "main"
+        }
+    }
+
+    private func describe(_ household: Household?) -> String {
+        guard let household else { return "nil" }
+        return household.name ?? household.objectID.uriRepresentation().lastPathComponent
+    }
+
+    private func describe(_ member: HouseholdMember?) -> String {
+        guard let member else { return "nil" }
+        return member.displayName ?? member.objectID.uriRepresentation().lastPathComponent
+    }
+
+    private func debugLog(_ message: String) {
+#if DEBUG
+        let ts = ISO8601DateFormatter().string(from: Date())
+        print("🧭 [AppState \(ts)] \(message)")
+#endif
     }
 
     private func isCurrentHouseholdInPrivateStore() -> Bool {

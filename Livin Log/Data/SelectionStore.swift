@@ -16,17 +16,23 @@ enum SelectionStore {
 
     static func save(household: Household?, member: HouseholdMember?) {
         let defaults = UserDefaults.standard
+        let householdURI = household?.objectID.uriRepresentation().absoluteString
+        let memberURI = member?.objectID.uriRepresentation().absoluteString
 
-        if let household {
-            defaults.set(household.objectID.uriRepresentation().absoluteString, forKey: householdKey)
-        } else {
-            defaults.removeObject(forKey: householdKey)
+        if defaults.string(forKey: householdKey) != householdURI {
+            if let householdURI {
+                defaults.set(householdURI, forKey: householdKey)
+            } else {
+                defaults.removeObject(forKey: householdKey)
+            }
         }
 
-        if let member {
-            defaults.set(member.objectID.uriRepresentation().absoluteString, forKey: memberKey)
-        } else {
-            defaults.removeObject(forKey: memberKey)
+        if defaults.string(forKey: memberKey) != memberURI {
+            if let memberURI {
+                defaults.set(memberURI, forKey: memberKey)
+            } else {
+                defaults.removeObject(forKey: memberKey)
+            }
         }
     }
 
@@ -68,7 +74,10 @@ enum SelectionStore {
             map.removeValue(forKey: householdURI)
         }
 
-        defaults.set(map, forKey: deviceMemberMapKey)
+        let existingMap = defaults.dictionary(forKey: deviceMemberMapKey) as? [String: String] ?? [:]
+        if existingMap != map {
+            defaults.set(map, forKey: deviceMemberMapKey)
+        }
     }
 
     static func loadDeviceMember(for household: Household, context: NSManagedObjectContext) -> HouseholdMember? {
