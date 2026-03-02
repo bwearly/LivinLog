@@ -44,13 +44,16 @@ struct HomeDashboardView: View {
             }
         }
         .onAppear {
+            debugLog("onAppear")
             restoreOrAutoPickSelection()
         }
-        .onChange(of: household?.objectID) { _, _ in
+        .onChange(of: household?.objectID) { oldValue, newValue in
+            debugLog("household changed \(oldValue?.uriRepresentation().lastPathComponent ?? "nil") -> \(newValue?.uriRepresentation().lastPathComponent ?? "nil")")
             normalizeSelection()
             SelectionStore.save(household: household, member: member)
         }
-        .onChange(of: member?.objectID) { _, _ in
+        .onChange(of: member?.objectID) { oldValue, newValue in
+            debugLog("member changed \(oldValue?.uriRepresentation().lastPathComponent ?? "nil") -> \(newValue?.uriRepresentation().lastPathComponent ?? "nil")")
             normalizeSelection()
             SelectionStore.save(household: household, member: member)
         }
@@ -243,6 +246,13 @@ struct HomeDashboardView: View {
 
         let updatedMembers = fetchMembers(for: hh)
         member = updatedMembers.first
+    }
+
+
+    private func debugLog(_ message: String) {
+#if DEBUG
+        print("🧭 [HomeDashboardView] \(message)")
+#endif
     }
 
     private func fetchFirstHousehold() -> Household? {

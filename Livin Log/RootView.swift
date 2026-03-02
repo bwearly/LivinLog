@@ -28,18 +28,18 @@ struct RootView: View {
                 ProgressView("Setting up Livin Log…")
                     .task {
                         guard pendingInvite == nil else { return }
-                        await appState.start()
+                        await appState.start(callSite: "RootView.loading.task")
                     }
                 
             case .iCloudRequired:
                 ICloudRequiredView {
-                    Task { await appState.start() }
+                    Task { await appState.start(callSite: "RootView.iCloudRequired.retry") }
                 }
                 
             case .onboarding:
                 OnboardingView(
                     onFinished: {
-                        Task { await appState.start() }
+                        Task { await appState.start(callSite: "RootView.onboarding.finished") }
                     }
                 )
                 
@@ -63,7 +63,10 @@ struct RootView: View {
             routeIncomingInviteURL(url)
         }
 
-        .onChange(of: appState.route) { _, newRoute in
+        .onChange(of: appState.route) { oldRoute, newRoute in
+            #if DEBUG
+            print("🧭 [RootView] route changed \(oldRoute) -> \(newRoute)")
+            #endif
             guard newRoute == .main else { return }
             if appState.shouldPromptForSharedMemberProfile() {
                 showingCreateMemberProfileSheet = true
@@ -71,7 +74,7 @@ struct RootView: View {
         }
         .sheet(item: $pendingInvite) { pendingInvite in
             AcceptHouseholdInviteSheet(pendingInvite: pendingInvite) {
-                await appState.start()
+                await appState.start(callSite: "RootView.acceptInvite.onAccepted")
                 if appState.shouldPromptForSharedMemberProfile() {
                     showingCreateMemberProfileSheet = true
                 }
