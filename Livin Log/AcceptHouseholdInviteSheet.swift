@@ -99,6 +99,8 @@ struct AcceptHouseholdInviteSheet: View {
 
                 isAccepting = false
                 dismiss()
+                NotificationCenter.default.post(name: .didAcceptCloudKitShare, object: nil)
+                print("✅ Invite accepted; posted didAcceptCloudKitShare; rerunning app state")
 
                 Task { await onAccepted() }
             }
