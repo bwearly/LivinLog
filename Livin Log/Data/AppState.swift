@@ -65,6 +65,7 @@ final class AppState: ObservableObject {
     }
 
     private func observeShareAcceptanceAndStoreChanges() {
+        // When an invite is accepted, re-evaluate routing/selection.
         NotificationCenter.default.publisher(for: .didAcceptCloudKitShare)
             .sink { [weak self] _ in
                 Task { @MainActor in
@@ -73,6 +74,7 @@ final class AppState: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // When CloudKit imports new data (e.g., shared household arrives), re-evaluate.
         NotificationCenter.default.publisher(
             for: .NSPersistentStoreRemoteChange,
             object: container.persistentStoreCoordinator
@@ -80,7 +82,19 @@ final class AppState: ObservableObject {
         .sink { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+
+                // If we’re onboarding, any new data might allow routing to main.
                 if self.route == .onboarding {
+                    await self.start()
+                    return
+                }
+
+                // If we’re already on main but still using a PRIVATE household,
+                // a shared household may have just arrived—re-evaluate.
+                if self.route == .main,
+                   let currentHousehold = self.household,
+                   let store = currentHousehold.objectID.persistentStore,
+                   store == PersistenceController.shared.privateStore {
                     await self.start()
                 }
             }
@@ -103,6 +117,7 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Option A: Prefer shared household if any exist; otherwise fall back to private.
     private func fetchPreferredHousehold() -> Household? {
         if let sharedHousehold = fetchMostRecentHousehold(in: PersistenceController.shared.sharedStore) {
             let identifier = sharedHousehold.name ?? sharedHousehold.objectID.uriRepresentation().absoluteString
@@ -123,7 +138,7 @@ final class AppState: ObservableObject {
         req.affectedStores = [store]
 
         do {
-            return try ctx.fetch(req).first as? Household
+            return (try ctx.fetch(req).first as? Household)
         } catch {
             print("❌ fetchMostRecentHousehold failed: \(error)")
             return nil
