@@ -38,6 +38,8 @@ struct SettingsView: View {
 
     // Presents Apple's official CloudKit sharing UI.
     @State private var showingInviteShareSheet = false
+    @State private var showingPasteInviteSheet = false
+    @State private var pendingInvite: PendingShareInvite?
 
     @AppStorage(CloudSharing.lastShareErrorDefaultsKey) private var persistedLastShareError = ""
     @AppStorage(CloudSharing.lastShareStatusDefaultsKey) private var persistedLastShareStatus = ""
@@ -48,11 +50,13 @@ struct SettingsView: View {
     var body: some View {
         Form {
             householdSection
+            joinHouseholdSection
             shareStatusSection
             notificationsSection
             membersSection
             howSharingWorksSection
             sharingErrorSection
+            advancedSharingSection
             errorSection
             #if DEBUG
             debugSection
@@ -97,6 +101,21 @@ struct SettingsView: View {
                 .ignoresSafeArea()
             }
         }
+        .sheet(isPresented: $showingPasteInviteSheet) {
+            PasteInviteLinkSheet { invite in
+                Task { @MainActor in
+                    pendingInvite = invite
+                }
+            }
+        }
+        .sheet(item: $pendingInvite) { invite in
+            AcceptHouseholdInviteSheet(pendingInvite: invite) {
+                NotificationCenter.default.post(name: .didAcceptCloudKitShare, object: nil)
+                await MainActor.run {
+                    reloadShareStatus()
+                }
+            }
+        }
         .alert("Notifications Disabled", isPresented: $showNotificationsDeniedAlert) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -113,7 +132,7 @@ struct SettingsView: View {
                     Text(household.name ?? "Household")
                         .font(.headline)
 
-                    Text("Sharing uses iCloud")
+                    Text("Shared household syncs through iCloud.")
                         .foregroundStyle(.secondary)
                         .font(.subheadline)
                 }
@@ -122,7 +141,7 @@ struct SettingsView: View {
                     inviteMember()
                 } label: {
                     HStack {
-                        Text(isSharing ? "Preparing invite..." : "Invite Member")
+                        Text(isSharing ? "Preparing invite..." : "Invite Someone")
                         Spacer()
                         if isSharing {
                             ProgressView()
@@ -146,6 +165,14 @@ struct SettingsView: View {
                     createHousehold()
                 }
                 .disabled(householdName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private var joinHouseholdSection: some View {
+        Section("Join Household") {
+            Button("Join with Invite Link") {
+                showingPasteInviteSheet = true
             }
         }
     }
@@ -276,7 +303,11 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .font(.footnote)
             }
+        }
+    }
 
+    private var advancedSharingSection: some View {
+        Section("Advanced Sharing") {
             if household != nil {
                 Button("Reset Household Share", role: .destructive) {
                     resetHouseholdShare()
