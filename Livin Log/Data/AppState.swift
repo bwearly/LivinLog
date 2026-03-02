@@ -68,6 +68,7 @@ final class AppState: ObservableObject {
         NotificationCenter.default.publisher(for: .didAcceptCloudKitShare)
             .sink { [weak self] _ in
                 Task { @MainActor in
+                    print("ℹ️ didAcceptCloudKitShare received; re-evaluating app state")
                     await self?.start()
                 }
             }
@@ -80,12 +81,18 @@ final class AppState: ObservableObject {
         .sink { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                if self.route == .onboarding {
+                if self.route == .onboarding || (self.route == .main && self.isCurrentHouseholdInPrivateStore()) {
                     await self.start()
                 }
             }
         }
         .store(in: &cancellables)
+    }
+
+    private func isCurrentHouseholdInPrivateStore() -> Bool {
+        guard let household else { return false }
+        guard let store = household.objectID.persistentStore else { return false }
+        return store == PersistenceController.shared.privateStore
     }
 
     private func hasAnyHousehold() -> Bool {
