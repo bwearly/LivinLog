@@ -30,7 +30,7 @@ struct SettingsView: View {
 
     @AppStorage("ll_notify_enabled") private var notificationsEnabled = false
     @State private var showNotificationsDeniedAlert = false
-    @State private var showDeleteAllConfirmation = false
+    @State private var showConfirmDeleteAll = false
 
     // Presents Apple's official CloudKit sharing UI.
     @State private var showingInviteShareSheet = false
@@ -129,9 +129,9 @@ struct SettingsView: View {
         }
 
 
-        .alert("Delete All Data & Restart", isPresented: $showDeleteAllConfirmation) {
+        .alert("Delete All Data?", isPresented: $showConfirmDeleteAll) {
             Button("Cancel", role: .cancel) {}
-            Button("Delete All", role: .destructive) {
+            Button("Delete & Restart", role: .destructive) {
                 deleteAllDataAndRestart()
             }
         } message: {
@@ -288,7 +288,7 @@ struct SettingsView: View {
             }
 
             Button("Delete All Data & Restart", role: .destructive) {
-                showDeleteAllConfirmation = true
+                showConfirmDeleteAll = true
             }
         }
     }

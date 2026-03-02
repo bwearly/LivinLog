@@ -17,6 +17,15 @@ struct AnalyticsView: View {
     @State private var totalTVShows: Int = 0
     @State private var totalViewings: Int = 0
     @State private var totalRewatches: Int = 0
+    @State private var totalPuzzles: Int? = nil
+    @State private var totalQuotes: Int? = nil
+    @State private var totalDates: Int? = nil
+    @State private var lastAddedPuzzleAt: Date? = nil
+    @State private var lastAddedQuoteAt: Date? = nil
+    @State private var lastAddedDateAt: Date? = nil
+    @State private var puzzlesEntityAvailable = true
+    @State private var quotesEntityAvailable = true
+    @State private var datesEntityAvailable = true
     @State private var avgRatingsByMember: [NSManagedObjectID: RatingAggregate] = [:]
     @State private var sleptCountsByMember: [NSManagedObjectID: Int] = [:]
     @State private var topGenres: [(String, Int)] = []
@@ -26,6 +35,7 @@ struct AnalyticsView: View {
         ScrollView {
             VStack(spacing: 14) {
                 headerCards
+                additionsCard
                 ratingsCard
                 sleepCard
                 genresCard
@@ -50,6 +60,12 @@ struct AnalyticsView: View {
                 StatCard(title: "Rewatches", value: "\(totalRewatches)")
                 StatCard(title: "Members", value: "\(members.count)")
             }
+            HStack(spacing: 10) {
+                StatCard(title: "Puzzles", value: totalPuzzles.map(String.init) ?? "—", note: puzzlesEntityAvailable ? nil : "Coming soon")
+                StatCard(title: "Quotes", value: totalQuotes.map(String.init) ?? "—", note: quotesEntityAvailable ? nil : "Coming soon")
+                StatCard(title: "Dates", value: totalDates.map(String.init) ?? "—", note: datesEntityAvailable ? nil : "Coming soon")
+            }
+
             // If you still want "Viewings" shown somewhere, keep it here:
             HStack(spacing: 10) {
                 StatCard(title: "Viewings", value: "\(totalViewings)")
@@ -60,6 +76,53 @@ struct AnalyticsView: View {
                     .frame(maxWidth: .infinity)
             }
         }
+    }
+
+    private var additionsCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Last Added")
+                    .font(.headline)
+
+                additionRow(
+                    title: "Puzzles",
+                    date: lastAddedPuzzleAt,
+                    isAvailable: puzzlesEntityAvailable
+                )
+
+                additionRow(
+                    title: "Quotes",
+                    date: lastAddedQuoteAt,
+                    isAvailable: quotesEntityAvailable
+                )
+
+                additionRow(
+                    title: "Dates",
+                    date: lastAddedDateAt,
+                    isAvailable: datesEntityAvailable
+                )
+            }
+        }
+    }
+
+    private func additionRow(title: String, date: Date?, isAvailable: Bool) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            if !isAvailable {
+                Text("Coming soon")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if let date {
+                Text(date.formatted(date: .abbreviated, time: .omitted))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            } else {
+                Text("—")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.subheadline)
     }
 
     private var ratingsCard: some View {
@@ -193,6 +256,9 @@ struct AnalyticsView: View {
         reloadSleepCounts()
         reloadGenres()
         reloadMostRewatched()
+        reloadPuzzlesCount()
+        reloadQuotesCount()
+        reloadDatesCount()
     }
 
     private func reloadMembers() {
@@ -233,6 +299,75 @@ struct AnalyticsView: View {
         let rewatchReq = NSFetchRequest<Viewing>(entityName: "Viewing")
         rewatchReq.predicate = NSPredicate(format: "household == %@ AND isRewatch == YES", household)
         totalRewatches = (try? context.count(for: rewatchReq)) ?? 0
+    }
+
+    private func reloadPuzzlesCount() {
+        // Model investigation: puzzles are stored in entity "LLPuzzle" with household relationship "household" and created date field "createdAt".
+        guard NSEntityDescription.entity(forEntityName: "LLPuzzle", in: context) != nil else {
+            puzzlesEntityAvailable = false
+            totalPuzzles = nil
+            lastAddedPuzzleAt = nil
+            return
+        }
+
+        puzzlesEntityAvailable = true
+
+        let countReq = NSFetchRequest<NSManagedObject>(entityName: "LLPuzzle")
+        countReq.predicate = NSPredicate(format: "household == %@", household)
+        totalPuzzles = try? context.count(for: countReq)
+
+        let lastReq = NSFetchRequest<NSManagedObject>(entityName: "LLPuzzle")
+        lastReq.predicate = NSPredicate(format: "household == %@", household)
+        lastReq.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
+        lastReq.fetchLimit = 1
+        lastReq.propertiesToFetch = ["createdAt"]
+        lastAddedPuzzleAt = (try? context.fetch(lastReq).first)?.value(forKey: "createdAt") as? Date
+    }
+
+    private func reloadQuotesCount() {
+        // Model investigation: quotes are stored in entity "LLQuote" with household relationship "household" and created date field "createdAt".
+        guard NSEntityDescription.entity(forEntityName: "LLQuote", in: context) != nil else {
+            quotesEntityAvailable = false
+            totalQuotes = nil
+            lastAddedQuoteAt = nil
+            return
+        }
+
+        quotesEntityAvailable = true
+
+        let countReq = NSFetchRequest<NSManagedObject>(entityName: "LLQuote")
+        countReq.predicate = NSPredicate(format: "household == %@", household)
+        totalQuotes = try? context.count(for: countReq)
+
+        let lastReq = NSFetchRequest<NSManagedObject>(entityName: "LLQuote")
+        lastReq.predicate = NSPredicate(format: "household == %@", household)
+        lastReq.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
+        lastReq.fetchLimit = 1
+        lastReq.propertiesToFetch = ["createdAt"]
+        lastAddedQuoteAt = (try? context.fetch(lastReq).first)?.value(forKey: "createdAt") as? Date
+    }
+
+    private func reloadDatesCount() {
+        // Model investigation: dates/events are stored in entity "LLCalendarEvent" with household relationship "household" and created date field "createdAt".
+        guard NSEntityDescription.entity(forEntityName: "LLCalendarEvent", in: context) != nil else {
+            datesEntityAvailable = false
+            totalDates = nil
+            lastAddedDateAt = nil
+            return
+        }
+
+        datesEntityAvailable = true
+
+        let countReq = NSFetchRequest<NSManagedObject>(entityName: "LLCalendarEvent")
+        countReq.predicate = NSPredicate(format: "household == %@", household)
+        totalDates = try? context.count(for: countReq)
+
+        let lastReq = NSFetchRequest<NSManagedObject>(entityName: "LLCalendarEvent")
+        lastReq.predicate = NSPredicate(format: "household == %@", household)
+        lastReq.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
+        lastReq.fetchLimit = 1
+        lastReq.propertiesToFetch = ["createdAt"]
+        lastAddedDateAt = (try? context.fetch(lastReq).first)?.value(forKey: "createdAt") as? Date
     }
 
     private func reloadAverageRatings() {
@@ -362,6 +497,7 @@ struct AnalyticsView: View {
 private struct StatCard: View {
     let title: String
     let value: String
+    let note: String? = nil
 
     var body: some View {
         GroupBox {
@@ -373,6 +509,12 @@ private struct StatCard: View {
                     .font(.title2)
                     .fontWeight(.semibold)
                     .monospacedDigit()
+
+                if let note {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

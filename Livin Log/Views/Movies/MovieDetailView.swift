@@ -196,7 +196,17 @@ struct MovieDetailView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(members) { m in
-                    summaryRow(for: m)
+                    if isEditing {
+                        Button {
+                            selectedMember = m
+                            loadSelectedMemberFeedback()
+                        } label: {
+                            summaryRow(for: m)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        summaryRow(for: m)
+                    }
                 }
             }
         }
@@ -665,6 +675,12 @@ struct MovieDetailView: View {
                 Text(ratingText(fb?.rating ?? 0))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
+
+                if isEditing {
+                    Image(systemName: "chevron.right")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
             }
 
             if let fb {
