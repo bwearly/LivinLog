@@ -205,16 +205,32 @@ struct HomeDashboardView: View {
     }
 
     /// Ensures:
-    /// - if household exists, it has at least 1 member ("Me")
-    /// - member is non-nil and belongs to the selected household
+    /// - if selected household is private, create fallback "Me" member
+    /// - if selected household is shared and no valid member is selected, keep nil so profile flow can prompt
     private func normalizeSelection() {
         guard let hh = household else {
             member = nil
             return
         }
 
-        // Ensure at least one member exists
+        let isSharedHousehold = hh.objectID.persistentStore == PersistenceController.shared.sharedStore
+
+        // If current member belongs to this household, keep it.
+        if member?.household?.objectID == hh.objectID {
+            return
+        }
+
         let members = fetchMembers(for: hh)
+
+        if isSharedHousehold {
+            if let selected = SelectionStore.loadDeviceMember(for: hh, context: context) {
+                member = selected
+            } else {
+                member = nil
+            }
+            return
+        }
+
         if members.isEmpty {
             let me = HouseholdMember(context: context)
             me.id = UUID()
@@ -226,11 +242,7 @@ struct HomeDashboardView: View {
         }
 
         let updatedMembers = fetchMembers(for: hh)
-
-        // If member is nil or belongs to a different household, pick first
-        if member == nil || member?.household?.objectID != hh.objectID {
-            member = updatedMembers.first
-        }
+        member = updatedMembers.first
     }
 
     private func fetchFirstHousehold() -> Household? {
