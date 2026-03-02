@@ -497,7 +497,13 @@ struct AnalyticsView: View {
 private struct StatCard: View {
     let title: String
     let value: String
-    let note: String? = nil
+    let note: String?
+
+    init(title: String, value: String, note: String? = nil) {
+        self.title = title
+        self.value = value
+        self.note = note
+    }
 
     var body: some View {
         GroupBox {
