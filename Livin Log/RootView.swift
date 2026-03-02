@@ -15,11 +15,11 @@ struct RootView: View {
     private let inviteRouter = InviteRouter()
     @State private var pendingInvite: PendingShareInvite?
     @State private var lastProcessedShareURL: URL?
-
+    
     init(container: NSPersistentCloudKitContainer) {
         _appState = StateObject(wrappedValue: AppState(container: container))
     }
-
+    
     var body: some View {
         Group {
             switch appState.route {
@@ -29,19 +29,19 @@ struct RootView: View {
                         guard pendingInvite == nil else { return }
                         await appState.start()
                     }
-
+                
             case .iCloudRequired:
                 ICloudRequiredView {
                     Task { await appState.start() }
                 }
-
+                
             case .onboarding:
                 OnboardingView(
                     onFinished: {
                         Task { await appState.start() }
                     }
                 )
-
+                
             case .main:
                 HomeDashboardView(household: appState.household, member: appState.member)
             }
@@ -67,18 +67,19 @@ struct RootView: View {
             }
         }
     }
-
+    
     private func routeIncomingInviteURL(_ url: URL) {
         print("📩 Received URL: \(url.absoluteString)")
-
+        
         guard lastProcessedShareURL != url else { return }
         lastProcessedShareURL = url
-
-        Task {
-            guard let invite = await inviteRouter.pendingInvite(from: url) else { return }
-            Task { @MainActor in
-                pendingInvite = invite
+        
+        Task { @MainActor in
+            if let invite = await inviteRouter.pendingInvite(from: url) {
                 print("✅ Presenting invite sheet")
+                pendingInvite = invite
+            } else {
+                print("❌ No invite created from URL")
             }
         }
     }
