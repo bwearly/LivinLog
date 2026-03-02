@@ -12,7 +12,9 @@ import CloudKit
 struct RootView: View {
     @Environment(\.managedObjectContext) private var context
     @StateObject private var appState: AppState
+    private let inviteRouter = InviteRouter()
     @State private var pendingInvite: PendingShareInvite?
+    @State private var lastProcessedShareURL: URL?
 
     init(container: NSPersistentCloudKitContainer) {
         _appState = StateObject(wrappedValue: AppState(container: container))
@@ -48,10 +50,29 @@ struct RootView: View {
             guard let metadata = note.object as? CKShare.Metadata else { return }
             pendingInvite = PendingShareInvite(metadata: metadata)
         }
+        .onOpenURL { url in
+            routeIncomingInviteURL(url)
+        }
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+            guard let url = activity.webpageURL else { return }
+            routeIncomingInviteURL(url)
+        }
         .sheet(item: $pendingInvite) { pendingInvite in
             AcceptHouseholdInviteSheet(pendingInvite: pendingInvite) {
                 await appState.start()
             }
+        }
+    }
+
+    private func routeIncomingInviteURL(_ url: URL) {
+        print("📩 Received URL: \(url.absoluteString)")
+
+        guard lastProcessedShareURL != url else { return }
+        lastProcessedShareURL = url
+
+        Task {
+            guard let invite = await inviteRouter.pendingInvite(from: url) else { return }
+            pendingInvite = invite
         }
     }
 }
