@@ -29,65 +29,61 @@ struct SettingsView: View {
     @State private var lastCloudKitError: String?
 
     @AppStorage("ll_notify_enabled") private var notificationsEnabled = false
-
     @State private var showNotificationsDeniedAlert = false
-
-    // ✅ Invite capability diagnostics
-    @State private var canSendText: Bool = false
-    @State private var canSendMail: Bool = false
 
     // Presents Apple's official CloudKit sharing UI.
     @State private var showingInviteShareSheet = false
+
+    // Bulletproof join flow (paste link)
     @State private var showingPasteInviteSheet = false
     @State private var pendingInvite: PendingShareInvite?
 
     @AppStorage(CloudSharing.lastShareErrorDefaultsKey) private var persistedLastShareError = ""
     @AppStorage(CloudSharing.lastShareStatusDefaultsKey) private var persistedLastShareStatus = ""
 
-
-    private let persistentContainer = PersistenceController.shared.container // NSPersistentCloudKitContainer
+    private let persistentContainer = PersistenceController.shared.container
 
     var body: some View {
         Form {
             householdSection
             joinHouseholdSection
-            shareStatusSection
             notificationsSection
             membersSection
-            howSharingWorksSection
-            sharingErrorSection
-            advancedSharingSection
-            errorSection
-            #if DEBUG
-            debugSection
-            #endif
+
+            if hasSharingIssue {
+                sharingIssueSection
+            }
+
+            advancedSection
+
+            if let errorText {
+                Section {
+                    Text(errorText)
+                        .foregroundStyle(.red)
+                        .font(.footnote)
+                }
+            }
         }
         .navigationTitle("Settings")
         .onAppear {
             if let hh = household { ensureDefaultMemberExists(in: hh) }
             reloadShareStatus()
             loadAccountStatus()
-
-            // Invite capabilities (device-level)
-            canSendText = MFMessageComposeViewController.canSendText()
-            canSendMail = MFMailComposeViewController.canSendMail()
-            print("📨 canSendText:", canSendText, "✉️ canSendMail:", canSendMail)
         }
         .onChange(of: household?.objectID) { _, _ in
             if let hh = household { ensureDefaultMemberExists(in: hh) }
             reloadShareStatus()
         }
+
+        // Invite sheet (owner sharing)
         .sheet(isPresented: $showingInviteShareSheet, onDismiss: {
             isSharing = false
             reloadShareStatus()
         }) {
             if let household {
-                // Replaced old custom "copy/send invite link" flow with Apple's CloudKit sharing controller.
                 CloudKitHouseholdSharingSheet(
                     household: household,
-                    onDone: {
-                        showingInviteShareSheet = false
-                    },
+                    onDone: { showingInviteShareSheet = false },
                     onError: { error in
                         let message = error.localizedDescription
                         shareErrorText = message
@@ -101,6 +97,8 @@ struct SettingsView: View {
                 .ignoresSafeArea()
             }
         }
+
+        // Paste link sheet (bulletproof join)
         .sheet(isPresented: $showingPasteInviteSheet) {
             PasteInviteLinkSheet { invite in
                 Task { @MainActor in
@@ -108,14 +106,15 @@ struct SettingsView: View {
                 }
             }
         }
+
+        // Accept invite sheet
         .sheet(item: $pendingInvite) { invite in
             AcceptHouseholdInviteSheet(pendingInvite: invite) {
                 NotificationCenter.default.post(name: .didAcceptCloudKitShare, object: nil)
-                await MainActor.run {
-                    reloadShareStatus()
-                }
+                await MainActor.run { reloadShareStatus() }
             }
         }
+
         .alert("Notifications Disabled", isPresented: $showNotificationsDeniedAlert) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -123,7 +122,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Sections
+    // MARK: - Top-level Sections (User-facing)
 
     private var householdSection: some View {
         Section("Household") {
@@ -131,7 +130,6 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(household.name ?? "Household")
                         .font(.headline)
-
                     Text("Shared household syncs through iCloud.")
                         .foregroundStyle(.secondary)
                         .font(.subheadline)
@@ -141,7 +139,7 @@ struct SettingsView: View {
                     inviteMember()
                 } label: {
                     HStack {
-                        Text(isSharing ? "Preparing invite..." : "Invite Someone")
+                        Text(isSharing ? "Preparing invite…" : "Invite Someone")
                         Spacer()
                         if isSharing {
                             ProgressView()
@@ -151,9 +149,6 @@ struct SettingsView: View {
                     }
                 }
                 .disabled(isSharing)
-
-                // Old "Share Invite Link" action removed: we only use CloudKit's official invite flow.
-
             } else {
                 Text("Create a household to begin.")
                     .foregroundStyle(.secondary)
@@ -171,60 +166,13 @@ struct SettingsView: View {
 
     private var joinHouseholdSection: some View {
         Section("Join Household") {
-            Button("Join with Invite Link") {
+            Button {
                 showingPasteInviteSheet = true
+            } label: {
+                Label("Join with Invite Link", systemImage: "link")
             }
         }
     }
-
-    private var shareStatusSection: some View {
-        Section("Share Status") {
-            HStack {
-                Text("iCloud account")
-                Spacer()
-                Text(accountStatusText(accountStatus))
-                    .foregroundStyle(.secondary)
-            }
-
-            if let share {
-                HStack {
-                    Text("Share created")
-                    Spacer()
-                    Image(systemName: "checkmark.seal.fill")
-                        .foregroundStyle(.green)
-                }
-
-                let title = (share[CKShare.SystemFieldKey.title] as? String) ?? ""
-                if !title.isEmpty {
-                    HStack {
-                        Text("Share title")
-                        Spacer()
-                        Text(title)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-            } else {
-                HStack {
-                    Text("Share created")
-                    Spacer()
-                    Text("Not yet")
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if !persistedLastShareStatus.isEmpty {
-                HStack {
-                    Text("Last status")
-                    Spacer()
-                    Text(persistedLastShareStatus)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-        }
-    }
-
 
     private var notificationsSection: some View {
         Section("Notifications") {
@@ -268,7 +216,6 @@ struct SettingsView: View {
                                         .foregroundStyle(.secondary)
                                 }
                             }
-
                             Spacer()
                         }
                     }
@@ -280,105 +227,46 @@ struct SettingsView: View {
         }
     }
 
-    private var howSharingWorksSection: some View {
-        Section("How sharing works") {
-            Text("Inviting someone creates a private iCloud share for this household. Anyone you invite can see the same household data on their device.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
+    private var hasSharingIssue: Bool {
+        if let shareErrorText, !shareErrorText.isEmpty { return true }
+        if !persistedLastShareError.isEmpty { return true }
+        return false
     }
 
-    private var sharingErrorSection: some View {
-        Section("Sharing") {
-            if let shareErrorText {
-                Text(shareErrorText)
-                    .foregroundStyle(.red)
-                    .font(.footnote)
-            } else if !persistedLastShareError.isEmpty {
-                Text(persistedLastShareError)
-                    .foregroundStyle(.red)
-                    .font(.footnote)
-            } else {
-                Text("No sharing errors.")
+    private var sharingIssueSection: some View {
+        Section("Sharing Issue") {
+            Text(shareErrorText ?? persistedLastShareError)
+                .foregroundStyle(.red)
+                .font(.footnote)
+
+            if !persistedLastShareStatus.isEmpty {
+                Text("Last status: \(persistedLastShareStatus)")
                     .foregroundStyle(.secondary)
                     .font(.footnote)
             }
         }
     }
 
-    private var advancedSharingSection: some View {
-        Section("Advanced Sharing") {
-            if household != nil {
-                Button("Reset Household Share", role: .destructive) {
-                    resetHouseholdShare()
-                }
-                .disabled(isSharing)
-            }
-
-            NavigationLink("Share Diagnostics") {
-                ShareDiagnosticsView(
+    private var advancedSection: some View {
+        Section {
+            NavigationLink {
+                AdvancedSharingView(
                     household: household,
+                    share: share,
                     accountStatus: accountStatus,
                     lastError: lastCloudKitError ?? (persistedLastShareError.isEmpty ? nil : persistedLastShareError),
-                    persistentContainer: persistentContainer
+                    persistedLastShareStatus: persistedLastShareStatus,
+                    persistentContainer: persistentContainer,
+                    onResetShare: { resetHouseholdShare() },
+                    onReloadShareStatus: { reloadShareStatus() }
                 )
+            } label: {
+                Label("Advanced", systemImage: "gearshape.2")
             }
         }
     }
 
-    private var errorSection: some View {
-        Section {
-            if let errorText {
-                Text(errorText)
-                    .foregroundStyle(.red)
-                    .font(.footnote)
-            }
-        }
-    }
-
-    #if DEBUG
-    private var debugSection: some View {
-        Section("Debug") {
-            HStack {
-                Text("Account status")
-                Spacer()
-                Text(accountStatusText(accountStatus))
-                    .foregroundStyle(.secondary)
-            }
-
-            HStack {
-                Text("Can send text")
-                Spacer()
-                Text(canSendText ? "Yes" : "No")
-                    .foregroundStyle(.secondary)
-            }
-
-            HStack {
-                Text("Can send mail")
-                Spacer()
-                Text(canSendMail ? "Yes" : "No")
-                    .foregroundStyle(.secondary)
-            }
-
-            HStack {
-                Text("Last CloudKit error")
-                Spacer()
-                Text(lastCloudKitError ?? "None")
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Button("Reload share status") {
-                reloadShareStatus()
-                canSendText = MFMessageComposeViewController.canSendText()
-                canSendMail = MFMailComposeViewController.canSendMail()
-                print("📨 canSendText:", canSendText, "✉️ canSendMail:", canSendMail)
-            }
-        }
-    }
-    #endif
-
-    // MARK: - Share handling
+    // MARK: - Actions
 
     private func inviteMember() {
         guard household != nil else { return }
@@ -508,7 +396,6 @@ struct SettingsView: View {
         }
     }
 
-
     private func resetHouseholdShare() {
         guard let household else { return }
 
@@ -546,6 +433,113 @@ struct SettingsView: View {
                 persistedLastShareError = message
                 CloudSharing.saveLastShareError(message)
             }
+        }
+    }
+}
+
+// MARK: - Advanced Screen
+
+private struct AdvancedSharingView: View {
+    let household: Household?
+    let share: CKShare?
+    let accountStatus: CKAccountStatus
+    let lastError: String?
+    let persistedLastShareStatus: String
+    let persistentContainer: NSPersistentCloudKitContainer
+
+    let onResetShare: () -> Void
+    let onReloadShareStatus: () -> Void
+
+    var body: some View {
+        Form {
+            Section("Share Status") {
+                HStack {
+                    Text("iCloud account")
+                    Spacer()
+                    Text(accountStatusLabel)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let share {
+                    HStack {
+                        Text("Share created")
+                        Spacer()
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundStyle(.green)
+                    }
+
+                    let title = (share[CKShare.SystemFieldKey.title] as? String) ?? ""
+                    if !title.isEmpty {
+                        HStack {
+                            Text("Share title")
+                            Spacer()
+                            Text(title)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                } else {
+                    HStack {
+                        Text("Share created")
+                        Spacer()
+                        Text("Not yet")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if !persistedLastShareStatus.isEmpty {
+                    Text("Last status: \(persistedLastShareStatus)")
+                        .foregroundStyle(.secondary)
+                        .font(.footnote)
+                }
+
+                Button("Reload share status") { onReloadShareStatus() }
+            }
+
+            Section("How sharing works") {
+                Text("Inviting someone creates an iCloud share for your household. People you invite can see and edit the same household data.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Troubleshooting") {
+                if let lastError, !lastError.isEmpty {
+                    Text(lastError)
+                        .foregroundStyle(.red)
+                        .font(.footnote)
+                } else {
+                    Text("No recent errors.")
+                        .foregroundStyle(.secondary)
+                        .font(.footnote)
+                }
+
+                if household != nil {
+                    Button("Reset Household Share", role: .destructive) {
+                        onResetShare()
+                    }
+                }
+
+                NavigationLink("Share Diagnostics") {
+                    ShareDiagnosticsView(
+                        household: household,
+                        accountStatus: accountStatus,
+                        lastError: lastError,
+                        persistentContainer: persistentContainer
+                    )
+                }
+            }
+        }
+        .navigationTitle("Advanced")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var accountStatusLabel: String {
+        switch accountStatus {
+        case .available: return "Available"
+        case .noAccount: return "No account"
+        case .restricted: return "Restricted"
+        case .couldNotDetermine: return "Could not determine"
+        @unknown default: return "Unknown"
         }
     }
 }
