@@ -144,6 +144,7 @@ private struct AddEditChildView: View {
     private func save() {
         let child = editingChild ?? LLChild(context: context)
         let now = Date()
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
 
         if child.id == nil {
             child.id = UUID()
@@ -151,7 +152,7 @@ private struct AddEditChildView: View {
         }
 
         child.updatedAt = now
-        child.household = household
+        child.household = scopedHousehold
         child.nameValue = name.trimmingCharacters(in: .whitespacesAndNewlines)
         child.birthdayValue = birthday
 

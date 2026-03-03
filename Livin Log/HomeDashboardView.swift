@@ -8,6 +8,7 @@ struct HomeDashboardView: View {
     @State var member: HouseholdMember?
 
     @State private var showingSettings = false
+    @State private var isRefreshing = false
 
     var body: some View {
         NavigationStack {
@@ -30,6 +31,14 @@ struct HomeDashboardView: View {
             }
             .navigationTitle("Livin Log")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button { refreshDashboard() } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(isRefreshing)
+                    .accessibilityLabel("Refresh Dashboard")
+                }
+
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button { showingSettings = true } label: {
                         Image(systemName: "gearshape")
@@ -248,6 +257,23 @@ struct HomeDashboardView: View {
         member = updatedMembers.first
     }
 
+
+
+
+    private func refreshDashboard() {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+
+        context.perform {
+            context.refreshAllObjects()
+        }
+
+        restoreOrAutoPickSelection()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            isRefreshing = false
+        }
+    }
 
     private func debugLog(_ message: String) {
 #if DEBUG

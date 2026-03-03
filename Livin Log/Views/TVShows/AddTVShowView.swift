@@ -76,9 +76,11 @@ struct AddTVShowView: View {
 
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+
         // Ensure household has an id before linking
-        if household.id == nil {
-            household.id = UUID()
+        if scopedHousehold.id == nil {
+            scopedHousehold.id = UUID()
             try? context.save()
         }
 
@@ -86,8 +88,8 @@ struct AddTVShowView: View {
         tvShow.id = UUID()
         tvShow.createdAt = Date()
         tvShow.title = trimmedTitle
-        tvShow.household = household
-        tvShow.householdID = household.id
+        tvShow.household = scopedHousehold
+        tvShow.householdID = scopedHousehold.id
 
         if let y = Int16(yearText.trimmingCharacters(in: .whitespacesAndNewlines)), y > 0 {
             tvShow.year = y
@@ -115,6 +117,9 @@ struct AddTVShowView: View {
 
         do {
             try context.save()
+#if DEBUG
+            debugLogHouseholdAssignment(entityName: "TVShow", object: tvShow, household: scopedHousehold, context: context)
+#endif
             dismiss()
         } catch {
             context.rollback()

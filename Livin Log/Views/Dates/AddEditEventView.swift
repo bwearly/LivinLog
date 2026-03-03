@@ -103,13 +103,14 @@ struct AddEditEventView: View {
 
     private func save() {
         let event = editingEvent ?? LLCalendarEvent(context: context)
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
 
         if event.idValue == nil {
             event.idValue = UUID()
             event.createdAtValue = Date()
         }
 
-        event.householdValue = household
+        event.householdValue = scopedHousehold
         event.nameText = name.trimmingCharacters(in: .whitespacesAndNewlines)
         event.month = month
         event.day = day
@@ -120,8 +121,11 @@ struct AddEditEventView: View {
 
         do {
             try context.save()
+#if DEBUG
+            debugLogHouseholdAssignment(entityName: "LLCalendarEvent", object: event, household: scopedHousehold, context: context)
+#endif
             Task { @MainActor in
-                await NotificationScheduler.sync(context: context, household: household)
+                await NotificationScheduler.sync(context: context, household: scopedHousehold)
             }
             dismiss()
         } catch {

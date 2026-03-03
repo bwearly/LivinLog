@@ -58,16 +58,25 @@ struct CreateMemberProfileSheet: View {
         errorText = nil
         isSaving = true
 
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
+            errorText = "Could not resolve household in active context."
+            isSaving = false
+            return
+        }
+
         let member = HouseholdMember(context: context)
         member.id = UUID()
         member.createdAt = Date()
         member.displayName = trimmedName
-        member.household = household
+        member.household = scopedHousehold
 
         do {
             try context.save()
-            SelectionStore.save(household: household, member: member)
-            SelectionStore.saveDeviceMember(member, for: household)
+            SelectionStore.save(household: scopedHousehold, member: member)
+            SelectionStore.saveDeviceMember(member, for: scopedHousehold)
+#if DEBUG
+            debugLogHouseholdAssignment(entityName: "HouseholdMember", object: member, household: scopedHousehold, context: context)
+#endif
             print("✅ Created new member for shared household: \(trimmedName)")
             onCreated(member)
             dismiss()
