@@ -147,6 +147,8 @@ struct TVShowDetailView: View {
         let oldTitle = tvShow.title ?? ""
         let oldYear = tvShow.year
 
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+
         tvShow.title = newTitle
 
         if let y = Int16(editYearText.trimmingCharacters(in: .whitespacesAndNewlines)), y > 0 {
@@ -163,12 +165,17 @@ struct TVShowDetailView: View {
 
         tvShow.rewatch = editRewatch
         tvShow.ratingText = editRating.rawValue
+        tvShow.household = scopedHousehold
+        tvShow.householdID = scopedHousehold.id
 
         let trimmedNotes = editNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         tvShow.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
 
         do {
             try context.save()
+#if DEBUG
+            debugLogHouseholdAssignment(entityName: "TVShow", object: tvShow, household: scopedHousehold, context: context)
+#endif
         } catch {
             context.rollback()
             print("Save TV show failed:", error)

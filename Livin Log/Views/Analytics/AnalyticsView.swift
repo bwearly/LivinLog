@@ -263,11 +263,7 @@ struct AnalyticsView: View {
 
     private func reloadMembers() {
         let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
-        if let hid = household.id {
-            req.predicate = NSPredicate(format: "household.id == %@", hid as CVarArg)
-        } else {
-            req.predicate = NSPredicate(format: "household == %@", household)
-        }
+        req.predicate = householdScopedPredicate(household)
         req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
         members = (try? context.fetch(req)) ?? []
     }
@@ -275,20 +271,12 @@ struct AnalyticsView: View {
     private func reloadTotals() {
         // Movies
         let movieReq = NSFetchRequest<Movie>(entityName: "Movie")
-        if let hid = household.id {
-            movieReq.predicate = NSPredicate(format: "householdID == %@", hid as CVarArg)
-        } else {
-            movieReq.predicate = NSPredicate(format: "household == %@", household)
-        }
+        movieReq.predicate = householdScopedPredicate(household)
         totalMovies = (try? context.count(for: movieReq)) ?? 0
 
         // ✅ TV Shows (same household scoping as movies)
         let tvReq = NSFetchRequest<TVShow>(entityName: "TVShow")
-        if let hid = household.id {
-            tvReq.predicate = NSPredicate(format: "householdID == %@", hid as CVarArg)
-        } else {
-            tvReq.predicate = NSPredicate(format: "household == %@", household)
-        }
+        tvReq.predicate = householdScopedPredicate(household)
         totalTVShows = (try? context.count(for: tvReq)) ?? 0
 
         // Viewings + Rewatches (movies only, since Viewings relate to Movie)
@@ -428,11 +416,7 @@ struct AnalyticsView: View {
 
     private func reloadGenres() {
         let req = NSFetchRequest<NSDictionary>(entityName: "Movie")
-        if let hid = household.id {
-            req.predicate = NSPredicate(format: "householdID == %@", hid as CVarArg)
-        } else {
-            req.predicate = NSPredicate(format: "household == %@", household)
-        }
+        req.predicate = householdScopedPredicate(household)
         req.resultType = .dictionaryResultType
         req.propertiesToFetch = ["genre"]
 

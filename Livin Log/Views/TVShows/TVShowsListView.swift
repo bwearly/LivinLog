@@ -39,15 +39,9 @@ struct TVShowsListView: View {
 
         let sortDescriptors = [NSSortDescriptor(keyPath: \TVShow.createdAt, ascending: false)]
 
-        // Ensure we have a householdID to predicate against
-        if household.id == nil {
-            household.id = UUID()
-            try? household.managedObjectContext?.save()
-        }
-
         _tvShows = FetchRequest<TVShow>(
             sortDescriptors: sortDescriptors,
-            predicate: NSPredicate(format: "householdID == %@", household.id! as CVarArg),
+            predicate: householdScopedPredicate(household),
             animation: .default
         )
     }

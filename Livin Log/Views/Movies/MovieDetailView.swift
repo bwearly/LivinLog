@@ -452,6 +452,8 @@ struct MovieDetailView: View {
     }
 
     private func saveMovieDetails() {
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+
         movie.title = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if let y = Int16(editYearText.trimmingCharacters(in: .whitespacesAndNewlines)), y > 0 {
@@ -461,6 +463,8 @@ struct MovieDetailView: View {
         }
 
         movie.mpaaRating = (editMPAA == "—") ? nil : editMPAA
+        movie.household = scopedHousehold
+        movie.householdID = scopedHousehold.id
         movie.genre = selectedGenres.isEmpty ? nil : selectedGenres.sorted().joined(separator: ", ")
 
         let trimmed = editMovieNotes.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -468,6 +472,9 @@ struct MovieDetailView: View {
 
         do {
             try context.save()
+#if DEBUG
+            debugLogHouseholdAssignment(entityName: "Movie", object: movie, household: scopedHousehold, context: context)
+#endif
         } catch {
             context.rollback()
             print("Save movie details failed:", error)
@@ -506,7 +513,7 @@ struct MovieDetailView: View {
         let trimmed = editNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         fb.notes = trimmed.isEmpty ? nil : trimmed
 
-        fb.household = household
+        fb.household = activeHouseholdInContext(household, context: context) ?? household
 
         do {
             try context.save()
@@ -535,13 +542,19 @@ struct MovieDetailView: View {
 
             v.setValue(isRewatch, forKey: "isRewatch")
             v.setValue(movie, forKey: "movie")
-            v.setValue(household, forKey: "household")
+            let scopedHousehold = activeHouseholdInContext(household, context: context) ?? household
+            v.setValue(scopedHousehold, forKey: "household")
 
             let trimmed = (notes ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             v.setValue(trimmed.isEmpty ? nil : trimmed, forKey: "notes")
 
             do {
                 try context.save()
+#if DEBUG
+                if let scopedHousehold = activeHouseholdInContext(household, context: context) {
+                    debugLogHouseholdAssignment(entityName: "Viewing", object: v, household: scopedHousehold, context: context)
+                }
+#endif
                 reloadViewings()
                 print("✅ Added viewing for movie:", movie.objectID, "rewatch:", isRewatch)
             } catch {
@@ -634,11 +647,7 @@ struct MovieDetailView: View {
 
     private func fetchedMembers() -> [HouseholdMember] {
         let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
-        if let hid = household.id {
-            req.predicate = NSPredicate(format: "household.id == %@", hid as CVarArg)
-        } else {
-            req.predicate = NSPredicate(format: "household == %@", household)
-        }
+        req.predicate = householdScopedPredicate(household)
         req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
         return (try? context.fetch(req)) ?? []
     }

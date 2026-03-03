@@ -183,11 +183,7 @@ struct AddMovieView: View {
 
     private func fetchedMembers() -> [HouseholdMember] {
         let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
-        if let hid = household.id {
-            req.predicate = NSPredicate(format: "household.id == %@", hid as CVarArg)
-        } else {
-            req.predicate = NSPredicate(format: "household == %@", household)
-        }
+        req.predicate = householdScopedPredicate(household)
         req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
         return (try? context.fetch(req)) ?? []
     }
@@ -230,21 +226,22 @@ struct AddMovieView: View {
 
     private func saveMovie() {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
 
         let movie = Movie(context: context)
         movie.id = UUID()
         movie.createdAt = Date()
         movie.title = trimmedTitle
 
-        movie.household = household
+        movie.household = scopedHousehold
         
         // Ensure household has stable id
-        if household.id == nil {
-            household.id = UUID()
+        if scopedHousehold.id == nil {
+            scopedHousehold.id = UUID()
         }
 
         // ✅ Store householdID directly on Movie
-        movie.householdID = household.id
+        movie.householdID = scopedHousehold.id
 
         if let y = Int16(yearText.trimmingCharacters(in: .whitespacesAndNewlines)), y > 0 {
             movie.year = y
@@ -259,6 +256,7 @@ struct AddMovieView: View {
         movie.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
 
         // Feedback rows
+        var createdFeedbacks: [MovieFeedback] = []
         for m in fetchedMembers() {
             let draft = feedbackByMemberID[m.objectID] ?? MemberFeedbackDraft()
             if isDraftEmpty(draft) { continue }
@@ -272,9 +270,10 @@ struct AddMovieView: View {
             let n = draft.notes.trimmingCharacters(in: .whitespacesAndNewlines)
             fb.notes = n.isEmpty ? nil : n
 
-            fb.household = household
+            fb.household = scopedHousehold
             fb.movie = movie
             fb.member = m
+            createdFeedbacks.append(fb)
         }
         
         // ✅ Add initial watch history record on create
@@ -284,10 +283,17 @@ struct AddMovieView: View {
         v.watchedOn = watchedOn
         v.notes = nil
         v.movie = movie
-        v.household = household
+        v.household = scopedHousehold
 
         do {
             try context.save()
+#if DEBUG
+            debugLogHouseholdAssignment(entityName: "Movie", object: movie, household: scopedHousehold, context: context)
+            debugLogHouseholdAssignment(entityName: "Viewing", object: v, household: scopedHousehold, context: context)
+            for fb in createdFeedbacks {
+                debugLogHouseholdAssignment(entityName: "MovieFeedback", object: fb, household: scopedHousehold, context: context)
+            }
+#endif
 
             // ✅ Fetch + persist poster AFTER the movie is saved
             Task {

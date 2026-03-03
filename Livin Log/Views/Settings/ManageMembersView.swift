@@ -118,14 +118,19 @@ struct ManageMembersView: View {
         let trimmed = addName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+
         let m = HouseholdMember(context: context)
         m.id = UUID()
         m.displayName = trimmed
         m.createdAt = Date()
-        m.household = household
+        m.household = scopedHousehold
 
         do {
             try context.save()
+#if DEBUG
+            debugLogHouseholdAssignment(entityName: "HouseholdMember", object: m, household: scopedHousehold, context: context)
+#endif
             addName = ""
         } catch {
             context.rollback()

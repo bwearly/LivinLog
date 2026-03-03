@@ -59,15 +59,9 @@ struct MoviesListView: View {
 
         let sort = [NSSortDescriptor(keyPath: \Movie.createdAt, ascending: false)]
 
-        // Ensure household has stable id
-        if household.id == nil {
-            household.id = UUID()
-            try? household.managedObjectContext?.save()
-        }
-
         _movies = FetchRequest<Movie>(
             sortDescriptors: sort,
-            predicate: NSPredicate(format: "householdID == %@", household.id! as CVarArg),
+            predicate: householdScopedPredicate(household),
             animation: .default
         )
     }
@@ -318,7 +312,7 @@ struct MoviesListView: View {
 
         let missing: [Movie] = await MainActor.run {
             let req = NSFetchRequest<Movie>(entityName: "Movie")
-            req.predicate = NSPredicate(format: "householdID == %@ AND (posterURL == nil OR posterURL == '')", hid as CVarArg)
+            req.predicate = NSPredicate(format: "household == %@ AND (posterURL == nil OR posterURL == '')", household)
             return (try? context.fetch(req)) ?? []
         }
 
@@ -348,11 +342,7 @@ struct MoviesListView: View {
 
     private func reloadMembers() {
         let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
-        if let hid = household.id {
-            req.predicate = NSPredicate(format: "household.id == %@", hid as CVarArg)
-        } else {
-            req.predicate = NSPredicate(format: "household == %@", household)
-        }
+        req.predicate = householdScopedPredicate(household)
         req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
         members = (try? context.fetch(req)) ?? []
     }

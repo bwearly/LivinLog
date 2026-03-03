@@ -205,12 +205,13 @@ struct AddEditPuzzleView: View {
 
         let puzzle = editingPuzzle ?? LLPuzzle(context: context)
         let now = Date()
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
 
         if puzzle.id == nil { puzzle.id = UUID() }
         if puzzle.createdAt == nil { puzzle.createdAt = now }
 
         puzzle.updatedAt = now
-        puzzle.household = household
+        puzzle.household = scopedHousehold
         puzzle.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let trimmedBrand = brand.trimmingCharacters(in: .whitespacesAndNewlines)

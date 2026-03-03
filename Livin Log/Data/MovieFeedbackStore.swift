@@ -19,6 +19,7 @@ enum MovieFeedbackStore {
         req.predicate = NSPredicate(format: "movie == %@ AND member == %@", movie, member)
 
         if let existing = (try? context.fetch(req))?.first as? MovieFeedback {
+            if existing.household == nil { existing.household = movie.household }
             print("ℹ️ Reusing feedback for movie:", movie.objectID, "member:", member.objectID)
             return existing
         }
@@ -30,6 +31,12 @@ enum MovieFeedbackStore {
         fb.slept = false
         fb.movie = movie
         fb.member = member
+        fb.household = movie.household
+        #if DEBUG
+        if let household = movie.household {
+            debugLogHouseholdAssignment(entityName: "MovieFeedback", object: fb, household: household, context: context)
+        }
+        #endif
         print("✅ Created feedback for movie:", movie.objectID, "member:", member.objectID)
         return fb
     }

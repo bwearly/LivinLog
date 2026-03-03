@@ -128,11 +128,12 @@ struct AddEditQuoteView: View {
     private func saveQuote() {
         let quote = editingQuote ?? LLQuote(context: context)
         let now = Date()
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
 
         if quote.id == nil { quote.id = UUID() }
         if quote.createdAt == nil { quote.createdAt = now }
 
-        quote.household = household
+        quote.household = scopedHousehold
         quote.updatedAt = now
         quote.textValue = quoteText.trimmingCharacters(in: .whitespacesAndNewlines)
         quote.speakerNameValue = speakerName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -152,6 +153,9 @@ struct AddEditQuoteView: View {
 
         do {
             try context.save()
+#if DEBUG
+            debugLogHouseholdAssignment(entityName: "LLQuote", object: quote, household: scopedHousehold, context: context)
+#endif
             dismiss()
         } catch {
             context.rollback()
