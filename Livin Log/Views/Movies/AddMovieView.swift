@@ -184,20 +184,25 @@ struct AddMovieView: View {
     // MARK: - Members (fetch instead of relationship accessors)
 
     private func fetchedMembers() -> [HouseholdMember] {
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return [] }
         let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
-        req.predicate = householdScopedPredicate(household)
+        req.predicate = householdScopedPredicate(scopedHousehold)
         req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
         return (try? context.fetch(req)) ?? []
     }
 
     private func ensureDefaultMemberExists() {
         if !fetchedMembers().isEmpty { return }
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
 
         let me = HouseholdMember(context: context)
+        if let store = scopedHousehold.objectID.persistentStore {
+            context.assign(me, to: store)
+        }
         me.id = UUID()
         me.createdAt = Date()
         me.displayName = member?.displayName ?? "Me"
-        me.household = household
+        me.household = scopedHousehold
 
         do { try context.save() } catch { context.rollback() }
     }
@@ -266,6 +271,10 @@ struct AddMovieView: View {
             let draft = feedbackByMemberID[m.objectID] ?? MemberFeedbackDraft()
             if isDraftEmpty(draft) { continue }
 
+            guard let memberInContext = (try? context.existingObject(with: m.objectID)) as? HouseholdMember else {
+                continue
+            }
+
             let fb = MovieFeedback(context: context)
             if let store = scopedHousehold.objectID.persistentStore {
                 context.assign(fb, to: store)
@@ -280,7 +289,7 @@ struct AddMovieView: View {
 
             fb.household = scopedHousehold
             fb.movie = movie
-            fb.member = m
+            fb.member = memberInContext
             createdFeedbacks.append(fb)
         }
         
@@ -319,6 +328,7 @@ struct AddMovieView: View {
                 label: "Viewing"
             )
 #if DEBUG
+            debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
             debugLogHouseholdAssignment(entityName: "Movie", object: movie, household: scopedHousehold, context: context)
             debugLogHouseholdAssignment(entityName: "Viewing", object: v, household: scopedHousehold, context: context)
             for fb in createdFeedbacks {

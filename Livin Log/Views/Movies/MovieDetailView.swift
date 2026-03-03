@@ -484,6 +484,7 @@ struct MovieDetailView: View {
                 label: "Movie"
             )
 #if DEBUG
+            debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
             debugLogHouseholdAssignment(entityName: "Movie", object: movie, household: scopedHousehold, context: context)
 #endif
         } catch {
@@ -516,8 +517,9 @@ struct MovieDetailView: View {
     private func saveSelectedMemberFeedback() {
         guard let selectedMember else { return }
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+        guard let selectedMemberInContext = (try? context.existingObject(with: selectedMember.objectID)) as? HouseholdMember else { return }
 
-        let fb = MovieFeedbackStore.getOrCreate(movie: movie, member: selectedMember, context: context)
+        let fb = MovieFeedbackStore.getOrCreate(movie: movie, member: selectedMemberInContext, context: context)
         if let store = scopedHousehold.objectID.persistentStore {
             context.assign(fb, to: store)
         }
@@ -539,6 +541,10 @@ struct MovieDetailView: View {
                 objects: [fb],
                 label: "MovieFeedback"
             )
+#if DEBUG
+            debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
+            debugLogHouseholdAssignment(entityName: "MovieFeedback", object: fb, household: scopedHousehold, context: context)
+#endif
             print("✅ Saved feedback for movie:", movie.objectID, "member:", selectedMember.objectID)
         } catch {
             context.rollback()
@@ -556,9 +562,10 @@ struct MovieDetailView: View {
         }
 
         context.performAndWait {
+            guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+            guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
             let v = Viewing(context: context)
 
-            let scopedHousehold = activeHouseholdInContext(household, context: context) ?? household
             if let store = scopedHousehold.objectID.persistentStore {
                 context.assign(v, to: store)
             }
@@ -568,7 +575,7 @@ struct MovieDetailView: View {
             v.setValue(watchedOn, forKey: "watchedOn")
 
             v.setValue(isRewatch, forKey: "isRewatch")
-            v.setValue(movie, forKey: "movie")
+            v.setValue(movieInContext, forKey: "movie")
             v.setValue(scopedHousehold, forKey: "household")
 
             let trimmed = (notes ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -587,6 +594,9 @@ struct MovieDetailView: View {
                     objects: [v],
                     label: "Viewing"
                 )
+#if DEBUG
+                debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
+#endif
                 reloadViewings()
                 print("✅ Added viewing for movie:", movie.objectID, "rewatch:", isRewatch)
             } catch {
@@ -646,17 +656,22 @@ struct MovieDetailView: View {
     @MainActor
     private func saveViewingDate(_ viewing: Viewing, date: Date) {
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
-        viewing.watchedOn = date
+        guard let viewingInContext = (try? context.existingObject(with: viewing.objectID)) as? Viewing else { return }
+        viewingInContext.watchedOn = date
         do {
             try context.save()
             includeInHouseholdShare(
                 persistentContainer: persistentContainer,
                 household: scopedHousehold,
-                objects: [viewing],
+                objects: [viewingInContext],
                 label: "Viewing"
             )
+#if DEBUG
+            debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
+            debugLogHouseholdAssignment(entityName: "Viewing", object: viewingInContext, household: scopedHousehold, context: context)
+#endif
             reloadViewings()
-            print("✅ Updated viewing date:", viewing.objectID)
+            print("✅ Updated viewing date:", viewingInContext.objectID)
         } catch {
             context.rollback()
             print("Failed to update viewing date:", error)
@@ -685,8 +700,9 @@ struct MovieDetailView: View {
     // MARK: - Data helpers
 
     private func fetchedMembers() -> [HouseholdMember] {
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return [] }
         let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
-        req.predicate = householdScopedPredicate(household)
+        req.predicate = householdScopedPredicate(scopedHousehold)
         req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
         return (try? context.fetch(req)) ?? []
     }

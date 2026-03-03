@@ -44,7 +44,7 @@ struct RootView: View {
                 )
                 
             case .main:
-                HomeDashboardView(household: appState.household, member: appState.member)
+                HomeDashboardView(household: $appState.household, member: $appState.member)
             }
         }
         .task {

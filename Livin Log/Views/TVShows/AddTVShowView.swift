@@ -129,6 +129,7 @@ struct AddTVShowView: View {
                 label: "TVShow"
             )
 #if DEBUG
+            debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
             debugLogHouseholdAssignment(entityName: "TVShow", object: tvShow, household: scopedHousehold, context: context)
 #endif
             dismiss()

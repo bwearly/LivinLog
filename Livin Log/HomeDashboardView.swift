@@ -4,8 +4,8 @@ import CoreData
 struct HomeDashboardView: View {
     @Environment(\.managedObjectContext) private var context
 
-    @State var household: Household?
-    @State var member: HouseholdMember?
+    @Binding var household: Household?
+    @Binding var member: HouseholdMember?
 
     @State private var showingSettings = false
     @State private var isRefreshing = false
@@ -54,17 +54,6 @@ struct HomeDashboardView: View {
         }
         .onAppear {
             debugLog("onAppear")
-            restoreOrAutoPickSelection()
-        }
-        .onChange(of: household?.objectID) { oldValue, newValue in
-            debugLog("household changed \(oldValue?.uriRepresentation().lastPathComponent ?? "nil") -> \(newValue?.uriRepresentation().lastPathComponent ?? "nil")")
-            normalizeSelection()
-            SelectionStore.save(household: household, member: member)
-        }
-        .onChange(of: member?.objectID) { oldValue, newValue in
-            debugLog("member changed \(oldValue?.uriRepresentation().lastPathComponent ?? "nil") -> \(newValue?.uriRepresentation().lastPathComponent ?? "nil")")
-            normalizeSelection()
-            SelectionStore.save(household: household, member: member)
         }
     }
 
@@ -198,68 +187,6 @@ struct HomeDashboardView: View {
         }
     }
 
-    // MARK: - Selection + Auto-heal
-
-    private func restoreOrAutoPickSelection() {
-        let (h, m) = SelectionStore.load(context: context)
-        self.household = h
-        self.member = m
-        normalizeSelection()
-
-        // If still nil (first launch), auto-pick first household and member
-        if self.household == nil {
-            if let firstHousehold = fetchFirstHousehold() {
-                self.household = firstHousehold
-            }
-        }
-        normalizeSelection()
-        SelectionStore.save(household: household, member: member)
-    }
-
-    /// Ensures:
-    /// - if selected household is private, create fallback "Me" member
-    /// - if selected household is shared and no valid member is selected, keep nil so profile flow can prompt
-    private func normalizeSelection() {
-        guard let hh = household else {
-            member = nil
-            return
-        }
-
-        let isSharedHousehold = hh.objectID.persistentStore == PersistenceController.shared.sharedStore
-
-        // If current member belongs to this household, keep it.
-        if member?.household?.objectID == hh.objectID {
-            return
-        }
-
-        let members = fetchMembers(for: hh)
-
-        if isSharedHousehold {
-            if let selected = SelectionStore.loadDeviceMember(for: hh, context: context) {
-                member = selected
-            } else {
-                member = nil
-            }
-            return
-        }
-
-        if members.isEmpty {
-            let me = HouseholdMember(context: context)
-            me.id = UUID()
-            me.createdAt = Date()
-            me.displayName = "Me"
-            me.household = hh
-
-            do { try context.save() } catch { context.rollback() }
-        }
-
-        let updatedMembers = fetchMembers(for: hh)
-        member = updatedMembers.first
-    }
-
-
-
-
     private func refreshDashboard() {
         guard !isRefreshing else { return }
         isRefreshing = true
@@ -268,7 +195,11 @@ struct HomeDashboardView: View {
             context.refreshAllObjects()
         }
 
-        restoreOrAutoPickSelection()
+        if let household {
+#if DEBUG
+            debugPrintHouseholdDiagnostics(household: household, context: context, reason: "manual refresh")
+#endif
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             isRefreshing = false
@@ -281,17 +212,4 @@ struct HomeDashboardView: View {
 #endif
     }
 
-    private func fetchFirstHousehold() -> Household? {
-        let req = NSFetchRequest<Household>(entityName: "Household")
-        req.fetchLimit = 1
-        req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
-        return try? context.fetch(req).first
-    }
-
-    private func fetchMembers(for household: Household) -> [HouseholdMember] {
-        let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
-        req.predicate = NSPredicate(format: "household == %@", household)
-        req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
-        return (try? context.fetch(req)) ?? []
-    }
 }
