@@ -23,6 +23,7 @@ struct AddEditPuzzleView: View {
     @State private var showingCamera = false
     @State private var showingDeleteAlert = false
     @State private var isSaving = false
+    @State private var didSeed = false
 
     private let persistentContainer = PersistenceController.shared.container
 
@@ -157,7 +158,13 @@ struct AddEditPuzzleView: View {
             Text("This can’t be undone.")
         }
         .onAppear {
-            seedIfEditing()
+            if !didSeed {
+                didSeed = true
+                seedIfEditing()
+#if DEBUG
+                print("🧩 Seeded initial state (AddEditPuzzleView)")
+#endif
+            }
         }
     }
 

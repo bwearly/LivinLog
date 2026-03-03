@@ -23,6 +23,7 @@ struct MovieDetailView: View {
 
     // Selected member for feedback
     @State private var selectedMember: HouseholdMember?
+    @State private var didInitialLoad = false
 
     // Movie edit fields
     @State private var editTitle: String = ""
@@ -104,11 +105,17 @@ struct MovieDetailView: View {
             GenrePickerView(title: "Select Genres", allGenres: allGenres, selected: $selectedGenres)
         }
         .onAppear {
-            seedMovieEditorFieldsFromMovie()
-            reloadAll()
+            if !didInitialLoad {
+                didInitialLoad = true
+                seedMovieEditorFieldsFromMovie()
+                reloadAll()
 
-            if selectedMember == nil {
-                selectedMember = member ?? members.first
+                if selectedMember == nil {
+                    selectedMember = member ?? members.first
+                }
+#if DEBUG
+                print("🧩 Seeded initial state (MovieDetailView)")
+#endif
             }
         }
         .task {
