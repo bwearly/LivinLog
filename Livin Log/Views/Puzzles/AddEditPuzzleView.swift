@@ -245,6 +245,10 @@ struct AddEditPuzzleView: View {
                 objects: [puzzle],
                 label: "LLPuzzle"
             )
+#if DEBUG
+            debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
+            debugLogHouseholdAssignment(entityName: "LLPuzzle", object: puzzle, household: scopedHousehold, context: context)
+#endif
             dismiss()
         } catch {
             context.rollback()

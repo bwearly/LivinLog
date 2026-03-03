@@ -140,6 +140,7 @@ struct AddEditEventView: View {
                 label: "LLCalendarEvent"
             )
 #if DEBUG
+            debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
             debugLogHouseholdAssignment(entityName: "LLCalendarEvent", object: event, household: scopedHousehold, context: context)
 #endif
             Task { @MainActor in

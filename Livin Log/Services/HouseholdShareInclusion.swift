@@ -8,52 +8,73 @@ func includeInHouseholdShare(
 ) {
     guard !objects.isEmpty else { return }
 
-    do {
-        let sharesByID = try persistentContainer.fetchShares(matching: [household.objectID])
-        guard let householdShare = sharesByID[household.objectID] else {
-            print("ℹ️ No household share exists yet; \(label) will remain private")
-#if DEBUG
-            debugVerifyShareAssociation(persistentContainer: persistentContainer, objects: objects, label: label)
-#endif
-            return
-        }
+    let privateStore = PersistenceController.shared.privateStore
+    let sharedStore = PersistenceController.shared.sharedStore
 
-        persistentContainer.share(objects, to: householdShare) { _, _, _, error in
-            if let error {
-                print("❌ Failed to add \(label) to share: \(error.localizedDescription)")
-            } else {
-                print("✅ \(label) added to household share")
+    guard let householdStore = household.objectID.persistentStore else {
+        print("❌ Could not resolve household store for \(label)")
+        return
+    }
+
+#if DEBUG
+    debugPrintStorePlacement(household: household, objects: objects, label: label)
+#endif
+
+    if householdStore == sharedStore {
+        print("ℹ️ \(label) created in SHARED store; no share update needed")
+        return
+    }
+
+    guard householdStore == privateStore else {
+        print("❌ \(label) household is in unknown store; skipping share inclusion")
+        return
+    }
+
+    let householdID = household.objectID
+    let objectIDs = objects.map(\.objectID)
+
+    persistentContainer.performBackgroundTask { bgContext in
+        do {
+            guard let hh = try bgContext.existingObject(with: householdID) as? Household else {
+                print("❌ Failed to resolve household in background context for \(label)")
+                return
             }
 
-#if DEBUG
-            debugVerifyShareAssociation(persistentContainer: persistentContainer, objects: objects, label: label)
-#endif
+            let sharesByID = try persistentContainer.fetchShares(matching: [hh.objectID])
+            guard let householdShare = sharesByID[hh.objectID] else {
+                print("ℹ️ No household share exists yet; \(label) remains in private store")
+                return
+            }
+
+            let bgObjects = try objectIDs.compactMap { objectID -> NSManagedObject? in
+                try bgContext.existingObject(with: objectID)
+            }
+            guard !bgObjects.isEmpty else { return }
+
+            persistentContainer.share(bgObjects, to: householdShare) { _, _, _, error in
+                if let error {
+                    print("❌ Failed to add \(label) to household share: \(error.localizedDescription)")
+                } else {
+                    print("✅ \(label) added to household share (owner/private store)")
+                }
+            }
+        } catch {
+            print("❌ Failed share inclusion for \(label): \(error.localizedDescription)")
         }
-    } catch {
-        print("❌ Failed to fetch household share for \(label): \(error.localizedDescription)")
-#if DEBUG
-        debugVerifyShareAssociation(persistentContainer: persistentContainer, objects: objects, label: label)
-#endif
     }
 }
 
 #if DEBUG
-private func debugVerifyShareAssociation(
-    persistentContainer: NSPersistentCloudKitContainer,
-    objects: [NSManagedObject],
-    label: String
-) {
+private func debugPrintStorePlacement(household: Household, objects: [NSManagedObject], label: String) {
+    let context = household.managedObjectContext
+    let coordinator = context?.persistentStoreCoordinator
+    let householdStore = coordinator?.persistentStore(for: household.objectID)?.url?.lastPathComponent ?? "unknown-store"
+
+    print("🧩 [ShareInclusion] \(label) householdStore=\(householdStore)")
+
     for object in objects {
-        do {
-            let sharesByID = try persistentContainer.fetchShares(matching: [object.objectID])
-            if sharesByID[object.objectID] != nil {
-                print("✅ DEBUG: \(label) has an associated CKShare")
-            } else {
-                print("ℹ️ DEBUG: \(label) does not have an associated CKShare")
-            }
-        } catch {
-            print("❌ DEBUG: failed to verify \(label) share: \(error.localizedDescription)")
-        }
+        let storeName = coordinator?.persistentStore(for: object.objectID)?.url?.lastPathComponent ?? "unknown-store"
+        print("🧩 [ShareInclusion] \(label) object=\(object.objectID.uriRepresentation().absoluteString) store=\(storeName)")
     }
 }
 #endif

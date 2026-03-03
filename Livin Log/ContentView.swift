@@ -9,10 +9,10 @@ import SwiftUI
 import CoreData
 
 struct ContentView: View {
-    let household: Household?
-    let member: HouseholdMember?
+    @Binding var household: Household?
+    @Binding var member: HouseholdMember?
 
     var body: some View {
-        HomeDashboardView(household: household, member: member)
+        HomeDashboardView(household: $household, member: $member)
     }
 }

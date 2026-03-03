@@ -9,13 +9,17 @@ func activeHouseholdInContext(_ household: Household, context: NSManagedObjectCo
 }
 
 func householdScopedPredicate(_ household: Household) -> NSPredicate {
-    NSPredicate(format: "household == %@", household)
+    return NSPredicate(format: "household == %@", household)
 }
 
 #if DEBUG
-func debugPrintStore(entityName: String, objectID: NSManagedObjectID, context: NSManagedObjectContext) {
+func debugStoreName(for objectID: NSManagedObjectID, context: NSManagedObjectContext) -> String {
     let store = context.persistentStoreCoordinator?.persistentStore(for: objectID)
-    let storeURL = store?.url?.lastPathComponent ?? "unknown-store"
+    return store?.url?.lastPathComponent ?? "unknown-store"
+}
+
+func debugPrintStore(entityName: String, objectID: NSManagedObjectID, context: NSManagedObjectContext) {
+    let storeURL = debugStoreName(for: objectID, context: context)
     print("🧩 [StoreDebug] \(entityName) objectID=\(objectID.uriRepresentation().absoluteString) store=\(storeURL)")
 }
 
@@ -30,6 +34,25 @@ func debugLogHouseholdAssignment(entityName: String, object: NSManagedObject, ho
     if object.entity.attributesByName.keys.contains("householdID") {
         let objHouseholdID = object.value(forKey: "householdID") as? UUID
         print("🧩 [StoreDebug] \(entityName) householdID object=\(objHouseholdID?.uuidString ?? "nil") active=\(household.id?.uuidString ?? "nil")")
+    }
+}
+
+func debugPrintHouseholdDiagnostics(household: Household, context: NSManagedObjectContext, reason: String) {
+    guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
+        print("🧪 [SyncDiag] Could not scope household for diagnostics [\(reason)]")
+        return
+    }
+
+    let householdStore = debugStoreName(for: scopedHousehold.objectID, context: context)
+    print("🧪 [SyncDiag] household=\(scopedHousehold.name ?? "Unnamed") id=\(scopedHousehold.objectID.uriRepresentation().absoluteString) store=\(householdStore) [\(reason)]")
+
+    let entities = ["LLQuote", "LLPuzzle", "LLCalendarEvent", "LLChild", "Movie", "TVShow"]
+    for entity in entities {
+        let req = NSFetchRequest<NSFetchRequestResult>(entityName: entity)
+        req.predicate = householdScopedPredicate(scopedHousehold)
+        req.includesPendingChanges = true
+        let count = (try? context.count(for: req)) ?? -1
+        print("🧪 [SyncDiag] \(entity) count=\(count)")
     }
 }
 #endif

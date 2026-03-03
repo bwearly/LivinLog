@@ -23,19 +23,11 @@ struct AddEditQuoteView: View {
         self.household = household
         self.editingQuote = editingQuote
 
-        if let hid = household.id {
-            _children = FetchRequest<LLChild>(
-                sortDescriptors: [NSSortDescriptor(keyPath: \LLChild.name, ascending: true)],
-                predicate: NSPredicate(format: "household.id == %@", hid as CVarArg),
-                animation: .default
-            )
-        } else {
-            _children = FetchRequest<LLChild>(
-                sortDescriptors: [NSSortDescriptor(keyPath: \LLChild.name, ascending: true)],
-                predicate: NSPredicate(format: "household == %@", household),
-                animation: .default
-            )
-        }
+        _children = FetchRequest<LLChild>(
+            sortDescriptors: [NSSortDescriptor(keyPath: \LLChild.name, ascending: true)],
+            predicate: NSPredicate(format: "household == %@", household),
+            animation: .default
+        )
     }
 
     private var isEditing: Bool { editingQuote != nil }
@@ -180,8 +172,14 @@ struct AddEditQuoteView: View {
 
         do {
             try context.save()
-            ensureQuoteIncludedInHouseholdShare(quote: quote, scopedHousehold: scopedHousehold)
+            includeInHouseholdShare(
+                persistentContainer: persistentContainer,
+                household: scopedHousehold,
+                objects: [quote],
+                label: "LLQuote"
+            )
 #if DEBUG
+            debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
             debugLogHouseholdAssignment(entityName: "LLQuote", object: quote, household: scopedHousehold, context: context)
 #endif
             dismiss()
@@ -207,50 +205,4 @@ struct AddEditQuoteView: View {
     private func formattedAge(months: Int32) -> String {
         "\(Int(months) / 12)y \(Int(months) % 12)m"
     }
-
-    private func ensureQuoteIncludedInHouseholdShare(quote: LLQuote, scopedHousehold: Household) {
-        do {
-            let sharesByID = try persistentContainer.fetchShares(matching: [scopedHousehold.objectID])
-
-            guard let householdShare = sharesByID[scopedHousehold.objectID] else {
-                print("ℹ️ No household share exists yet; quote will remain private")
-#if DEBUG
-                debugVerifyQuoteShare(quote: quote)
-#endif
-                return
-            }
-
-            persistentContainer.share([quote], to: householdShare) { _, _, _, error in
-                if let error {
-                    print("❌ Failed to add quote to share: \(error.localizedDescription)")
-                } else {
-                    print("✅ Quote added to household share")
-                }
-
-#if DEBUG
-                debugVerifyQuoteShare(quote: quote)
-#endif
-            }
-        } catch {
-            print("❌ Failed to fetch household share for quote: \(error.localizedDescription)")
-#if DEBUG
-            debugVerifyQuoteShare(quote: quote)
-#endif
-        }
-    }
-
-#if DEBUG
-    private func debugVerifyQuoteShare(quote: LLQuote) {
-        do {
-            let sharesByID = try persistentContainer.fetchShares(matching: [quote.objectID])
-            if sharesByID[quote.objectID] != nil {
-                print("✅ DEBUG: quote has an associated CKShare")
-            } else {
-                print("ℹ️ DEBUG: quote does not have an associated CKShare")
-            }
-        } catch {
-            print("❌ DEBUG: failed to verify quote share: \(error.localizedDescription)")
-        }
-    }
-#endif
 }

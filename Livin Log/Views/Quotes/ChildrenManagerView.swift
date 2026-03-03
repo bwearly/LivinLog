@@ -177,6 +177,10 @@ private struct AddEditChildView: View {
                 objects: [child],
                 label: "LLChild"
             )
+#if DEBUG
+            debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
+            debugLogHouseholdAssignment(entityName: "LLChild", object: child, household: scopedHousehold, context: context)
+#endif
             dismiss()
         } catch {
             context.rollback()
