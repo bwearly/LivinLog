@@ -20,11 +20,23 @@ struct AddEditQuoteView: View {
     init(household: Household, editingQuote: LLQuote? = nil) {
         self.household = household
         self.editingQuote = editingQuote
-        _children = FetchRequest<LLChild>(
-            sortDescriptors: [NSSortDescriptor(keyPath: \LLChild.name, ascending: true)],
-            predicate: NSPredicate(format: "household == %@", household),
-            animation: .default
-        )
+
+        // ✅ IMPORTANT: don't predicate on "household == %@"
+        // because that depends on object identity / store.
+        if let hid = household.id {
+            _children = FetchRequest<LLChild>(
+                sortDescriptors: [NSSortDescriptor(keyPath: \LLChild.name, ascending: true)],
+                predicate: NSPredicate(format: "household.id == %@", hid as CVarArg),
+                animation: .default
+            )
+        } else {
+            // fallback (older households before id is set, or edge cases)
+            _children = FetchRequest<LLChild>(
+                sortDescriptors: [NSSortDescriptor(keyPath: \LLChild.name, ascending: true)],
+                predicate: NSPredicate(format: "household == %@", household),
+                animation: .default
+            )
+        }
     }
 
     private var isEditing: Bool { editingQuote != nil }
@@ -126,9 +138,21 @@ struct AddEditQuoteView: View {
     }
 
     private func saveQuote() {
-        let quote = editingQuote ?? LLQuote(context: context)
         let now = Date()
-        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+
+        // ✅ Re-fetch household in THIS context
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
+            print("❌ Could not resolve household in context for quote save")
+            return
+        }
+
+        // Create or edit
+        let quote = editingQuote ?? LLQuote(context: context)
+
+        // ✅ CRITICAL: force quote into the same persistent store as the household (shared vs private)
+        if let store = scopedHousehold.objectID.persistentStore {
+            context.assign(quote, to: store)
+        }
 
         if quote.id == nil { quote.id = UUID() }
         if quote.createdAt == nil { quote.createdAt = now }
@@ -143,9 +167,11 @@ struct AddEditQuoteView: View {
         quote.contextTextValue = trimmedContext
         quote.contextText = trimmedContext.isEmpty ? nil : trimmedContext
 
-        if let selectedChild {
-            quote.child = selectedChild
-            quote.ageInMonthsAtSaidAt = ageInMonths(birthday: selectedChild.birthdayValue, at: saidAt)
+        // ✅ If a child is selected, resolve that child inside this context/store too
+        if let selectedChildID,
+           let childInContext = (try? context.existingObject(with: selectedChildID)) as? LLChild {
+            quote.child = childInContext
+            quote.ageInMonthsAtSaidAt = ageInMonths(birthday: childInContext.birthdayValue, at: saidAt)
         } else {
             quote.child = nil
             quote.ageInMonthsAtSaidAt = 0
