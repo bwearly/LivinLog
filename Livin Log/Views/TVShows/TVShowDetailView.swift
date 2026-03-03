@@ -27,6 +27,8 @@ struct TVShowDetailView: View {
     // Poster
     @State private var posterURL: URL?
 
+    private let persistentContainer = PersistenceController.shared.container
+
     var body: some View {
         Form {
             headerSection
@@ -165,6 +167,9 @@ struct TVShowDetailView: View {
 
         tvShow.rewatch = editRewatch
         tvShow.ratingText = editRating.rawValue
+        if let store = scopedHousehold.objectID.persistentStore {
+            context.assign(tvShow, to: store)
+        }
         tvShow.household = scopedHousehold
         tvShow.householdID = scopedHousehold.id
 
@@ -173,6 +178,12 @@ struct TVShowDetailView: View {
 
         do {
             try context.save()
+            includeInHouseholdShare(
+                persistentContainer: persistentContainer,
+                household: scopedHousehold,
+                objects: [tvShow],
+                label: "TVShow"
+            )
 #if DEBUG
             debugLogHouseholdAssignment(entityName: "TVShow", object: tvShow, household: scopedHousehold, context: context)
 #endif

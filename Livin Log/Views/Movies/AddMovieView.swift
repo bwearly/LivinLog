@@ -29,6 +29,8 @@ struct AddMovieView: View {
     // Feedback drafts
     @State private var feedbackByMemberID: [NSManagedObjectID: MemberFeedbackDraft] = [:]
 
+    private let persistentContainer = PersistenceController.shared.container
+
     private let mpaaOptions: [String] = ["—", "G", "PG", "PG-13", "R", "NC-17", "Not Rated"]
     private let allGenres: [String] = [
         "Action","Adventure","Animation","Comedy","Crime","Documentary","Drama","Family",
@@ -229,6 +231,9 @@ struct AddMovieView: View {
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
 
         let movie = Movie(context: context)
+        if let store = scopedHousehold.objectID.persistentStore {
+            context.assign(movie, to: store)
+        }
         movie.id = UUID()
         movie.createdAt = Date()
         movie.title = trimmedTitle
@@ -262,6 +267,9 @@ struct AddMovieView: View {
             if isDraftEmpty(draft) { continue }
 
             let fb = MovieFeedback(context: context)
+            if let store = scopedHousehold.objectID.persistentStore {
+                context.assign(fb, to: store)
+            }
             fb.id = UUID()
             fb.updatedAt = Date()
             fb.rating = draft.rating
@@ -278,6 +286,9 @@ struct AddMovieView: View {
         
         // ✅ Add initial watch history record on create
         let v = Viewing(context: context)
+        if let store = scopedHousehold.objectID.persistentStore {
+            context.assign(v, to: store)
+        }
         // awakeFromInsert already sets id + watchedOn
         v.isRewatch = false
         v.watchedOn = watchedOn
@@ -287,6 +298,26 @@ struct AddMovieView: View {
 
         do {
             try context.save()
+            includeInHouseholdShare(
+                persistentContainer: persistentContainer,
+                household: scopedHousehold,
+                objects: [movie],
+                label: "Movie"
+            )
+            if !createdFeedbacks.isEmpty {
+                includeInHouseholdShare(
+                    persistentContainer: persistentContainer,
+                    household: scopedHousehold,
+                    objects: createdFeedbacks,
+                    label: "MovieFeedback"
+                )
+            }
+            includeInHouseholdShare(
+                persistentContainer: persistentContainer,
+                household: scopedHousehold,
+                objects: [v],
+                label: "Viewing"
+            )
 #if DEBUG
             debugLogHouseholdAssignment(entityName: "Movie", object: movie, household: scopedHousehold, context: context)
             debugLogHouseholdAssignment(entityName: "Viewing", object: v, household: scopedHousehold, context: context)

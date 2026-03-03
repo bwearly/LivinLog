@@ -23,6 +23,7 @@ struct AddEditEventView: View {
     @State private var notificationsEnabled = true
 
     private let tags = ["Birthday", "Anniversary", "Family", "Milestone", "Travel", "Medical", "School", "Work", "Other"]
+    private let persistentContainer = PersistenceController.shared.container
 
     init(household: Household, editingEvent: LLCalendarEvent? = nil, prefilledMonth: Int16? = nil, prefilledDay: Int16? = nil) {
         self.household = household
@@ -102,8 +103,19 @@ struct AddEditEventView: View {
     }
 
     private func save() {
-        let event = editingEvent ?? LLCalendarEvent(context: context)
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+
+        let event: LLCalendarEvent
+        if let editingEvent,
+           let existing = (try? context.existingObject(with: editingEvent.objectID)) as? LLCalendarEvent {
+            event = existing
+        } else {
+            event = LLCalendarEvent(context: context)
+        }
+
+        if let store = scopedHousehold.objectID.persistentStore {
+            context.assign(event, to: store)
+        }
 
         if event.idValue == nil {
             event.idValue = UUID()
@@ -121,6 +133,12 @@ struct AddEditEventView: View {
 
         do {
             try context.save()
+            includeInHouseholdShare(
+                persistentContainer: persistentContainer,
+                household: scopedHousehold,
+                objects: [event],
+                label: "LLCalendarEvent"
+            )
 #if DEBUG
             debugLogHouseholdAssignment(entityName: "LLCalendarEvent", object: event, household: scopedHousehold, context: context)
 #endif

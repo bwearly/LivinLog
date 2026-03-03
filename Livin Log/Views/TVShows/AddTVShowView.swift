@@ -24,6 +24,8 @@ struct AddTVShowView: View {
 
     @State private var isSaving = false
 
+    private let persistentContainer = PersistenceController.shared.container
+
     var body: some View {
         Form {
             Section("TV Show") {
@@ -85,6 +87,9 @@ struct AddTVShowView: View {
         }
 
         let tvShow = TVShow(context: context)
+        if let store = scopedHousehold.objectID.persistentStore {
+            context.assign(tvShow, to: store)
+        }
         tvShow.id = UUID()
         tvShow.createdAt = Date()
         tvShow.title = trimmedTitle
@@ -117,6 +122,12 @@ struct AddTVShowView: View {
 
         do {
             try context.save()
+            includeInHouseholdShare(
+                persistentContainer: persistentContainer,
+                household: scopedHousehold,
+                objects: [tvShow],
+                label: "TVShow"
+            )
 #if DEBUG
             debugLogHouseholdAssignment(entityName: "TVShow", object: tvShow, household: scopedHousehold, context: context)
 #endif

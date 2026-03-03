@@ -51,6 +51,8 @@ struct MovieDetailView: View {
     // Poster
     @State private var posterURL: URL?
 
+    private let persistentContainer = PersistenceController.shared.container
+
     // Watch/rewatch draft notes
     @State private var viewingNotesDraft: String = ""
     @State private var viewingDateDraft = Date()
@@ -463,6 +465,9 @@ struct MovieDetailView: View {
         }
 
         movie.mpaaRating = (editMPAA == "—") ? nil : editMPAA
+        if let store = scopedHousehold.objectID.persistentStore {
+            context.assign(movie, to: store)
+        }
         movie.household = scopedHousehold
         movie.householdID = scopedHousehold.id
         movie.genre = selectedGenres.isEmpty ? nil : selectedGenres.sorted().joined(separator: ", ")
@@ -472,6 +477,12 @@ struct MovieDetailView: View {
 
         do {
             try context.save()
+            includeInHouseholdShare(
+                persistentContainer: persistentContainer,
+                household: scopedHousehold,
+                objects: [movie],
+                label: "Movie"
+            )
 #if DEBUG
             debugLogHouseholdAssignment(entityName: "Movie", object: movie, household: scopedHousehold, context: context)
 #endif
@@ -504,7 +515,12 @@ struct MovieDetailView: View {
 
     private func saveSelectedMemberFeedback() {
         guard let selectedMember else { return }
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+
         let fb = MovieFeedbackStore.getOrCreate(movie: movie, member: selectedMember, context: context)
+        if let store = scopedHousehold.objectID.persistentStore {
+            context.assign(fb, to: store)
+        }
 
         fb.rating = editRating
         fb.slept = editSlept
@@ -513,10 +529,16 @@ struct MovieDetailView: View {
         let trimmed = editNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         fb.notes = trimmed.isEmpty ? nil : trimmed
 
-        fb.household = activeHouseholdInContext(household, context: context) ?? household
+        fb.household = scopedHousehold
 
         do {
             try context.save()
+            includeInHouseholdShare(
+                persistentContainer: persistentContainer,
+                household: scopedHousehold,
+                objects: [fb],
+                label: "MovieFeedback"
+            )
             print("✅ Saved feedback for movie:", movie.objectID, "member:", selectedMember.objectID)
         } catch {
             context.rollback()
@@ -536,13 +558,17 @@ struct MovieDetailView: View {
         context.performAndWait {
             let v = Viewing(context: context)
 
+            let scopedHousehold = activeHouseholdInContext(household, context: context) ?? household
+            if let store = scopedHousehold.objectID.persistentStore {
+                context.assign(v, to: store)
+            }
+
             // Set required fields defensively
             if v.value(forKey: "id") == nil { v.setValue(UUID(), forKey: "id") }
             v.setValue(watchedOn, forKey: "watchedOn")
 
             v.setValue(isRewatch, forKey: "isRewatch")
             v.setValue(movie, forKey: "movie")
-            let scopedHousehold = activeHouseholdInContext(household, context: context) ?? household
             v.setValue(scopedHousehold, forKey: "household")
 
             let trimmed = (notes ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -555,6 +581,12 @@ struct MovieDetailView: View {
                     debugLogHouseholdAssignment(entityName: "Viewing", object: v, household: scopedHousehold, context: context)
                 }
 #endif
+                includeInHouseholdShare(
+                    persistentContainer: persistentContainer,
+                    household: scopedHousehold,
+                    objects: [v],
+                    label: "Viewing"
+                )
                 reloadViewings()
                 print("✅ Added viewing for movie:", movie.objectID, "rewatch:", isRewatch)
             } catch {
@@ -613,9 +645,16 @@ struct MovieDetailView: View {
 
     @MainActor
     private func saveViewingDate(_ viewing: Viewing, date: Date) {
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
         viewing.watchedOn = date
         do {
             try context.save()
+            includeInHouseholdShare(
+                persistentContainer: persistentContainer,
+                household: scopedHousehold,
+                objects: [viewing],
+                label: "Viewing"
+            )
             reloadViewings()
             print("✅ Updated viewing date:", viewing.objectID)
         } catch {
