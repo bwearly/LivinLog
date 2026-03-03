@@ -24,6 +24,8 @@ struct AddEditPuzzleView: View {
     @State private var showingDeleteAlert = false
     @State private var isSaving = false
 
+    private let persistentContainer = PersistenceController.shared.container
+
     init(household: Household, editingPuzzle: LLPuzzle? = nil) {
         self.household = household
         self.editingPuzzle = editingPuzzle
@@ -203,9 +205,20 @@ struct AddEditPuzzleView: View {
         isSaving = true
         defer { isSaving = false }
 
-        let puzzle = editingPuzzle ?? LLPuzzle(context: context)
         let now = Date()
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+
+        let puzzle: LLPuzzle
+        if let editingPuzzle,
+           let existing = (try? context.existingObject(with: editingPuzzle.objectID)) as? LLPuzzle {
+            puzzle = existing
+        } else {
+            puzzle = LLPuzzle(context: context)
+        }
+
+        if let store = scopedHousehold.objectID.persistentStore {
+            context.assign(puzzle, to: store)
+        }
 
         if puzzle.id == nil { puzzle.id = UUID() }
         if puzzle.createdAt == nil { puzzle.createdAt = now }
@@ -226,6 +239,12 @@ struct AddEditPuzzleView: View {
 
         do {
             try context.save()
+            includeInHouseholdShare(
+                persistentContainer: persistentContainer,
+                household: scopedHousehold,
+                objects: [puzzle],
+                label: "LLPuzzle"
+            )
             dismiss()
         } catch {
             context.rollback()

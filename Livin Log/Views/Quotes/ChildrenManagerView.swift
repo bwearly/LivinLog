@@ -92,6 +92,8 @@ private struct AddEditChildView: View {
     @State private var birthday = Date()
     @State private var showingDeleteAlert = false
 
+    private let persistentContainer = PersistenceController.shared.container
+
     init(household: Household, editingChild: LLChild? = nil) {
         self.household = household
         self.editingChild = editingChild
@@ -142,9 +144,20 @@ private struct AddEditChildView: View {
     }
 
     private func save() {
-        let child = editingChild ?? LLChild(context: context)
         let now = Date()
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+
+        let child: LLChild
+        if let editingChild,
+           let existing = (try? context.existingObject(with: editingChild.objectID)) as? LLChild {
+            child = existing
+        } else {
+            child = LLChild(context: context)
+        }
+
+        if let store = scopedHousehold.objectID.persistentStore {
+            context.assign(child, to: store)
+        }
 
         if child.id == nil {
             child.id = UUID()
@@ -158,6 +171,12 @@ private struct AddEditChildView: View {
 
         do {
             try context.save()
+            includeInHouseholdShare(
+                persistentContainer: persistentContainer,
+                household: scopedHousehold,
+                objects: [child],
+                label: "LLChild"
+            )
             dismiss()
         } catch {
             context.rollback()
