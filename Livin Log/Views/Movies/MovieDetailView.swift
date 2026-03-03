@@ -477,12 +477,7 @@ struct MovieDetailView: View {
 
         do {
             try context.save()
-            includeInHouseholdShare(
-                persistentContainer: persistentContainer,
-                household: scopedHousehold,
-                objects: [movie],
-                label: "Movie"
-            )
+            print("ℹ️ Movie inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
             debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
             debugLogHouseholdAssignment(entityName: "Movie", object: movie, household: scopedHousehold, context: context)
@@ -535,12 +530,7 @@ struct MovieDetailView: View {
 
         do {
             try context.save()
-            includeInHouseholdShare(
-                persistentContainer: persistentContainer,
-                household: scopedHousehold,
-                objects: [fb],
-                label: "MovieFeedback"
-            )
+            print("ℹ️ MovieFeedback inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
             debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
             debugLogHouseholdAssignment(entityName: "MovieFeedback", object: fb, household: scopedHousehold, context: context)
@@ -588,12 +578,7 @@ struct MovieDetailView: View {
                     debugLogHouseholdAssignment(entityName: "Viewing", object: v, household: scopedHousehold, context: context)
                 }
 #endif
-                includeInHouseholdShare(
-                    persistentContainer: persistentContainer,
-                    household: scopedHousehold,
-                    objects: [v],
-                    label: "Viewing"
-                )
+                print("ℹ️ Viewing inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
                 debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
 #endif
@@ -660,12 +645,7 @@ struct MovieDetailView: View {
         viewingInContext.watchedOn = date
         do {
             try context.save()
-            includeInHouseholdShare(
-                persistentContainer: persistentContainer,
-                household: scopedHousehold,
-                objects: [viewingInContext],
-                label: "Viewing"
-            )
+            print("ℹ️ Viewing inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
             debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
             debugLogHouseholdAssignment(entityName: "Viewing", object: viewingInContext, household: scopedHousehold, context: context)

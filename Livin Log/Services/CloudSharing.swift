@@ -7,6 +7,13 @@ import CoreData
 import CloudKit
 
 enum CloudSharing {
+    // Schema safety checklist for TestFlight / Production CloudKit:
+    // 1) Any CloudKit-backed Core Data model change must be deployed from Development -> Production schema
+    //    in CloudKit Dashboard before shipping TestFlight/App Store builds.
+    // 2) Avoid renaming or type-changing existing CloudKit-backed attributes (for example `contextText`),
+    //    unless you provide a migration strategy and deploy the updated schema first.
+    // 3) TestFlight uses PRODUCTION CloudKit schema; local/simulator success against Development does not
+    //    guarantee Production writes will succeed.
     static let lastShareErrorDefaultsKey = "ll_last_cloudkit_share_error"
     static let lastShareStatusDefaultsKey = "ll_last_cloudkit_share_status"
 
@@ -27,6 +34,10 @@ enum CloudSharing {
         } catch {
             return .couldNotDetermine
         }
+    }
+
+    static func isShareActionAvailable(for status: CKAccountStatus) -> Bool {
+        status == .available
     }
 
     static func fetchShare(
@@ -114,6 +125,7 @@ enum CloudSharing {
                         } else {
                             print("[CloudSharing] share.url=nil")
                         }
+                        print("[CloudSharing] share.recordID=\(share.recordID.recordName)")
                         let storeURLString = store.url?.absoluteString ?? "nil"
                         print("[CloudSharing] persisting updated share into storeURL=\(storeURLString)")
 
@@ -123,6 +135,16 @@ enum CloudSharing {
                                 continuation.resume(throwing: persistError)
                                 return
                             }
+
+                            do {
+                                let persisted = try persistentContainer.fetchShares(matching: [householdInContext.objectID])
+                                let persistedShare = persisted[householdInContext.objectID]
+                                let persistedRecord = persistedShare?.recordID.recordName ?? "nil"
+                                print("[CloudSharing] post-persist fetchShares success=\(persistedShare != nil) recordID=\(persistedRecord)")
+                            } catch {
+                                print("[CloudSharing] post-persist fetchShares failed: \(error.localizedDescription)")
+                            }
+
                             continuation.resume(returning: share)
                         }
                     }

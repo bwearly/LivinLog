@@ -86,14 +86,13 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
     private func prepareShare(completion: @escaping (CKShare?, CKContainer?, Error?) -> Void) {
         let context = persistentContainer.viewContext
 
-        // helper to guarantee main-thread completion
         func completeOnMain(_ share: CKShare?, _ container: CKContainer?, _ error: Error?) {
             DispatchQueue.main.async {
                 completion(share, container, error)
             }
         }
 
-        context.perform {
+        Task { @MainActor in
             do {
                 guard let householdInContext = try context.existingObject(with: household.objectID) as? Household else {
                     completeOnMain(nil, self.cloudKitContainer(), NSError(
@@ -104,64 +103,16 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
                     return
                 }
 
-                if householdInContext.objectID.isTemporaryID {
-                    try context.obtainPermanentIDs(for: [householdInContext])
-                }
+                let share = try await CloudSharing.fetchOrCreateShare(
+                    for: householdInContext,
+                    in: context,
+                    persistentContainer: persistentContainer
+                )
 
-                if context.hasChanges {
-                    try context.save()
-                }
-
-                self.persistentContainer.share([householdInContext], to: nil) { _, share, _, error in
-                    if let error {
-                        completeOnMain(nil, self.cloudKitContainer(), error)
-                        return
-                    }
-
-                    guard let share else {
-                        completeOnMain(nil, self.cloudKitContainer(), NSError(
-                            domain: "CloudKitHouseholdSharingSheet",
-                            code: 2,
-                            userInfo: [NSLocalizedDescriptionKey: "Share was nil."]
-                        ))
-                        return
-                    }
-
-                    // ✅ Configure share for link-based join + read/write
-                    share[CKShare.SystemFieldKey.title] =
-                        (householdInContext.name ?? "Livin Log Household") as CKRecordValue
-                    share.publicPermission = .readWrite
-
-                    // Resolve private store (URL-based API)
-                    let privateStoreURL = self.persistentContainer.persistentStoreDescriptions
-                        .first(where: { $0.cloudKitContainerOptions?.databaseScope == .private })?
-                        .url
-
-                    let storeForShare: NSPersistentStore? = {
-                        if let url = privateStoreURL {
-                            return self.persistentContainer.persistentStoreCoordinator.persistentStore(for: url)
-                        }
-                        return self.persistentContainer.persistentStoreCoordinator.persistentStores.first
-                    }()
-
-                    guard let store = storeForShare else {
-                        completeOnMain(nil, self.cloudKitContainer(), NSError(
-                            domain: "CloudKitHouseholdSharingSheet",
-                            code: 3,
-                            userInfo: [NSLocalizedDescriptionKey: "Could not resolve a persistent store to persist the share."]
-                        ))
-                        return
-                    }
-
-                    self.persistentContainer.persistUpdatedShare(share, in: store) { _, persistError in
-                        if let persistError {
-                            completeOnMain(nil, self.cloudKitContainer(), persistError)
-                            return
-                        }
-
-                        completeOnMain(share, self.cloudKitContainer(), nil)
-                    }
-                }
+#if DEBUG
+                debugPrintShareStatus(for: householdInContext, persistentContainer: persistentContainer)
+#endif
+                completeOnMain(share, self.cloudKitContainer(), nil)
             } catch {
                 completeOnMain(nil, self.cloudKitContainer(), error)
             }
