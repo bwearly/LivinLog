@@ -21,8 +21,6 @@ struct AddEditQuoteView: View {
         self.household = household
         self.editingQuote = editingQuote
 
-        // ✅ IMPORTANT: don't predicate on "household == %@"
-        // because that depends on object identity / store.
         if let hid = household.id {
             _children = FetchRequest<LLChild>(
                 sortDescriptors: [NSSortDescriptor(keyPath: \LLChild.name, ascending: true)],
@@ -30,7 +28,6 @@ struct AddEditQuoteView: View {
                 animation: .default
             )
         } else {
-            // fallback (older households before id is set, or edge cases)
             _children = FetchRequest<LLChild>(
                 sortDescriptors: [NSSortDescriptor(keyPath: \LLChild.name, ascending: true)],
                 predicate: NSPredicate(format: "household == %@", household),
@@ -140,16 +137,19 @@ struct AddEditQuoteView: View {
     private func saveQuote() {
         let now = Date()
 
-        // ✅ Re-fetch household in THIS context
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
             print("❌ Could not resolve household in context for quote save")
             return
         }
 
-        // Create or edit
-        let quote = editingQuote ?? LLQuote(context: context)
+        let quote: LLQuote
+        if let editingQuote,
+           let existing = (try? context.existingObject(with: editingQuote.objectID)) as? LLQuote {
+            quote = existing
+        } else {
+            quote = LLQuote(context: context)
+        }
 
-        // ✅ CRITICAL: force quote into the same persistent store as the household (shared vs private)
         if let store = scopedHousehold.objectID.persistentStore {
             context.assign(quote, to: store)
         }
@@ -167,7 +167,6 @@ struct AddEditQuoteView: View {
         quote.contextTextValue = trimmedContext
         quote.contextText = trimmedContext.isEmpty ? nil : trimmedContext
 
-        // ✅ If a child is selected, resolve that child inside this context/store too
         if let selectedChildID,
            let childInContext = (try? context.existingObject(with: selectedChildID)) as? LLChild {
             quote.child = childInContext
