@@ -172,12 +172,7 @@ struct AddEditQuoteView: View {
 
         do {
             try context.save()
-            includeInHouseholdShare(
-                persistentContainer: persistentContainer,
-                household: scopedHousehold,
-                objects: [quote],
-                label: "LLQuote"
-            )
+            print("ℹ️ LLQuote inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
             debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
             debugLogHouseholdAssignment(entityName: "LLQuote", object: quote, household: scopedHousehold, context: context)

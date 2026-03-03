@@ -1,4 +1,5 @@
 import CoreData
+import CloudKit
 
 func activeHouseholdInContext(_ household: Household, context: NSManagedObjectContext) -> Household? {
     if household.managedObjectContext == context {
@@ -53,6 +54,23 @@ func debugPrintHouseholdDiagnostics(household: Household, context: NSManagedObje
         req.includesPendingChanges = true
         let count = (try? context.count(for: req)) ?? -1
         print("🧪 [SyncDiag] \(entity) count=\(count)")
+    }
+}
+#endif
+
+
+#if DEBUG
+func debugPrintShareStatus(for household: Household, persistentContainer: NSPersistentCloudKitContainer) {
+    do {
+        let shares = try persistentContainer.fetchShares(matching: [household.objectID])
+        if let share = shares[household.objectID] {
+            let urlText = share.url?.absoluteString ?? "nil"
+            print("🧪 [SyncDiag] householdShare=exists recordID=\(share.recordID.recordName) url=\(urlText)")
+        } else {
+            print("🧪 [SyncDiag] householdShare=missing")
+        }
+    } catch {
+        print("🧪 [SyncDiag] householdShare=error error=\(error.localizedDescription)")
     }
 }
 #endif

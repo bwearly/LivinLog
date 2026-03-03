@@ -178,12 +178,7 @@ struct TVShowDetailView: View {
 
         do {
             try context.save()
-            includeInHouseholdShare(
-                persistentContainer: persistentContainer,
-                household: scopedHousehold,
-                objects: [tvShow],
-                label: "TVShow"
-            )
+            print("ℹ️ TVShow inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
             debugLogHouseholdAssignment(entityName: "TVShow", object: tvShow, household: scopedHousehold, context: context)
 #endif

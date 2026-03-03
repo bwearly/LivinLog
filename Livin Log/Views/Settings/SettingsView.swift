@@ -26,6 +26,7 @@ struct SettingsView: View {
 
     @State private var share: CKShare?
     @State private var accountStatus: CKAccountStatus = .couldNotDetermine
+    @State private var accountStatusMessage: String?
     @State private var lastCloudKitError: String?
 
     @AppStorage("ll_notify_enabled") private var notificationsEnabled = false
@@ -171,7 +172,12 @@ struct SettingsView: View {
                         }
                     }
                 }
-                .disabled(isSharing)
+                 .disabled(isSharing || shareActionsDisabled)
+                if shareActionsDisabled {
+                    Text(accountUnavailableFriendlyMessage)
+                        .foregroundStyle(.secondary)
+                        .font(.footnote)
+                }
             } else {
                 Text("Create a household to begin.")
                     .foregroundStyle(.secondary)
@@ -277,11 +283,13 @@ struct SettingsView: View {
                     household: household,
                     share: share,
                     accountStatus: accountStatus,
+                    accountStatusMessage: accountStatusMessage,
                     lastError: lastCloudKitError ?? (persistedLastShareError.isEmpty ? nil : persistedLastShareError),
                     persistedLastShareStatus: persistedLastShareStatus,
                     persistentContainer: persistentContainer,
                     onResetShare: { resetHouseholdShare() },
-                    onReloadShareStatus: { reloadShareStatus() }
+                    onReloadShareStatus: { reloadShareStatus() },
+                    onForceResync: { forceCloudKitResync() }
                 )
             } label: {
                 Label("Advanced", systemImage: "gearshape.2")
@@ -291,6 +299,18 @@ struct SettingsView: View {
                 showConfirmDeleteAll = true
             }
         }
+    }
+
+
+    private var shareActionsDisabled: Bool {
+        !CloudSharing.isShareActionAvailable(for: accountStatus)
+    }
+
+    private var accountUnavailableFriendlyMessage: String {
+        if let accountStatusMessage, !accountStatusMessage.isEmpty {
+            return accountStatusMessage
+        }
+        return "iCloud is temporarily unavailable on this device. Please wait a moment and tap Reload share status."
     }
 
 
@@ -336,6 +356,10 @@ struct SettingsView: View {
 
     private func inviteMember() {
         guard household != nil else { return }
+        guard !shareActionsDisabled else {
+            shareErrorText = accountUnavailableFriendlyMessage
+            return
+        }
 
         shareErrorText = nil
         lastCloudKitError = nil
@@ -359,12 +383,23 @@ struct SettingsView: View {
             for: household.objectID,
             persistentContainer: persistentContainer
         ))
+#if DEBUG
+        debugPrintHouseholdDiagnostics(household: household, context: context, reason: "reloadShareStatus")
+        debugPrintShareStatus(for: household, persistentContainer: persistentContainer)
+#endif
     }
 
     private func loadAccountStatus() {
         Task {
             let status = await CloudSharing.accountStatus(using: persistentContainer)
-            await MainActor.run { accountStatus = status }
+            await MainActor.run {
+                accountStatus = status
+                if status == .couldNotDetermine {
+                    accountStatusMessage = "iCloud account is temporarily unavailable. Sharing actions are disabled until iCloud responds."
+                } else {
+                    accountStatusMessage = nil
+                }
+            }
         }
     }
 
@@ -442,6 +477,16 @@ struct SettingsView: View {
     }
 
 
+    private func forceCloudKitResync() {
+        NotificationCenter.default.post(name: .didRequestCloudKitResync, object: nil)
+        if let household {
+#if DEBUG
+            debugPrintHouseholdDiagnostics(household: household, context: context, reason: "force resync")
+            debugPrintShareStatus(for: household, persistentContainer: persistentContainer)
+#endif
+        }
+    }
+
     private func deleteAllDataAndRestart() {
         let coordinator = persistentContainer.persistentStoreCoordinator
         let stores = coordinator.persistentStores
@@ -516,6 +561,10 @@ struct SettingsView: View {
 
     private func resetHouseholdShare() {
         guard let household else { return }
+        guard !shareActionsDisabled else {
+            shareErrorText = accountUnavailableFriendlyMessage
+            return
+        }
 
         shareErrorText = nil
         lastCloudKitError = nil
@@ -561,12 +610,14 @@ private struct AdvancedSharingView: View {
     let household: Household?
     let share: CKShare?
     let accountStatus: CKAccountStatus
+    let accountStatusMessage: String?
     let lastError: String?
     let persistedLastShareStatus: String
     let persistentContainer: NSPersistentCloudKitContainer
 
     let onResetShare: () -> Void
     let onReloadShareStatus: () -> Void
+    let onForceResync: () -> Void
 
     var body: some View {
         Form {
@@ -576,6 +627,12 @@ private struct AdvancedSharingView: View {
                     Spacer()
                     Text(accountStatusLabel)
                         .foregroundStyle(.secondary)
+                }
+
+                if let accountStatusMessage, !accountStatusMessage.isEmpty {
+                    Text(accountStatusMessage)
+                        .foregroundStyle(.secondary)
+                        .font(.footnote)
                 }
 
                 if let share {
@@ -600,7 +657,7 @@ private struct AdvancedSharingView: View {
                     HStack {
                         Text("Share created")
                         Spacer()
-                        Text("Not yet")
+                        Text("Share missing")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -635,12 +692,18 @@ private struct AdvancedSharingView: View {
                     Button("Reset Household Share", role: .destructive) {
                         onResetShare()
                     }
+                    .disabled(!CloudSharing.isShareActionAvailable(for: accountStatus))
+
+                    Button("Force CloudKit Resync") {
+                        onForceResync()
+                    }
                 }
 
                 NavigationLink("Share Diagnostics") {
                     ShareDiagnosticsView(
                         household: household,
                         accountStatus: accountStatus,
+                        accountStatusMessage: accountStatusMessage,
                         lastError: lastError,
                         persistentContainer: persistentContainer
                     )
@@ -665,6 +728,7 @@ private struct AdvancedSharingView: View {
 private struct ShareDiagnosticsView: View {
     let household: Household?
     let accountStatus: CKAccountStatus
+    let accountStatusMessage: String?
     let lastError: String?
     let persistentContainer: NSPersistentCloudKitContainer
 
@@ -688,13 +752,19 @@ private struct ShareDiagnosticsView: View {
                     Text(accountStatusLabel)
                         .foregroundStyle(.secondary)
                 }
+
+                if let accountStatusMessage, !accountStatusMessage.isEmpty {
+                    Text(accountStatusMessage)
+                        .foregroundStyle(.secondary)
+                        .font(.footnote)
+                }
             }
 
             Section("Share") {
                 HStack {
                     Text("Existing share")
                     Spacer()
-                    Text(canFetchShare ? "Yes" : "No")
+                    Text(canFetchShare ? "Share exists" : "Share missing")
                         .foregroundStyle(.secondary)
                 }
 

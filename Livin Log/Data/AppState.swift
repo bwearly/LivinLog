@@ -14,6 +14,7 @@ extension Notification.Name {
     static let didAcceptCloudKitShare = Notification.Name("didAcceptCloudKitShare")
     static let didReceiveCloudKitShare = Notification.Name("didReceiveCloudKitShare")
     static let didRequestAppRestart = Notification.Name("didRequestAppRestart")
+    static let didRequestCloudKitResync = Notification.Name("didRequestCloudKitResync")
 }
 
 @MainActor
@@ -126,6 +127,13 @@ final class AppState: ObservableObject {
             .sink { [weak self] _ in
                 self?.debugLog("notification received: didRequestAppRestart")
                 self?.scheduleStartDebounced(label: "didRequestAppRestart")
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .didRequestCloudKitResync)
+            .sink { [weak self] _ in
+                self?.debugLog("notification received: didRequestCloudKitResync")
+                self?.scheduleStartDebounced(label: "didRequestCloudKitResync", delayNanoseconds: 0)
             }
             .store(in: &cancellables)
 
@@ -246,11 +254,17 @@ final class AppState: ObservableObject {
         if let sharedHousehold = fetchMostRecentHousehold(in: PersistenceController.shared.sharedStore) {
             let identifier = sharedHousehold.name ?? sharedHousehold.objectID.uriRepresentation().absoluteString
             print("✅ Switched active household to shared: \(identifier)")
+            print("🧪 [Selection] activeStore=shared household=\(identifier)")
             return sharedHousehold
         }
 
         print("ℹ️ No shared households found; using private household")
-        return fetchMostRecentHousehold(in: PersistenceController.shared.privateStore)
+        let privateHousehold = fetchMostRecentHousehold(in: PersistenceController.shared.privateStore)
+        if let privateHousehold {
+            let identifier = privateHousehold.name ?? privateHousehold.objectID.uriRepresentation().absoluteString
+            print("🧪 [Selection] activeStore=private household=\(identifier)")
+        }
+        return privateHousehold
     }
 
     private func fetchMostRecentHousehold(in store: NSPersistentStore) -> Household? {

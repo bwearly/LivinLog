@@ -307,26 +307,11 @@ struct AddMovieView: View {
 
         do {
             try context.save()
-            includeInHouseholdShare(
-                persistentContainer: persistentContainer,
-                household: scopedHousehold,
-                objects: [movie],
-                label: "Movie"
-            )
+            print("ℹ️ Movie inherits household share via parent household relationship (no per-object share mutation)")
             if !createdFeedbacks.isEmpty {
-                includeInHouseholdShare(
-                    persistentContainer: persistentContainer,
-                    household: scopedHousehold,
-                    objects: createdFeedbacks,
-                    label: "MovieFeedback"
-                )
+                print("ℹ️ MovieFeedback inherits household share via parent household relationship (no per-object share mutation)")
             }
-            includeInHouseholdShare(
-                persistentContainer: persistentContainer,
-                household: scopedHousehold,
-                objects: [v],
-                label: "Viewing"
-            )
+            print("ℹ️ Viewing inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
             debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
             debugLogHouseholdAssignment(entityName: "Movie", object: movie, household: scopedHousehold, context: context)
