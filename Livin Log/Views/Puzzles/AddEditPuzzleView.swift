@@ -50,6 +50,8 @@ struct AddEditPuzzleView: View {
                 photoPreview
 
                 Button {
+                    // ✅ Fix: reset the picker state so edit-mode selections always trigger
+                    selectedPhotoItem = nil
                     showingPhotoSourceDialog = true
                 } label: {
                     Label(photoData == nil ? "Add Photo" : "Change Photo", systemImage: "photo")
@@ -140,6 +142,8 @@ struct AddEditPuzzleView: View {
                    let jpeg = image.jpegData(compressionQuality: 0.75) {
                     await MainActor.run {
                         photoData = jpeg
+                        // ✅ Fix: clear again so selecting the same image later still triggers
+                        selectedPhotoItem = nil
                     }
                 }
             }
@@ -226,7 +230,11 @@ struct AddEditPuzzleView: View {
         if puzzle.createdAt == nil { puzzle.createdAt = now }
 
         puzzle.updatedAt = now
+
+        // Note: this is OK to set even in edit, because it should already match.
+        // If you ever see a store-mismatch warning, move this behind `if puzzle.isInserted { ... }`.
         puzzle.household = scopedHousehold
+
         puzzle.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let trimmedBrand = brand.trimmingCharacters(in: .whitespacesAndNewlines)

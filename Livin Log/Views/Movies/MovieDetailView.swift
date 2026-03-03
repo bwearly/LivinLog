@@ -471,8 +471,13 @@ struct MovieDetailView: View {
 
         movieInContext.mpaaRating = (editMPAA == "—") ? nil : editMPAA
         assignIfInserted(movieInContext, to: store, in: context)
-        movieInContext.household = scopedHousehold
-        movieInContext.householdID = scopedHousehold.id
+
+        if movieInContext.isInserted {
+            movieInContext.household = scopedHousehold
+            movieInContext.householdID = scopedHousehold.id
+        }
+
+        // ✅ always editable
         movieInContext.genre = selectedGenres.isEmpty ? nil : selectedGenres.sorted().joined(separator: ", ")
 
         let trimmed = editMovieNotes.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -480,6 +485,7 @@ struct MovieDetailView: View {
 
         do {
             try context.save()
+            seedMovieEditorFieldsFromMovie()
             print("ℹ️ Movie inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
             debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
