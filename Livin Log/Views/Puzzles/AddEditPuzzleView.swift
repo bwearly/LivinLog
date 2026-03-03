@@ -216,9 +216,11 @@ struct AddEditPuzzleView: View {
             puzzle = LLPuzzle(context: context)
         }
 
-        if let store = scopedHousehold.objectID.persistentStore {
-            context.assign(puzzle, to: store)
-        }
+        let store = editingPuzzle != nil ? storeForParent(puzzle) : scopedHousehold.objectID.persistentStore
+        assignIfInserted(puzzle, to: store, in: context)
+#if DEBUG
+        print("🧩 [EditSave] entity=LLPuzzle store=\(store?.url?.lastPathComponent ?? "nil-store") objectID=\(puzzle.objectID.uriRepresentation().absoluteString)")
+#endif
 
         if puzzle.id == nil { puzzle.id = UUID() }
         if puzzle.createdAt == nil { puzzle.createdAt = now }

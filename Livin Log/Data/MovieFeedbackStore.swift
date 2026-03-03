@@ -25,10 +25,7 @@ enum MovieFeedbackStore {
         }
 
         let fb = MovieFeedback(context: context)
-        if let household = movie.household,
-           let store = household.objectID.persistentStore {
-            context.assign(fb, to: store)
-        }
+        assignIfInserted(fb, to: storeForParent(movie), in: context)
         fb.id = UUID()
         fb.updatedAt = Date()
         fb.rating = 0

@@ -113,9 +113,11 @@ struct AddEditEventView: View {
             event = LLCalendarEvent(context: context)
         }
 
-        if let store = scopedHousehold.objectID.persistentStore {
-            context.assign(event, to: store)
-        }
+        let store = editingEvent != nil ? storeForParent(event) : scopedHousehold.objectID.persistentStore
+        assignIfInserted(event, to: store, in: context)
+#if DEBUG
+        print("🧩 [EditSave] entity=LLCalendarEvent store=\(store?.url?.lastPathComponent ?? "nil-store") objectID=\(event.objectID.uriRepresentation().absoluteString)")
+#endif
 
         if event.idValue == nil {
             event.idValue = UUID()
