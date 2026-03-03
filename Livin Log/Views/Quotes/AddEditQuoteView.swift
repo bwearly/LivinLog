@@ -144,9 +144,11 @@ struct AddEditQuoteView: View {
             quote = LLQuote(context: context)
         }
 
-        if let store = scopedHousehold.objectID.persistentStore {
-            context.assign(quote, to: store)
-        }
+        let store = editingQuote != nil ? storeForParent(quote) : scopedHousehold.objectID.persistentStore
+        assignIfInserted(quote, to: store, in: context)
+#if DEBUG
+        print("🧩 [EditSave] entity=LLQuote store=\(store?.url?.lastPathComponent ?? "nil-store") objectID=\(quote.objectID.uriRepresentation().absoluteString)")
+#endif
 
         if quote.id == nil { quote.id = UUID() }
         if quote.createdAt == nil { quote.createdAt = now }

@@ -155,9 +155,11 @@ private struct AddEditChildView: View {
             child = LLChild(context: context)
         }
 
-        if let store = scopedHousehold.objectID.persistentStore {
-            context.assign(child, to: store)
-        }
+        let store = editingChild != nil ? storeForParent(child) : scopedHousehold.objectID.persistentStore
+        assignIfInserted(child, to: store, in: context)
+#if DEBUG
+        print("🧩 [EditSave] entity=LLChild store=\(store?.url?.lastPathComponent ?? "nil-store") objectID=\(child.objectID.uriRepresentation().absoluteString)")
+#endif
 
         if child.id == nil {
             child.id = UUID()

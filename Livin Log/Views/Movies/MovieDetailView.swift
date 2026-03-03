@@ -455,32 +455,35 @@ struct MovieDetailView: View {
 
     private func saveMovieDetails() {
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+        guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
+        let store = storeForParent(movieInContext)
+#if DEBUG
+        print("🧩 [EditSave] entity=Movie store=\(store?.url?.lastPathComponent ?? "nil-store") objectID=\(movieInContext.objectID.uriRepresentation().absoluteString)")
+#endif
 
-        movie.title = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        movieInContext.title = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if let y = Int16(editYearText.trimmingCharacters(in: .whitespacesAndNewlines)), y > 0 {
-            movie.year = y
+            movieInContext.year = y
         } else {
-            movie.year = 0
+            movieInContext.year = 0
         }
 
-        movie.mpaaRating = (editMPAA == "—") ? nil : editMPAA
-        if let store = scopedHousehold.objectID.persistentStore {
-            context.assign(movie, to: store)
-        }
-        movie.household = scopedHousehold
-        movie.householdID = scopedHousehold.id
-        movie.genre = selectedGenres.isEmpty ? nil : selectedGenres.sorted().joined(separator: ", ")
+        movieInContext.mpaaRating = (editMPAA == "—") ? nil : editMPAA
+        assignIfInserted(movieInContext, to: store, in: context)
+        movieInContext.household = scopedHousehold
+        movieInContext.householdID = scopedHousehold.id
+        movieInContext.genre = selectedGenres.isEmpty ? nil : selectedGenres.sorted().joined(separator: ", ")
 
         let trimmed = editMovieNotes.trimmingCharacters(in: .whitespacesAndNewlines)
-        movie.notes = trimmed.isEmpty ? nil : trimmed
+        movieInContext.notes = trimmed.isEmpty ? nil : trimmed
 
         do {
             try context.save()
             print("ℹ️ Movie inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
             debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
-            debugLogHouseholdAssignment(entityName: "Movie", object: movie, household: scopedHousehold, context: context)
+            debugLogHouseholdAssignment(entityName: "Movie", object: movieInContext, household: scopedHousehold, context: context)
 #endif
         } catch {
             context.rollback()
@@ -490,9 +493,9 @@ struct MovieDetailView: View {
 
         // Refresh poster after changing title/year
         Task {
-            let fetched = await OMDbPosterService.posterURL(title: movie.title, year: movie.year)
+            let fetched = await OMDbPosterService.posterURL(title: movieInContext.title, year: movieInContext.year)
             await MainActor.run {
-                movie.posterURL = fetched?.absoluteString
+                movieInContext.posterURL = fetched?.absoluteString
                 posterURL = fetched
                 try? context.save()
             }
@@ -503,7 +506,9 @@ struct MovieDetailView: View {
 
     private func loadSelectedMemberFeedback() {
         guard let selectedMember else { return }
-        let fb = MovieFeedbackStore.getOrCreate(movie: movie, member: selectedMember, context: context)
+        guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
+        guard let memberInContext = (try? context.existingObject(with: selectedMember.objectID)) as? HouseholdMember else { return }
+        let fb = MovieFeedbackStore.getOrCreate(movie: movieInContext, member: memberInContext, context: context)
         editRating = fb.rating
         editSlept = fb.slept
         editNotes = fb.notes ?? ""
@@ -513,11 +518,14 @@ struct MovieDetailView: View {
         guard let selectedMember else { return }
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
         guard let selectedMemberInContext = (try? context.existingObject(with: selectedMember.objectID)) as? HouseholdMember else { return }
+        guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
 
-        let fb = MovieFeedbackStore.getOrCreate(movie: movie, member: selectedMemberInContext, context: context)
-        if let store = scopedHousehold.objectID.persistentStore {
-            context.assign(fb, to: store)
-        }
+        let fb = MovieFeedbackStore.getOrCreate(movie: movieInContext, member: selectedMemberInContext, context: context)
+        let store = storeForParent(movieInContext)
+        assignIfInserted(fb, to: store, in: context)
+#if DEBUG
+        print("🧩 [EditSave] entity=MovieFeedback store=\(store?.url?.lastPathComponent ?? "nil-store") objectID=\(fb.objectID.uriRepresentation().absoluteString)")
+#endif
 
         fb.rating = editRating
         fb.slept = editSlept
@@ -555,10 +563,11 @@ struct MovieDetailView: View {
             guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
             guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
             let v = Viewing(context: context)
-
-            if let store = scopedHousehold.objectID.persistentStore {
-                context.assign(v, to: store)
-            }
+            let store = storeForParent(movieInContext)
+            assignIfInserted(v, to: store, in: context)
+#if DEBUG
+            print("🧩 [EditSave] entity=Viewing(new) store=\(store?.url?.lastPathComponent ?? "nil-store") parentObjectID=\(movieInContext.objectID.uriRepresentation().absoluteString)")
+#endif
 
             // Set required fields defensively
             if v.value(forKey: "id") == nil { v.setValue(UUID(), forKey: "id") }
@@ -642,6 +651,10 @@ struct MovieDetailView: View {
     private func saveViewingDate(_ viewing: Viewing, date: Date) {
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
         guard let viewingInContext = (try? context.existingObject(with: viewing.objectID)) as? Viewing else { return }
+#if DEBUG
+        let store = storeForParent(viewingInContext)
+        print("🧩 [EditSave] entity=Viewing(edit) store=\(store?.url?.lastPathComponent ?? "nil-store") objectID=\(viewingInContext.objectID.uriRepresentation().absoluteString)")
+#endif
         viewingInContext.watchedOn = date
         do {
             try context.save()

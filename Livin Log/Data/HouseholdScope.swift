@@ -13,6 +13,21 @@ func householdScopedPredicate(_ household: Household) -> NSPredicate {
     return NSPredicate(format: "household == %@", household)
 }
 
+
+func assignIfInserted(_ obj: NSManagedObject, to store: NSPersistentStore?, in context: NSManagedObjectContext) {
+    #if DEBUG
+    let storeName = store?.url?.lastPathComponent ?? "nil-store"
+    print("🧩 [StoreAssign] entity=\(obj.entity.name ?? "Unknown") isInserted=\(obj.isInserted) store=\(storeName)")
+    #endif
+
+    guard obj.isInserted, let store else { return }
+    context.assign(obj, to: store)
+}
+
+func storeForParent(_ parent: NSManagedObject) -> NSPersistentStore? {
+    parent.objectID.persistentStore
+}
+
 #if DEBUG
 func debugStoreName(for objectID: NSManagedObjectID, context: NSManagedObjectContext) -> String {
     let store = context.persistentStoreCoordinator?.persistentStore(for: objectID)

@@ -146,41 +146,43 @@ struct TVShowDetailView: View {
     private func saveDetails() {
         let newTitle = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let oldTitle = tvShow.title ?? ""
-        let oldYear = tvShow.year
-
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+        guard let tvShowInContext = (try? context.existingObject(with: tvShow.objectID)) as? TVShow else { return }
+        let oldTitle = tvShowInContext.title ?? ""
+        let oldYear = tvShowInContext.year
+        let store = storeForParent(tvShowInContext)
+#if DEBUG
+        print("🧩 [EditSave] entity=TVShow store=\(store?.url?.lastPathComponent ?? "nil-store") objectID=\(tvShowInContext.objectID.uriRepresentation().absoluteString)")
+#endif
 
-        tvShow.title = newTitle
+        tvShowInContext.title = newTitle
 
         if let y = Int16(editYearText.trimmingCharacters(in: .whitespacesAndNewlines)), y > 0 {
-            tvShow.year = y
+            tvShowInContext.year = y
         } else {
-            tvShow.year = 0
+            tvShowInContext.year = 0
         }
 
         if let s = Int16(editSeasonsText.trimmingCharacters(in: .whitespacesAndNewlines)), s > 0 {
-            tvShow.seasons = s
+            tvShowInContext.seasons = s
         } else {
-            tvShow.seasons = 0
+            tvShowInContext.seasons = 0
         }
 
-        tvShow.rewatch = editRewatch
-        tvShow.ratingText = editRating.rawValue
-        if let store = scopedHousehold.objectID.persistentStore {
-            context.assign(tvShow, to: store)
-        }
-        tvShow.household = scopedHousehold
-        tvShow.householdID = scopedHousehold.id
+        tvShowInContext.rewatch = editRewatch
+        tvShowInContext.ratingText = editRating.rawValue
+        assignIfInserted(tvShowInContext, to: store, in: context)
+        tvShowInContext.household = scopedHousehold
+        tvShowInContext.householdID = scopedHousehold.id
 
         let trimmedNotes = editNotes.trimmingCharacters(in: .whitespacesAndNewlines)
-        tvShow.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
+        tvShowInContext.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
 
         do {
             try context.save()
             print("ℹ️ TVShow inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
-            debugLogHouseholdAssignment(entityName: "TVShow", object: tvShow, household: scopedHousehold, context: context)
+            debugLogHouseholdAssignment(entityName: "TVShow", object: tvShowInContext, household: scopedHousehold, context: context)
 #endif
         } catch {
             context.rollback()
@@ -190,7 +192,7 @@ struct TVShowDetailView: View {
 
         // If title/year changed, refresh poster (same behavior as MovieDetailView)
         let titleChanged = newTitle != oldTitle
-        let yearChanged = tvShow.year != oldYear
+        let yearChanged = tvShowInContext.year != oldYear
         if titleChanged || yearChanged {
             Task { await refreshPoster() }
         }
