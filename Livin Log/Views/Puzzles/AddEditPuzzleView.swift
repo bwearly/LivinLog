@@ -18,9 +18,12 @@ struct AddEditPuzzleView: View {
     @State private var notes = ""
     @State private var photoData: Data?
 
+    // Picker state
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var showingPhotoSourceDialog = false
+    @State private var showingPhotoLibraryPicker = false   // ✅ NEW (reliable)
     @State private var showingCamera = false
+
     @State private var showingDeleteAlert = false
     @State private var isSaving = false
     @State private var didSeed = false
@@ -51,7 +54,7 @@ struct AddEditPuzzleView: View {
                 photoPreview
 
                 Button {
-                    // ✅ Fix: reset the picker state so edit-mode selections always trigger
+                    // ✅ reset selection so re-picking same item works
                     selectedPhotoItem = nil
                     showingPhotoSourceDialog = true
                 } label: {
@@ -116,8 +119,12 @@ struct AddEditPuzzleView: View {
                 .disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
+
+        // ✅ FIX: confirmation dialog uses plain buttons, not PhotosPicker
         .confirmationDialog("Choose Photo Source", isPresented: $showingPhotoSourceDialog) {
-            PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+            Button {
+                showingPhotoLibraryPicker = true
+            } label: {
                 Label("Photo Library", systemImage: "photo.on.rectangle")
             }
 
@@ -129,12 +136,21 @@ struct AddEditPuzzleView: View {
                 }
             }
         }
+
+        // ✅ FIX: present PhotosPicker via modifier (reliable)
+        .photosPicker(
+            isPresented: $showingPhotoLibraryPicker,
+            selection: $selectedPhotoItem,
+            matching: .images
+        )
+
         .sheet(isPresented: $showingCamera) {
             CameraPicker { image in
                 guard let image else { return }
                 photoData = image.jpegData(compressionQuality: 0.75)
             }
         }
+
         .onChange(of: selectedPhotoItem) { _, newItem in
             guard let newItem else { return }
             Task {
@@ -143,35 +159,32 @@ struct AddEditPuzzleView: View {
                    let jpeg = image.jpegData(compressionQuality: 0.75) {
                     await MainActor.run {
                         photoData = jpeg
-                        // ✅ Fix: clear again so selecting the same image later still triggers
+                        // ✅ clear so selecting same image again triggers
                         selectedPhotoItem = nil
                     }
                 }
             }
         }
+
         .alert("Delete this puzzle?", isPresented: $showingDeleteAlert) {
-            Button("Delete", role: .destructive) {
-                deletePuzzle()
-            }
+            Button("Delete", role: .destructive) { deletePuzzle() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This can’t be undone.")
         }
+
         .onAppear {
+            // ✅ only seed once; prevents photoData being overwritten after picker dismiss
             if !didSeed {
                 didSeed = true
                 seedIfEditing()
-#if DEBUG
-                print("🧩 Seeded initial state (AddEditPuzzleView)")
-#endif
             }
         }
     }
 
     @ViewBuilder
     private var photoPreview: some View {
-        if let photoData,
-           let image = UIImage(data: photoData) {
+        if let photoData, let image = UIImage(data: photoData) {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()
@@ -202,6 +215,7 @@ struct AddEditPuzzleView: View {
         let count = puzzle.pieceCount
         if let preset = PieceCountPreset(rawValue: count), preset != .unset {
             selectedPiecePreset = preset
+            customPieceCountText = ""
         } else if count > 0 {
             selectedPiecePreset = .custom
             customPieceCountText = String(count)
@@ -229,19 +243,12 @@ struct AddEditPuzzleView: View {
 
         let store = editingPuzzle != nil ? storeForParent(puzzle) : scopedHousehold.objectID.persistentStore
         assignIfInserted(puzzle, to: store, in: context)
-#if DEBUG
-        print("🧩 [EditSave] entity=LLPuzzle store=\(store?.url?.lastPathComponent ?? "nil-store") objectID=\(puzzle.objectID.uriRepresentation().absoluteString)")
-#endif
 
         if puzzle.id == nil { puzzle.id = UUID() }
         if puzzle.createdAt == nil { puzzle.createdAt = now }
 
         puzzle.updatedAt = now
-
-        // Note: this is OK to set even in edit, because it should already match.
-        // If you ever see a store-mismatch warning, move this behind `if puzzle.isInserted { ... }`.
         puzzle.household = scopedHousehold
-
         puzzle.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let trimmedBrand = brand.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -256,16 +263,19 @@ struct AddEditPuzzleView: View {
 
         do {
             try context.save()
+
             includeInHouseholdShare(
                 persistentContainer: persistentContainer,
                 household: scopedHousehold,
                 objects: [puzzle],
                 label: "LLPuzzle"
             )
+
 #if DEBUG
             debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
             debugLogHouseholdAssignment(entityName: "LLPuzzle", object: puzzle, household: scopedHousehold, context: context)
 #endif
+
             dismiss()
         } catch {
             context.rollback()
@@ -275,8 +285,8 @@ struct AddEditPuzzleView: View {
 
     private func deletePuzzle() {
         guard let editingPuzzle else { return }
-
         context.delete(editingPuzzle)
+
         do {
             try context.save()
             dismiss()
