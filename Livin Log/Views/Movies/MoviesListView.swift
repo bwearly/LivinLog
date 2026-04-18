@@ -8,6 +8,7 @@ import CoreData
 
 struct MoviesListView: View {
     @Environment(\.managedObjectContext) private var context
+    @EnvironmentObject private var appState: AppState
 
     let household: Household
     let member: HouseholdMember?
@@ -33,6 +34,9 @@ struct MoviesListView: View {
     @State private var members: [HouseholdMember] = []
     @State private var ratingByMovieID: [NSManagedObjectID: RatingSummary] = [:]
     @State private var sleptMovieIDs: Set<NSManagedObjectID> = []
+    private var canWrite: Bool {
+        IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
+    }
 
     // ✅ Sort
     private enum SortOption: String, CaseIterable, Identifiable {
@@ -183,7 +187,7 @@ struct MoviesListView: View {
                         .padding(.vertical, 6)
                     }
                 }
-                .onDelete(perform: deleteMoviesFromFiltered)
+                .onDelete(perform: canWrite ? deleteMoviesFromFiltered : nil)
             }
         }
         .navigationTitle("Movies")
@@ -192,12 +196,13 @@ struct MoviesListView: View {
             GenrePickerView(title: "Select Genres", allGenres: allGenres, selected: $selectedGenres)
         }
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) { EditButton() }
+            ToolbarItem(placement: .navigationBarTrailing) { EditButton().disabled(!canWrite) }
 
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button { showingAdd = true } label: {
                     Label("Add Movie", systemImage: "plus")
                 }
+                .disabled(!canWrite)
             }
 
             // ✅ Filters / sort menu
@@ -269,9 +274,11 @@ struct MoviesListView: View {
         .task {
             guard !didBackfill else { return }
             didBackfill = true
-            await backfillHouseholdIDAndPostersIfNeeded()
             reloadMembers()
             await reloadAggregates()
+            if canWrite {
+                await backfillHouseholdIDAndPostersIfNeeded()
+            }
 
             // default slept member to current member if available
             if sleptMemberID == nil, let member {
@@ -292,6 +299,7 @@ struct MoviesListView: View {
     // MARK: - Backfill (unchanged)
 
     private func backfillHouseholdIDAndPostersIfNeeded() async {
+        guard canWrite else { return }
         if household.id == nil {
             await MainActor.run {
                 household.id = UUID()
@@ -418,6 +426,7 @@ struct MoviesListView: View {
     // MARK: - Delete
 
     private func deleteMoviesFromFiltered(offsets: IndexSet) {
+        guard canWrite else { return }
         let toDelete = offsets.map { filteredMovies[$0] }
         toDelete.forEach(context.delete)
         save()
@@ -439,8 +448,6 @@ private struct RatingSummary {
 // MARK: - Poster Thumbnail
 
 private struct PosterThumb: View {
-    @Environment(\.managedObjectContext) private var context
-
     let movie: Movie
     @State private var url: URL?
 
@@ -477,8 +484,8 @@ private struct PosterThumb: View {
 
             if let fetched {
                 await MainActor.run {
-                    movie.posterURL = fetched.absoluteString
-                    try? context.save()
+                    // Read-only list rendering should not persist writes for unauthorized viewers.
+                    // Poster persistence is handled in write-authorized paths.
                 }
             }
         }

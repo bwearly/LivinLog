@@ -10,12 +10,16 @@ import CoreData
 
 struct ManageMembersView: View {
     @Environment(\.managedObjectContext) private var context
+    @EnvironmentObject private var appState: AppState
 
     let household: Household?
 
     @State private var showingAdd = false
     @State private var addName = ""
     @State private var errorText: String?
+    private var canWrite: Bool {
+        appState.isCurrentMemberAuthorized()
+    }
 
     var body: some View {
         List {
@@ -51,7 +55,7 @@ struct ManageMembersView: View {
                         }
                         .padding(.vertical, 4)
                     }
-                    .onDelete(perform: deleteMembers)
+                    .onDelete(perform: canWrite ? deleteMembers : nil)
                 }
             }
         }
@@ -67,7 +71,7 @@ struct ManageMembersView: View {
                     Image(systemName: "plus")
                 }
                 .accessibilityLabel("Add Member")
-                .disabled(household == nil)
+                .disabled(household == nil || !canWrite)
             }
         }
         .alert("Add Member", isPresented: $showingAdd) {
@@ -112,6 +116,7 @@ struct ManageMembersView: View {
     // MARK: - Mutations
 
     private func addMember() {
+        guard canWrite else { return }
         errorText = nil
         guard let household else { return }
 
@@ -140,6 +145,7 @@ struct ManageMembersView: View {
     }
 
     private func deleteMembers(offsets: IndexSet) {
+        guard canWrite else { return }
         errorText = nil
         let members = fetchMembers()
 

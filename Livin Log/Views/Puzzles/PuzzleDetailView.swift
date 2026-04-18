@@ -3,11 +3,16 @@ import CoreData
 import UIKit
 
 struct PuzzleDetailView: View {
+    @Environment(\.managedObjectContext) private var context
+    @EnvironmentObject private var appState: AppState
     let puzzle: LLPuzzle
     let household: Household
     let member: HouseholdMember?
 
     @State private var showingEdit = false
+    private var canWrite: Bool {
+        IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
+    }
 
     var body: some View {
         ScrollView {
@@ -61,6 +66,7 @@ struct PuzzleDetailView: View {
                 Button("Edit") {
                     showingEdit = true
                 }
+                .disabled(!canWrite)
             }
         }
         .sheet(isPresented: $showingEdit) {

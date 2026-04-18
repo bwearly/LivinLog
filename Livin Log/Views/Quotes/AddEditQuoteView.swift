@@ -4,6 +4,7 @@ import CoreData
 struct AddEditQuoteView: View {
     @Environment(\.managedObjectContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
 
     let household: Household
     let editingQuote: LLQuote?
@@ -18,6 +19,9 @@ struct AddEditQuoteView: View {
     @State private var showingDeleteAlert = false
 
     private let persistentContainer = PersistenceController.shared.container
+    private var canWrite: Bool {
+        appState.isCurrentMemberAuthorized()
+    }
 
     init(household: Household, editingQuote: LLQuote? = nil) {
         self.household = household
@@ -83,6 +87,7 @@ struct AddEditQuoteView: View {
                     Button("Delete Quote", role: .destructive) {
                         showingDeleteAlert = true
                     }
+                    .disabled(!canWrite)
                 }
             }
         }
@@ -95,7 +100,7 @@ struct AddEditQuoteView: View {
 
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") { saveQuote() }
-                    .disabled(!canSave)
+                    .disabled(!canSave || !canWrite)
             }
         }
         .alert("Delete this quote?", isPresented: $showingDeleteAlert) {
@@ -129,6 +134,7 @@ struct AddEditQuoteView: View {
     }
 
     private func saveQuote() {
+        guard canWrite else { return }
         let now = Date()
 
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
@@ -187,6 +193,7 @@ struct AddEditQuoteView: View {
     }
 
     private func deleteQuote() {
+        guard canWrite else { return }
         guard let editingQuote else { return }
         context.delete(editingQuote)
 

@@ -3,6 +3,7 @@ import CoreData
 
 struct ChildrenManagerView: View {
     @Environment(\.managedObjectContext) private var context
+    @EnvironmentObject private var appState: AppState
 
     let household: Household
 
@@ -10,6 +11,9 @@ struct ChildrenManagerView: View {
 
     @State private var showingAdd = false
     @State private var editingChild: LLChild?
+    private var canWrite: Bool {
+        appState.isCurrentMemberAuthorized()
+    }
 
     init(household: Household) {
         self.household = household
@@ -45,7 +49,7 @@ struct ChildrenManagerView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .onDelete(perform: deleteChildren)
+            .onDelete(perform: canWrite ? deleteChildren : nil)
         }
         .navigationTitle("Children")
         .toolbar {
@@ -55,6 +59,7 @@ struct ChildrenManagerView: View {
                 } label: {
                     Label("Add Child", systemImage: "plus")
                 }
+                .disabled(!canWrite)
             }
         }
         .sheet(isPresented: $showingAdd) {
@@ -70,6 +75,7 @@ struct ChildrenManagerView: View {
     }
 
     private func deleteChildren(at offsets: IndexSet) {
+        guard canWrite else { return }
         offsets.map { children[$0] }.forEach(context.delete)
 
         do {
@@ -84,6 +90,7 @@ struct ChildrenManagerView: View {
 private struct AddEditChildView: View {
     @Environment(\.managedObjectContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
 
     let household: Household
     let editingChild: LLChild?
@@ -93,6 +100,9 @@ private struct AddEditChildView: View {
     @State private var showingDeleteAlert = false
 
     private let persistentContainer = PersistenceController.shared.container
+    private var canWrite: Bool {
+        appState.isCurrentMemberAuthorized()
+    }
 
     init(household: Household, editingChild: LLChild? = nil) {
         self.household = household
@@ -113,6 +123,7 @@ private struct AddEditChildView: View {
                     Button("Delete Child", role: .destructive) {
                         showingDeleteAlert = true
                     }
+                    .disabled(!canWrite)
                 }
             }
         }
@@ -125,7 +136,7 @@ private struct AddEditChildView: View {
 
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") { save() }
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !canWrite)
             }
         }
         .alert("Delete this child?", isPresented: $showingDeleteAlert) {
@@ -144,6 +155,7 @@ private struct AddEditChildView: View {
     }
 
     private func save() {
+        guard canWrite else { return }
         let now = Date()
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
 
@@ -191,6 +203,7 @@ private struct AddEditChildView: View {
     }
 
     private func delete() {
+        guard canWrite else { return }
         guard let editingChild else { return }
         context.delete(editingChild)
 

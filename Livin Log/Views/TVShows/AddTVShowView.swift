@@ -11,6 +11,7 @@ import CoreData
 struct AddTVShowView: View {
     @Environment(\.managedObjectContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
 
     let household: Household
     let member: HouseholdMember?
@@ -25,6 +26,9 @@ struct AddTVShowView: View {
     @State private var isSaving = false
 
     private let persistentContainer = PersistenceController.shared.container
+    private var canWrite: Bool {
+        IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
+    }
 
     var body: some View {
         Form {
@@ -65,7 +69,7 @@ struct AddTVShowView: View {
                 Button(isSaving ? "Saving…" : "Save") {
                     Task { await saveTVShow() }
                 }
-                .disabled(isSaving || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(isSaving || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !canWrite)
             }
         }
     }
@@ -73,6 +77,7 @@ struct AddTVShowView: View {
     @MainActor
     private func saveTVShow() async {
         guard !isSaving else { return }
+        guard canWrite else { return }
         isSaving = true
         defer { isSaving = false }
 

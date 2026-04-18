@@ -11,6 +11,7 @@ import CoreData
 struct AddEditEventView: View {
     @Environment(\.managedObjectContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
 
     let household: Household
     let editingEvent: LLCalendarEvent?
@@ -24,6 +25,9 @@ struct AddEditEventView: View {
 
     private let tags = ["Birthday", "Anniversary", "Family", "Milestone", "Travel", "Medical", "School", "Work", "Other"]
     private let persistentContainer = PersistenceController.shared.container
+    private var canWrite: Bool {
+        appState.isCurrentMemberAuthorized()
+    }
 
     init(household: Household, editingEvent: LLCalendarEvent? = nil, prefilledMonth: Int16? = nil, prefilledDay: Int16? = nil) {
         self.household = household
@@ -74,6 +78,7 @@ struct AddEditEventView: View {
                             Text("Delete Event")
                                 .frame(maxWidth: .infinity)
                         }
+                        .disabled(!canWrite)
                     }
                 }
             }
@@ -85,7 +90,7 @@ struct AddEditEventView: View {
 
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Save") { save() }
-                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !canWrite)
                 }
             }
             .onAppear(perform: loadExisting)
@@ -103,6 +108,7 @@ struct AddEditEventView: View {
     }
 
     private func save() {
+        guard canWrite else { return }
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
 
         let event: LLCalendarEvent
@@ -155,6 +161,7 @@ struct AddEditEventView: View {
     }
 
     private func deleteEvent() {
+        guard canWrite else { return }
         guard let event = editingEvent else { return }
         context.delete(event)
 

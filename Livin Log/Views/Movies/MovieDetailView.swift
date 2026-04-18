@@ -8,6 +8,7 @@ import CoreData
 
 struct MovieDetailView: View {
     @Environment(\.managedObjectContext) private var context
+    @EnvironmentObject private var appState: AppState
 
     let movie: Movie
     let household: Household
@@ -91,6 +92,7 @@ struct MovieDetailView: View {
         // Avoid `.toolbar` ambiguity
         .navigationBarItems(trailing:
             Button(isEditing ? "Save" : "Edit") {
+                guard canEdit else { return }
                 if isEditing {
                     saveAll()
                     isEditing = false
@@ -100,6 +102,7 @@ struct MovieDetailView: View {
                     isEditing = true
                 }
             }
+            .disabled(!canEdit)
         )
         .navigationDestination(isPresented: $showGenrePicker) {
             GenrePickerView(title: "Select Genres", allGenres: allGenres, selected: $selectedGenres)
@@ -111,7 +114,7 @@ struct MovieDetailView: View {
                 reloadAll()
 
                 if selectedMember == nil {
-                    selectedMember = member ?? members.first
+                    selectedMember = authorizedActingMember
                 }
 #if DEBUG
                 print("🧩 Seeded initial state (MovieDetailView)")
@@ -132,7 +135,16 @@ struct MovieDetailView: View {
         }
     }
 
-    // MARK: - Sections
+
+    private var authorizedActingMember: HouseholdMember? {
+        guard let member else { return nil }
+        return IdentityStore.canAct(as: member, appUser: appState.appUser, context: context) ? member : nil
+    }
+
+    private var canEdit: Bool {
+        authorizedActingMember != nil
+    }
+// MARK: - Sections
 
     private var headerSection: some View {
         Section {
@@ -206,13 +218,18 @@ struct MovieDetailView: View {
             } else {
                 ForEach(members) { m in
                     if isEditing {
-                        Button {
-                            selectedMember = m
-                            loadSelectedMemberFeedback()
-                        } label: {
+                        if m.objectID == authorizedActingMember?.objectID {
+                            Button {
+                                selectedMember = m
+                                loadSelectedMemberFeedback()
+                            } label: {
+                                summaryRow(for: m)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
                             summaryRow(for: m)
+                                .opacity(0.7)
                         }
-                        .buttonStyle(.plain)
                     } else {
                         summaryRow(for: m)
                     }
@@ -227,17 +244,9 @@ struct MovieDetailView: View {
                 Text("No members found.")
                     .foregroundStyle(.secondary)
             } else {
-                Picker("Member", selection: Binding(
-                    get: { selectedMember?.objectID },
-                    set: { newID in
-                        guard let newID else { return }
-                        selectedMember = members.first(where: { $0.objectID == newID })
-                        loadSelectedMemberFeedback()
-                    }
-                )) {
-                    ForEach(members) { m in
-                        Text(m.displayName ?? "Member").tag(Optional(m.objectID))
-                    }
+                if let selectedMember {
+                    Text("Editing feedback for \(selectedMember.displayName ?? "Member")")
+                        .foregroundStyle(.secondary)
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
@@ -399,9 +408,7 @@ struct MovieDetailView: View {
     private func beginEditing() {
         seedMovieEditorFieldsFromMovie()
 
-        if selectedMember == nil {
-            selectedMember = member ?? members.first
-        }
+        selectedMember = authorizedActingMember
         loadSelectedMemberFeedback()
     }
 
@@ -422,7 +429,7 @@ struct MovieDetailView: View {
     private func reloadMembers() {
         members = fetchedMembers()
         if selectedMember == nil {
-            selectedMember = member ?? members.first
+            selectedMember = authorizedActingMember
         }
     }
 
@@ -461,6 +468,7 @@ struct MovieDetailView: View {
     }
 
     private func saveMovieDetails() {
+        guard canEdit else { return }
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
         guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
         let store = storeForParent(movieInContext)
@@ -528,6 +536,7 @@ struct MovieDetailView: View {
     }
 
     private func saveSelectedMemberFeedback() {
+        guard canEdit else { return }
         guard let selectedMember else { return }
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
         guard let selectedMemberInContext = (try? context.existingObject(with: selectedMember.objectID)) as? HouseholdMember else { return }
@@ -566,6 +575,7 @@ struct MovieDetailView: View {
     // MARK: - Viewing / Rewatch
 
     private func addViewing(isRewatch: Bool, notes: String?, watchedOn: Date) {
+        guard canEdit else { return }
         // ✅ Enforce single "Watched" record per movie
         if !isRewatch && hasFirstWatch {
             print("ℹ️ Skipped adding 'Watched' because one already exists for movie:", movie.objectID)
@@ -622,6 +632,7 @@ struct MovieDetailView: View {
     }
 
     private func deleteViewings(offsets: IndexSet) {
+        guard canEdit else { return }
         // Delete based on the same array SwiftUI rendered
         for index in offsets {
             guard viewings.indices.contains(index) else { continue }
@@ -639,6 +650,7 @@ struct MovieDetailView: View {
     }
 
     private func deleteViewing(_ viewing: Viewing) {
+        guard canEdit else { return }
         context.delete(viewing)
         do {
             try context.save()
@@ -662,6 +674,7 @@ struct MovieDetailView: View {
 
     @MainActor
     private func saveViewingDate(_ viewing: Viewing, date: Date) {
+        guard canEdit else { return }
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
         guard let viewingInContext = (try? context.existingObject(with: viewing.objectID)) as? Viewing else { return }
 #if DEBUG

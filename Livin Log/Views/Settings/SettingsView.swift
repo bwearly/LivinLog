@@ -12,6 +12,7 @@ import UserNotifications
 
 struct SettingsView: View {
     @Environment(\.managedObjectContext) private var context
+    @EnvironmentObject private var appState: AppState
 
     @Binding var household: Household?
     @Binding var member: HouseholdMember?
@@ -188,7 +189,7 @@ struct SettingsView: View {
                 Button("Create Household") {
                     createHousehold()
                 }
-                .disabled(householdName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(householdName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || appState.appUser == nil)
             }
         }
     }
@@ -454,26 +455,7 @@ struct SettingsView: View {
             return
         }
 
-        if let first = members.first {
-            member = first
-            SelectionStore.save(household: self.household, member: self.member)
-            return
-        }
-
-        let me = HouseholdMember(context: context)
-        me.id = UUID()
-        me.createdAt = Date()
-        me.displayName = "Me"
-        me.household = household
-
-        do {
-            try context.save()
-            self.member = me
-            SelectionStore.save(household: self.household, member: self.member)
-        } catch {
-            context.rollback()
-            self.errorText = error.localizedDescription
-        }
+        member = nil
     }
 
 
@@ -534,22 +516,10 @@ struct SettingsView: View {
         let name = myName.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayName = name.isEmpty ? "Me" : name
 
-        let hh = Household(context: context)
-        hh.id = UUID()
-        hh.createdAt = Date()
-        hh.name = hhName
-
-        let me = HouseholdMember(context: context)
-        me.id = UUID()
-        me.createdAt = Date()
-        me.displayName = displayName
-        me.household = hh
-
         do {
-            try context.save()
-            self.household = hh
-            self.member = me
-            SelectionStore.save(household: hh, member: me)
+            try appState.createInitialHousehold(name: hhName, memberName: displayName)
+            self.household = appState.household
+            self.member = appState.member
 
             householdName = ""
             myName = ""

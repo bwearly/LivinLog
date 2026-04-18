@@ -57,3 +57,30 @@ extension Viewing {
         // isRewatch default: false happens automatically for non-optional Bool
     }
 }
+
+
+extension AppUser {
+    public override nonisolated func awakeFromInsert() {
+        super.awakeFromInsert()
+        setPrimitiveValue(UUID(), forKey: "id")
+        setPrimitiveValue(Date(), forKey: "createdAt")
+    }
+}
+
+extension HouseholdMembership {
+    public override nonisolated func awakeFromInsert() {
+        super.awakeFromInsert()
+        setPrimitiveValue(UUID(), forKey: "id")
+        setPrimitiveValue(Date(), forKey: "createdAt")
+        setPrimitiveValue("active", forKey: "status")
+        setPrimitiveValue("member", forKey: "role")
+    }
+}
+
+extension BookEntry {
+    public override nonisolated func awakeFromInsert() {
+        super.awakeFromInsert()
+        setPrimitiveValue(UUID(), forKey: "id")
+        setPrimitiveValue(Date(), forKey: "createdAt")
+    }
+}
