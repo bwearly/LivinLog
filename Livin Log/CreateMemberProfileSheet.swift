@@ -7,15 +7,42 @@ struct CreateMemberProfileSheet: View {
 
     @Environment(\.managedObjectContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
 
     @State private var displayName = ""
+    @State private var selectedExistingMemberID: NSManagedObjectID?
     @State private var isSaving = false
     @State private var errorText: String?
+
+    private var availableMembers: [HouseholdMember] {
+        IdentityStore.unclaimedMembers(for: household, context: context)
+    }
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
-                Text("What should we call you?")
+                if !availableMembers.isEmpty {
+                    Text("Claim your existing profile")
+                        .font(.headline)
+
+                    Picker("Member", selection: $selectedExistingMemberID) {
+                        Text("Select").tag(Optional<NSManagedObjectID>.none)
+                        ForEach(availableMembers, id: \.objectID) { member in
+                            Text(member.displayName ?? "Unnamed").tag(Optional(member.objectID))
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Button("Claim Selected Profile") {
+                        claimSelectedMember()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isSaving || selectedExistingMemberID == nil)
+                }
+
+                Divider()
+
+                Text("Or create a new profile")
                     .font(.headline)
 
                 TextField("Your name", text: $displayName)
@@ -54,37 +81,43 @@ struct CreateMemberProfileSheet: View {
         displayName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func createMember() {
+    private func claimSelectedMember() {
         errorText = nil
         isSaving = true
+        defer { isSaving = false }
 
-        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
-            errorText = "Could not resolve household in active context."
-            isSaving = false
+        guard let selectedExistingMemberID,
+              let selectedMember = try? context.existingObject(with: selectedExistingMemberID) as? HouseholdMember else {
+            errorText = "Please select a profile to claim."
             return
         }
 
-        let member = HouseholdMember(context: context)
-        member.id = UUID()
-        member.createdAt = Date()
-        member.displayName = trimmedName
-        member.household = scopedHousehold
+        do {
+            let role = household.members?.count ?? 0 <= 1 ? "leader" : "member"
+            try appState.claim(member: selectedMember, role: role)
+            onCreated(selectedMember)
+            dismiss()
+        } catch {
+            context.rollback()
+            errorText = error.localizedDescription
+        }
+    }
+
+    private func createMember() {
+        errorText = nil
+        isSaving = true
+        defer { isSaving = false }
 
         do {
-            try context.save()
-            SelectionStore.save(household: scopedHousehold, member: member)
-            SelectionStore.saveDeviceMember(member, for: scopedHousehold)
-#if DEBUG
-            debugLogHouseholdAssignment(entityName: "HouseholdMember", object: member, household: scopedHousehold, context: context)
-#endif
-            print("✅ Created new member for shared household: \(trimmedName)")
+            let role = availableMembers.isEmpty && ((household.members?.count ?? 0) == 0) ? "leader" : "member"
+            let member = try appState.createAndClaimMember(named: trimmedName, in: household, role: role)
+            SelectionStore.save(household: household, member: member)
+            SelectionStore.saveDeviceMember(member, for: household)
             onCreated(member)
             dismiss()
         } catch {
             context.rollback()
             errorText = error.localizedDescription
         }
-
-        isSaving = false
     }
 }

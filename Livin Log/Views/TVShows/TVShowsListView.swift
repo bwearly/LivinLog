@@ -10,6 +10,7 @@ import CoreData
 
 struct TVShowsListView: View {
     @Environment(\.managedObjectContext) private var context
+    @EnvironmentObject private var appState: AppState
 
     let household: Household
     let member: HouseholdMember?
@@ -32,6 +33,9 @@ struct TVShowsListView: View {
     }
 
     @State private var sort: SortOption = .newest
+    private var canWrite: Bool {
+        IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
+    }
 
     init(household: Household, member: HouseholdMember?) {
         self.household = household
@@ -131,18 +135,19 @@ struct TVShowsListView: View {
                         .padding(.vertical, 6)
                     }
                 }
-                .onDelete(perform: deleteShowsFromFiltered)
+                .onDelete(perform: canWrite ? deleteShowsFromFiltered : nil)
             }
         }
         .navigationTitle("TV Shows")
         .searchable(text: $searchText, prompt: "Search title, year, seasons, rating, notes…")
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) { EditButton() }
+            ToolbarItem(placement: .navigationBarTrailing) { EditButton().disabled(!canWrite) }
 
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button { showingAdd = true } label: {
                     Label("Add TV Show", systemImage: "plus")
                 }
+                .disabled(!canWrite)
             }
 
             ToolbarItem(placement: .navigationBarLeading) {
@@ -165,12 +170,16 @@ struct TVShowsListView: View {
         .task {
             guard !didBackfill else { return }
             didBackfill = true
-            await backfillHouseholdIDIfNeeded()
+            if canWrite {
+                await backfillHouseholdIDIfNeeded()
+            }
         }
         .task {
             // Best-effort background fetch for posters that are missing.
             // Keeps list fast: it only fetches when posterURL is nil/empty.
-            await fetchMissingPostersIfNeeded()
+            if canWrite {
+                await fetchMissingPostersIfNeeded()
+            }
         }
     }
 
@@ -254,6 +263,7 @@ struct TVShowsListView: View {
     }
 
     private func deleteShowsFromFiltered(offsets: IndexSet) {
+        guard canWrite else { return }
         let toDelete = offsets.compactMap { idx -> TVShow? in
             guard filteredShows.indices.contains(idx) else { return nil }
             return filteredShows[idx]

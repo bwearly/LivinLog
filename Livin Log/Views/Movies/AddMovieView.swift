@@ -11,6 +11,7 @@ import CoreData
 struct AddMovieView: View {
     @Environment(\.managedObjectContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
 
     let household: Household
     let member: HouseholdMember?
@@ -80,13 +81,9 @@ struct AddMovieView: View {
                     }
             }
 
-            Section("Feedback (per member)") {
-                let members = fetchedMembers()
-                if members.isEmpty {
-                    Text("No household members found.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(members) { m in
+            Section("Feedback") {
+                if let actingMember {
+                    ForEach([actingMember]) { m in
                         let draft = bindingForMember(m)
 
                         DisclosureGroup {
@@ -149,6 +146,9 @@ struct AddMovieView: View {
                             .padding(.vertical, 4)
                         }
                     }
+                } else {
+                    Text("Claim your member profile before adding a movie.")
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -158,14 +158,13 @@ struct AddMovieView: View {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") { saveMovie() }
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || actingMember == nil)
             }
         }
         .navigationDestination(isPresented: $showGenrePicker) {
             GenrePickerView(title: "Select Genres", allGenres: allGenres, selected: $selectedGenres)
         }
         .onAppear {
-            ensureDefaultMemberExists()
             seedFeedbackDraftsIfNeeded()
         }
     }
@@ -191,24 +190,13 @@ struct AddMovieView: View {
         return (try? context.fetch(req)) ?? []
     }
 
-    private func ensureDefaultMemberExists() {
-        if !fetchedMembers().isEmpty { return }
-        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
-
-        let me = HouseholdMember(context: context)
-        if let store = scopedHousehold.objectID.persistentStore {
-            context.assign(me, to: store)
-        }
-        me.id = UUID()
-        me.createdAt = Date()
-        me.displayName = member?.displayName ?? "Me"
-        me.household = scopedHousehold
-
-        do { try context.save() } catch { context.rollback() }
+    private var actingMember: HouseholdMember? {
+        guard let member else { return nil }
+        return IdentityStore.canAct(as: member, appUser: appState.appUser, context: context) ? member : nil
     }
 
     private func seedFeedbackDraftsIfNeeded() {
-        for m in fetchedMembers() {
+        for m in [actingMember].compactMap({ $0 }) {
             if feedbackByMemberID[m.objectID] == nil {
                 feedbackByMemberID[m.objectID] = MemberFeedbackDraft()
             }
@@ -233,6 +221,7 @@ struct AddMovieView: View {
 
     private func saveMovie() {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard actingMember != nil else { return }
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
 
         let movie = Movie(context: context)
@@ -267,7 +256,7 @@ struct AddMovieView: View {
 
         // Feedback rows
         var createdFeedbacks: [MovieFeedback] = []
-        for m in fetchedMembers() {
+        for m in [actingMember].compactMap({ $0 }) {
             let draft = feedbackByMemberID[m.objectID] ?? MemberFeedbackDraft()
             if isDraftEmpty(draft) { continue }
 

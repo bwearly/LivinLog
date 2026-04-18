@@ -6,6 +6,7 @@ import UIKit
 struct AddEditPuzzleView: View {
     @Environment(\.managedObjectContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
 
     let household: Household
     let editingPuzzle: LLPuzzle?
@@ -29,6 +30,9 @@ struct AddEditPuzzleView: View {
     @State private var didSeed = false
 
     private let persistentContainer = PersistenceController.shared.container
+    private var canWrite: Bool {
+        appState.isCurrentMemberAuthorized()
+    }
 
     init(household: Household, editingPuzzle: LLPuzzle? = nil) {
         self.household = household
@@ -65,6 +69,7 @@ struct AddEditPuzzleView: View {
                     Button("Remove Photo", role: .destructive) {
                         photoData = nil
                     }
+                    .disabled(!canWrite)
                 }
             }
 
@@ -102,6 +107,7 @@ struct AddEditPuzzleView: View {
                     Button("Delete Puzzle", role: .destructive) {
                         showingDeleteAlert = true
                     }
+                    .disabled(!canWrite)
                 }
             }
         }
@@ -116,7 +122,7 @@ struct AddEditPuzzleView: View {
                 Button(isSaving ? "Saving…" : "Save") {
                     savePuzzle()
                 }
-                .disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !canWrite)
             }
         }
 
@@ -227,6 +233,7 @@ struct AddEditPuzzleView: View {
 
     private func savePuzzle() {
         guard !isSaving else { return }
+        guard canWrite else { return }
         isSaving = true
         defer { isSaving = false }
 
@@ -284,6 +291,7 @@ struct AddEditPuzzleView: View {
     }
 
     private func deletePuzzle() {
+        guard canWrite else { return }
         guard let editingPuzzle else { return }
         context.delete(editingPuzzle)
 

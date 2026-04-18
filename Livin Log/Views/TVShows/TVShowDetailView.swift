@@ -10,6 +10,7 @@ import CoreData
 
 struct TVShowDetailView: View {
     @Environment(\.managedObjectContext) private var context
+    @EnvironmentObject private var appState: AppState
 
     let tvShow: TVShow
     let household: Household
@@ -28,6 +29,9 @@ struct TVShowDetailView: View {
     @State private var posterURL: URL?
 
     private let persistentContainer = PersistenceController.shared.container
+    private var canWrite: Bool {
+        IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
+    }
 
     var body: some View {
         Form {
@@ -38,6 +42,7 @@ struct TVShowDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarItems(trailing:
             Button(isEditing ? "Save" : "Edit") {
+                guard canWrite else { return }
                 if isEditing {
                     saveDetails()
                     isEditing = false
@@ -46,6 +51,7 @@ struct TVShowDetailView: View {
                     isEditing = true
                 }
             }
+            .disabled(!canWrite)
         )
         .onAppear {
             seedEditorFieldsFromShow()
@@ -144,6 +150,7 @@ struct TVShowDetailView: View {
     }
 
     private func saveDetails() {
+        guard canWrite else { return }
         let newTitle = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }

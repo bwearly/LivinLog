@@ -3,6 +3,8 @@ import CoreData
 import UIKit
 
 struct PuzzlesListView: View {
+    @Environment(\.managedObjectContext) private var context
+    @EnvironmentObject private var appState: AppState
     let household: Household
     let member: HouseholdMember?
 
@@ -10,6 +12,9 @@ struct PuzzlesListView: View {
 
     @State private var showingAddPuzzle = false
     @State private var searchText = ""
+    private var canWrite: Bool {
+        IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
+    }
 
     init(household: Household, member: HouseholdMember?) {
         self.household = household
@@ -47,6 +52,7 @@ struct PuzzlesListView: View {
                         Button("Add Puzzle") {
                             showingAddPuzzle = true
                         }
+                        .disabled(!canWrite)
                     }
                 } else {
                     ContentUnavailableView("No results", systemImage: "magnifyingglass")
@@ -70,6 +76,7 @@ struct PuzzlesListView: View {
                 } label: {
                     Label("Add Puzzle", systemImage: "plus")
                 }
+                .disabled(!canWrite)
             }
         }
         .sheet(isPresented: $showingAddPuzzle) {

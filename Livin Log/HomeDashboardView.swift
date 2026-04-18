@@ -21,6 +21,7 @@ struct HomeDashboardView: View {
 
                 LazyVGrid(columns: gridColumns, spacing: 16) {
                     moviesCard
+                    booksCard
                     tvShowsCard
                     puzzlesCard
                     quotesCard
@@ -80,6 +81,26 @@ struct HomeDashboardView: View {
                 title: "Movies",
                 subtitle: "Select a household first",
                 systemImage: "film",
+                destination: SharedViews.PlaceholderView(title: "Select Household")
+            )
+            .opacity(0.6)
+        }
+    }
+
+    @ViewBuilder
+    private var booksCard: some View {
+        if let household {
+            SharedViews.SectionCard(
+                title: "Books",
+                subtitle: "Track what you read",
+                systemImage: "books.vertical",
+                destination: BooksListView(household: household)
+            )
+        } else {
+            SharedViews.SectionCard(
+                title: "Books",
+                subtitle: "Select a household first",
+                systemImage: "books.vertical",
                 destination: SharedViews.PlaceholderView(title: "Select Household")
             )
             .opacity(0.6)

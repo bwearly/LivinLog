@@ -5,13 +5,11 @@
 //  Created by Blake Early on 1/5/26.
 //
 
-
 import SwiftUI
-import CoreData
-import CloudKit
+import AuthenticationServices
 
 struct OnboardingView: View {
-    @Environment(\.managedObjectContext) private var context
+    @EnvironmentObject private var appState: AppState
 
     @State private var householdName: String = "Our Household"
     @State private var myName: String = ""
@@ -21,6 +19,8 @@ struct OnboardingView: View {
     @State private var errorText: String?
 
     let onFinished: () -> Void
+
+    private var isSignedIn: Bool { appState.appUser != nil }
 
     var body: some View {
         NavigationStack {
@@ -33,10 +33,26 @@ struct OnboardingView: View {
                 Text("Welcome to Livin Log")
                     .font(.title2).bold()
 
-                Text("Create a household to start tracking movies together. You can invite your spouse after you create it.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
+                if !isSignedIn {
+                    Text("Sign in with Apple to securely attach your member profile across reinstall and new devices.")
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal)
+
+                    SignInWithAppleButton(.signIn, onRequest: { request in
+                        request.requestedScopes = [.fullName]
+                    }, onCompletion: { result in
+                        handleAppleSignIn(result)
+                    })
+                    .signInWithAppleButtonStyle(.black)
+                    .frame(height: 44)
                     .padding(.horizontal)
+                } else {
+                    Text("Create a household or join with an invite.")
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal)
+                }
 
                 VStack(spacing: 10) {
                     TextField("Your name (e.g., Blake)", text: $myName)
@@ -66,7 +82,7 @@ struct OnboardingView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .padding(.horizontal)
-                .disabled(myName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCreating)
+                .disabled(!isSignedIn || myName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCreating)
 
                 Button {
                     showingPasteInvite = true
@@ -76,6 +92,7 @@ struct OnboardingView: View {
                 }
                 .buttonStyle(.bordered)
                 .padding(.horizontal)
+                .disabled(!isSignedIn)
 
                 Spacer()
             }
@@ -99,23 +116,40 @@ struct OnboardingView: View {
         errorText = nil
         defer { isCreating = false }
 
-        let trimmedName = myName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedHousehold = householdName.trimmingCharacters(in: .whitespacesAndNewlines)
-
         do {
-            let household = Household(context: context)
-            household.name = trimmedHousehold.isEmpty ? "Our Household" : trimmedHousehold
-            // id/createdAt are set by awakeFromInsert if you kept that file
-
-            let member = HouseholdMember(context: context)
-            member.displayName = trimmedName
-            member.household = household
-            // id/createdAt are set by awakeFromInsert
-
-            try context.save()
+            try appState.createInitialHousehold(name: householdName, memberName: myName)
             onFinished()
         } catch {
             errorText = "Could not create household: \(error.localizedDescription)"
+        }
+    }
+
+    private func handleAppleSignIn(_ result: Result<ASAuthorization, any Error>) {
+        switch result {
+        case .failure(let error):
+            errorText = "Apple Sign-In failed: \(error.localizedDescription)"
+        case .success(let auth):
+            guard let credential = auth.credential as? ASAuthorizationAppleIDCredential else {
+                errorText = "Could not read Apple credential."
+                return
+            }
+
+            let given = credential.fullName?.givenName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let family = credential.fullName?.familyName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let prettyName = [given, family]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+
+            do {
+                try appState.handleAppleSignIn(subject: credential.user, displayName: prettyName.isEmpty ? nil : prettyName)
+                if myName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    myName = prettyName
+                }
+                Task { await appState.start(callSite: "OnboardingView.appleSignIn") }
+            } catch {
+                errorText = "Could not finish sign-in: \(error.localizedDescription)"
+            }
         }
     }
 }
