@@ -11,6 +11,7 @@ struct ChildrenManagerView: View {
 
     @State private var showingAdd = false
     @State private var editingChild: LLChild?
+
     private var canWrite: Bool {
         appState.isCurrentMemberAuthorized()
     }
@@ -26,57 +27,64 @@ struct ChildrenManagerView: View {
 
     var body: some View {
         List {
-            if children.isEmpty {
-                ContentUnavailableView("No children yet", systemImage: "figure.and.child.holdinghands")
-            }
-
-            ForEach(children, id: \.objectID) { child in
-                Button {
-                    editingChild = child
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(child.nameValue)
-                                .font(.headline)
-                            Text(child.birthdayValue.formatted(date: .abbreviated, time: .omitted))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-            .onDelete(perform: canWrite ? deleteChildren : nil)
+            emptyStateSection
+            childrenSection
         }
         .navigationTitle("Children")
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    showingAdd = true
-                } label: {
-                    Label("Add Child", systemImage: "plus")
-                }
-                .disabled(!canWrite)
-            }
-        }
-        .sheet(isPresented: $showingAdd) {
-            NavigationStack {
-                AddEditChildView(household: household)
-            }
-        }
+        .navigationBarItems(trailing: addButton)
+        .sheet(isPresented: $showingAdd, content: addSheet)
         .sheet(item: $editingChild) { child in
-            NavigationStack {
-                AddEditChildView(household: household, editingChild: child)
+            editSheet(for: child)
+        }
+    }
+
+    @ViewBuilder
+    private var emptyStateSection: some View {
+        if children.isEmpty {
+            ContentUnavailableView(
+                "No children yet",
+                systemImage: "figure.and.child.holdinghands"
+            )
+        }
+    }
+
+    private var childrenSection: some View {
+        ForEach(children, id: \.objectID) { child in
+            ChildRowButton(child: child) {
+                editingChild = child
             }
+        }
+        .onDelete(perform: canWrite ? { offsets in
+            deleteChildren(at: offsets)
+        } : nil)
+    }
+
+    private var addButton: some View {
+        Button(action: {
+            showingAdd = true
+        }) {
+            Label("Add Child", systemImage: "plus")
+        }
+        .disabled(!canWrite)
+    }
+
+    private func addSheet() -> some View {
+        NavigationStack {
+            AddEditChildView(household: household)
+        }
+    }
+
+    private func editSheet(for child: LLChild) -> some View {
+        NavigationStack {
+            AddEditChildView(household: household, editingChild: child)
         }
     }
 
     private func deleteChildren(at offsets: IndexSet) {
         guard canWrite else { return }
-        offsets.map { children[$0] }.forEach(context.delete)
+
+        let items = offsets.map { children[$0] }
+        items.forEach(context.delete)
 
         do {
             try context.save()
@@ -84,6 +92,32 @@ struct ChildrenManagerView: View {
             context.rollback()
             print("Delete child failed:", error)
         }
+    }
+}
+
+private struct ChildRowButton: View {
+    let child: LLChild
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(child.nameValue)
+                        .font(.headline)
+
+                    Text(child.birthdayValue.formatted(date: .abbreviated, time: .omitted))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -100,16 +134,23 @@ private struct AddEditChildView: View {
     @State private var showingDeleteAlert = false
 
     private let persistentContainer = PersistenceController.shared.container
+
     private var canWrite: Bool {
         appState.isCurrentMemberAuthorized()
+    }
+
+    private var isEditing: Bool {
+        editingChild != nil
+    }
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     init(household: Household, editingChild: LLChild? = nil) {
         self.household = household
         self.editingChild = editingChild
     }
-
-    private var isEditing: Bool { editingChild != nil }
 
     var body: some View {
         Form {
@@ -120,48 +161,54 @@ private struct AddEditChildView: View {
 
             if isEditing {
                 Section {
-                    Button("Delete Child", role: .destructive) {
+                    Button("Delete Child", role: .destructive, action: {
                         showingDeleteAlert = true
-                    }
+                    })
                     .disabled(!canWrite)
                 }
             }
         }
         .navigationTitle(isEditing ? "Edit Child" : "Add Child")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") { dismiss() }
-            }
-
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Save") { save() }
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !canWrite)
-            }
-        }
+        .navigationBarItems(
+            leading: cancelButton,
+            trailing: saveButton
+        )
         .alert("Delete this child?", isPresented: $showingDeleteAlert) {
-            Button("Delete", role: .destructive) {
-                delete()
-            }
-            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive, action: delete)
+            Button("Cancel", role: .cancel, action: {})
         } message: {
             Text("Linked quotes are kept, but child links are removed.")
         }
-        .onAppear {
-            guard let editingChild else { return }
-            name = editingChild.nameValue
-            birthday = editingChild.birthdayValue
-        }
+        .onAppear(perform: loadExistingValues)
+    }
+
+    private var cancelButton: some View {
+        Button("Cancel", action: {
+            dismiss()
+        })
+    }
+
+    private var saveButton: some View {
+        Button("Save", action: save)
+            .disabled(trimmedName.isEmpty || !canWrite)
+    }
+
+    private func loadExistingValues() {
+        guard let editingChild else { return }
+        name = editingChild.nameValue
+        birthday = editingChild.birthdayValue
     }
 
     private func save() {
         guard canWrite else { return }
-        let now = Date()
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
 
+        let now = Date()
         let child: LLChild
+
         if let editingChild,
-           let existing = (try? context.existingObject(with: editingChild.objectID)) as? LLChild {
+           let existing = try? context.existingObject(with: editingChild.objectID) as? LLChild {
             child = existing
         } else {
             child = LLChild(context: context)
@@ -169,9 +216,10 @@ private struct AddEditChildView: View {
 
         let store = editingChild != nil ? storeForParent(child) : scopedHousehold.objectID.persistentStore
         assignIfInserted(child, to: store, in: context)
-#if DEBUG
+
+        #if DEBUG
         print("🧩 [EditSave] entity=LLChild store=\(store?.url?.lastPathComponent ?? "nil-store") objectID=\(child.objectID.uriRepresentation().absoluteString)")
-#endif
+        #endif
 
         if child.id == nil {
             child.id = UUID()
@@ -180,21 +228,24 @@ private struct AddEditChildView: View {
 
         child.updatedAt = now
         child.household = scopedHousehold
-        child.nameValue = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        child.nameValue = trimmedName
         child.birthdayValue = birthday
 
         do {
             try context.save()
+
             includeInHouseholdShare(
                 persistentContainer: persistentContainer,
                 household: scopedHousehold,
                 objects: [child],
                 label: "LLChild"
             )
-#if DEBUG
+
+            #if DEBUG
             debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
             debugLogHouseholdAssignment(entityName: "LLChild", object: child, household: scopedHousehold, context: context)
-#endif
+            #endif
+
             dismiss()
         } catch {
             context.rollback()
@@ -205,6 +256,7 @@ private struct AddEditChildView: View {
     private func delete() {
         guard canWrite else { return }
         guard let editingChild else { return }
+
         context.delete(editingChild)
 
         do {

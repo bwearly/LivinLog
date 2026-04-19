@@ -17,6 +17,7 @@ struct ManageMembersView: View {
     @State private var showingAdd = false
     @State private var addName = ""
     @State private var errorText: String?
+
     private var canWrite: Bool {
         appState.isCurrentMemberAuthorized()
     }
@@ -38,42 +39,16 @@ struct ManageMembersView: View {
                 if members.isEmpty {
                     ContentUnavailableView("No members yet", systemImage: "person.3")
                 } else {
-                    ForEach(members) { m in
-                        HStack(spacing: 12) {
-                            Image(systemName: "person.circle.fill")
-                                .font(.title3)
-                                .foregroundStyle(.secondary)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(m.displayName ?? "Unnamed")
-                                    .font(.headline)
-                                Text("Member")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    .onDelete(perform: canWrite ? deleteMembers : nil)
+                    membersListSection(members)
                 }
             }
         }
         .navigationTitle("Members")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) { EditButton() }
-
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    showingAdd = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .accessibilityLabel("Add Member")
-                .disabled(household == nil || !canWrite)
-            }
-        }
+        .navigationBarItems(
+            leading: editButtonView,
+            trailing: addButtonView
+        )
         .alert("Add Member", isPresented: $showingAdd) {
             TextField("Name", text: $addName)
 
@@ -90,7 +65,56 @@ struct ManageMembersView: View {
         }
     }
 
-    // MARK: - Fetch (reliable, CloudKit-safe)
+    @ViewBuilder
+    private func membersListSection(_ members: [HouseholdMember]) -> some View {
+        if canWrite {
+            ForEach(members) { member in
+                memberRow(member)
+            }
+            .onDelete(perform: deleteMembers)
+        } else {
+            ForEach(members) { member in
+                memberRow(member)
+            }
+        }
+    }
+
+    private func memberRow(_ member: HouseholdMember) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "person.circle.fill")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(member.displayName ?? "Unnamed")
+                    .font(.headline)
+
+                Text("Member")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var editButtonView: some View {
+        EditButton()
+            .disabled(!canWrite)
+    }
+
+    private var addButtonView: some View {
+        Button {
+            showingAdd = true
+        } label: {
+            Image(systemName: "plus")
+        }
+        .accessibilityLabel("Add Member")
+        .disabled(household == nil || !canWrite)
+    }
+
+    // MARK: - Fetch
 
     private func fetchMembers() -> [HouseholdMember] {
         guard let household else { return [] }
@@ -125,17 +149,17 @@ struct ManageMembersView: View {
 
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
 
-        let m = HouseholdMember(context: context)
-        m.id = UUID()
-        m.displayName = trimmed
-        m.createdAt = Date()
-        m.household = scopedHousehold
+        let member = HouseholdMember(context: context)
+        member.id = UUID()
+        member.displayName = trimmed
+        member.createdAt = Date()
+        member.household = scopedHousehold
 
         do {
             try context.save()
-#if DEBUG
-            debugLogHouseholdAssignment(entityName: "HouseholdMember", object: m, household: scopedHousehold, context: context)
-#endif
+            #if DEBUG
+            debugLogHouseholdAssignment(entityName: "HouseholdMember", object: member, household: scopedHousehold, context: context)
+            #endif
             addName = ""
         } catch {
             context.rollback()

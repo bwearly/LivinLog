@@ -19,7 +19,6 @@ struct TVShowsListView: View {
 
     @State private var showingAdd = false
     @State private var didBackfill = false
-
     @State private var searchText = ""
 
     private enum SortOption: String, CaseIterable, Identifiable {
@@ -27,12 +26,13 @@ struct TVShowsListView: View {
         case oldest = "Oldest"
         case titleAZ = "Title A–Z"
         case yearNewOld = "Year (new→old)"
-        case ratingHighLow = "Rating (high→low)"   // uses ratingText order (see ratingRank)
+        case ratingHighLow = "Rating (high→low)"
 
         var id: String { rawValue }
     }
 
     @State private var sort: SortOption = .newest
+
     private var canWrite: Bool {
         IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
     }
@@ -61,6 +61,7 @@ struct TVShowsListView: View {
                 let year = show.year == 0 ? "" : String(Int(show.year))
                 let seasons = show.seasons == 0 ? "" : String(Int(show.seasons))
                 let rating = (show.ratingText ?? "").lowercased()
+
                 return title.contains(q)
                     || notes.contains(q)
                     || year.contains(q)
@@ -79,9 +80,7 @@ struct TVShowsListView: View {
         case .yearNewOld:
             list.sort { $0.year > $1.year }
         case .ratingHighLow:
-            list.sort {
-                ratingRank($0.ratingText) > ratingRank($1.ratingText)
-            }
+            list.sort { ratingRank($0.ratingText) > ratingRank($1.ratingText) }
         }
 
         return list
@@ -95,73 +94,16 @@ struct TVShowsListView: View {
                     systemImage: "tv"
                 )
             } else {
-                ForEach(filteredShows, id: \.objectID) { show in
-                    NavigationLink {
-                        TVShowDetailView(tvShow: show, household: household, member: member)
-                    } label: {
-                        HStack(alignment: .top, spacing: 12) {
-                            TVPosterThumb(tvShow: show)
-
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack(alignment: .firstTextBaseline) {
-                                    Text(show.title ?? "Untitled")
-                                        .font(.headline)
-                                        .lineLimit(1)
-
-                                    Spacer()
-
-                                    Text(ratingDisplay(show.ratingText))
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                        .monospacedDigit()
-                                }
-
-                                HStack(spacing: 8) {
-                                    Text(show.year == 0 ? "—" : String(Int(show.year)))
-                                    Text("•")
-                                    Text(show.seasons == 0 ? "—" : "\(Int(show.seasons)) seasons")
-                                }
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-
-                                if show.rewatch {
-                                    Text("Rewatch")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .padding(.vertical, 2)
-                        }
-                        .padding(.vertical, 6)
-                    }
-                }
-                .onDelete(perform: canWrite ? deleteShowsFromFiltered : nil)
+                showsSection
             }
         }
         .navigationTitle("TV Shows")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarItems(
+            leading: sortMenuButton,
+            trailing: trailingButtons
+        )
         .searchable(text: $searchText, prompt: "Search title, year, seasons, rating, notes…")
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) { EditButton().disabled(!canWrite) }
-
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button { showingAdd = true } label: {
-                    Label("Add TV Show", systemImage: "plus")
-                }
-                .disabled(!canWrite)
-            }
-
-            ToolbarItem(placement: .navigationBarLeading) {
-                Menu {
-                    Picker("Sort", selection: $sort) {
-                        ForEach(SortOption.allCases) { opt in
-                            Text(opt.rawValue).tag(opt)
-                        }
-                    }
-                } label: {
-                    Label("Sort", systemImage: "arrow.up.arrow.down")
-                }
-            }
-        }
         .sheet(isPresented: $showingAdd) {
             NavigationStack {
                 AddTVShowView(household: household, member: member)
@@ -170,17 +112,69 @@ struct TVShowsListView: View {
         .task {
             guard !didBackfill else { return }
             didBackfill = true
+
             if canWrite {
                 await backfillHouseholdIDIfNeeded()
             }
         }
         .task {
-            // Best-effort background fetch for posters that are missing.
-            // Keeps list fast: it only fetches when posterURL is nil/empty.
             if canWrite {
                 await fetchMissingPostersIfNeeded()
             }
         }
+    }
+
+    @ViewBuilder
+    private var showsSection: some View {
+        if canWrite {
+            ForEach(filteredShows, id: \.objectID) { show in
+                showNavigationRow(show)
+            }
+            .onDelete(perform: deleteShowsFromFiltered)
+        } else {
+            ForEach(filteredShows, id: \.objectID) { show in
+                showNavigationRow(show)
+            }
+        }
+    }
+
+    private func showNavigationRow(_ show: TVShow) -> some View {
+        NavigationLink {
+            TVShowDetailView(tvShow: show, household: household, member: member)
+        } label: {
+            TVShowRowView(
+                show: show,
+                ratingText: ratingDisplay(show.ratingText)
+            )
+        }
+    }
+
+    private var trailingButtons: some View {
+        HStack(spacing: 12) {
+            EditButton()
+                .disabled(!canWrite)
+
+            Button {
+                showingAdd = true
+            } label: {
+                Image(systemName: "plus")
+            }
+            .accessibilityLabel("Add TV Show")
+            .disabled(!canWrite)
+        }
+    }
+
+    private var sortMenuButton: some View {
+        Menu {
+            Picker("Sort", selection: $sort) {
+                ForEach(SortOption.allCases) { opt in
+                    Text(opt.rawValue).tag(opt)
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+        }
+        .accessibilityLabel("Sort")
     }
 
     // MARK: - Rating display + sorting
@@ -190,12 +184,9 @@ struct TVShowsListView: View {
         return trimmed.isEmpty ? "—" : trimmed
     }
 
-    /// Higher = "higher rating" for sorting purposes.
-    /// Works for TV ratings and (optionally) MPAA ratings if you used them.
     private func ratingRank(_ value: String?) -> Int {
         let v = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
 
-        // TV ratings (increasing maturity)
         switch v {
         case "TV-Y": return 10
         case "TV-Y7": return 20
@@ -203,14 +194,11 @@ struct TVShowsListView: View {
         case "TV-PG": return 40
         case "TV-14": return 50
         case "TV-MA": return 60
-
-        // MPAA (if you kept them in the picker)
         case "G": return 10
         case "PG": return 20
         case "PG-13": return 30
         case "R": return 40
         case "NC-17": return 50
-
         case "NOT RATED", "UNRATED", "—", "": return 0
         default: return 0
         }
@@ -219,16 +207,13 @@ struct TVShowsListView: View {
     // MARK: - Posters
 
     private func fetchMissingPostersIfNeeded() async {
-        // Only fetch for a handful at a time to keep things responsive.
-        // (You can bump this later.)
         let needsPoster = filteredShows.filter {
             let s = ($0.posterURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return s.isEmpty
         }
 
-        if needsPoster.isEmpty { return }
+        guard !needsPoster.isEmpty else { return }
 
-        // Fetch sequentially to keep it simple + avoid rate limits.
         for show in needsPoster.prefix(20) {
             let fetched = await OMDbPosterService.posterURL(title: show.title, year: show.year)
             guard let fetched else { continue }
@@ -249,6 +234,7 @@ struct TVShowsListView: View {
                 try? context.save()
             }
         }
+
         guard let hid = household.id else { return }
 
         await MainActor.run {
@@ -256,7 +242,9 @@ struct TVShowsListView: View {
             req.predicate = NSPredicate(format: "household == %@ AND householdID == nil", household)
 
             if let legacy = try? context.fetch(req), !legacy.isEmpty {
-                for show in legacy { show.householdID = hid }
+                for show in legacy {
+                    show.householdID = hid
+                }
                 try? context.save()
             }
         }
@@ -264,21 +252,68 @@ struct TVShowsListView: View {
 
     private func deleteShowsFromFiltered(offsets: IndexSet) {
         guard canWrite else { return }
+
         let toDelete = offsets.compactMap { idx -> TVShow? in
             guard filteredShows.indices.contains(idx) else { return nil }
             return filteredShows[idx]
         }
+
         toDelete.forEach(context.delete)
         save()
     }
 
     private func save() {
-        do { try context.save() }
-        catch { print("Save failed:", error) }
+        do {
+            try context.save()
+        } catch {
+            print("Save failed:", error)
+        }
     }
 }
 
-// MARK: - Poster Thumb (uses tvShow.posterURL stored in Core Data)
+private struct TVShowRowView: View {
+    let show: TVShow
+    let ratingText: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            TVPosterThumb(tvShow: show)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(show.title ?? "Untitled")
+                        .font(.headline)
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    Text(ratingText)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+
+                HStack(spacing: 8) {
+                    Text(show.year == 0 ? "—" : String(Int(show.year)))
+                    Text("•")
+                    Text(show.seasons == 0 ? "—" : "\(Int(show.seasons)) seasons")
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+                if show.rewatch {
+                    Text("Rewatch")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 2)
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+// MARK: - Poster Thumb
 
 private struct TVPosterThumb: View {
     let tvShow: TVShow
