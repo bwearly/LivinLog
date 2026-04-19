@@ -54,7 +54,7 @@ struct BooksListView: View {
             } else {
                 ForEach(books) { book in
                     NavigationLink {
-                        AddEditBookView(household: household, selectedMember: selectedMember, editingBook: book)
+                        BookDetailView(book: book, household: household)
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(book.title ?? "Untitled")
@@ -71,7 +71,6 @@ struct BooksListView: View {
                             }
                         }
                     }
-                    .disabled(!canEditSelectedMember)
                 }
                 .onDelete { offsets in
                     guard canEditSelectedMember else { return }
