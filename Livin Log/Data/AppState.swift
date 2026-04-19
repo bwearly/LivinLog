@@ -43,6 +43,10 @@ final class AppState: ObservableObject {
     private var needsRestartAfterCurrentStart = false
     private var debouncedStartTask: Task<Void, Never>?
 
+    // Prevent repeated startup churn during CloudKit reset/import storms.
+    private var lastRemoteChangeStartAt: Date?
+    private let remoteChangeCooldown: TimeInterval = 2.0
+
     init(container: NSPersistentCloudKitContainer) {
         self.container = container
         observeShareAcceptanceAndStoreChanges()
@@ -60,7 +64,8 @@ final class AppState: ObservableObject {
         isStarting = true
         defer { isStarting = false }
 
-        if route != .main {
+        // Keep onboarding/main visually stable during background sync churn.
+        if route != .main && route != .onboarding {
             setRoute(.loading, reason: "start() begin [\(callSite)]")
         }
 
@@ -73,6 +78,14 @@ final class AppState: ObservableObject {
         }
 
         guard let resolvedAppUser = await resolveAuthenticatedUser() else {
+            // If we already have an active screen/session, do not thrash the UI during
+            // transient AuthenticationServices / CloudKit churn.
+            if route == .main, household != nil {
+                debugLog("auth unresolved during active main session; keeping current route stable")
+                await runQueuedStartIfNeeded()
+                return
+            }
+
             clearResolvedIdentity(reason: "no authenticated user")
             setRoute(.onboarding, reason: "auth required")
             await runQueuedStartIfNeeded()
@@ -143,19 +156,33 @@ final class AppState: ObservableObject {
 
     func createInitialHousehold(name: String, memberName: String) throws {
         guard let appUser else {
-            throw NSError(domain: "AppState", code: 100, userInfo: [NSLocalizedDescriptionKey: "Sign in is required before creating a household."])
+            throw NSError(
+                domain: "AppState",
+                code: 100,
+                userInfo: [NSLocalizedDescriptionKey: "Sign in is required before creating a household."]
+            )
         }
 
         let context = container.viewContext
+        let trimmedHouseholdName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedMemberName = memberName.trimmingCharacters(in: .whitespacesAndNewlines)
+
         let household = Household(context: context)
-        household.name = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Our Household" : name.trimmingCharacters(in: .whitespacesAndNewlines)
+        household.name = trimmedHouseholdName.isEmpty ? "Our Household" : trimmedHouseholdName
 
         let createdMember = HouseholdMember(context: context)
-        createdMember.displayName = memberName.trimmingCharacters(in: .whitespacesAndNewlines)
+        createdMember.displayName = trimmedMemberName
         createdMember.household = household
 
         try context.save()
-        let membership = try IdentityStore.ensureMembership(appUser: appUser, household: household, member: createdMember, role: "leader", context: context)
+
+        let membership = try IdentityStore.ensureMembership(
+            appUser: appUser,
+            household: household,
+            member: createdMember,
+            role: "leader",
+            context: context
+        )
 
         setSelection(household: household, member: createdMember, membership: membership, reason: "initial household created")
         SelectionStore.save(household: household, member: createdMember)
@@ -163,25 +190,49 @@ final class AppState: ObservableObject {
 
     func claim(member: HouseholdMember, role: String = "member") throws {
         guard let appUser else {
-            throw NSError(domain: "AppState", code: 101, userInfo: [NSLocalizedDescriptionKey: "Sign in is required before claiming a profile."])
-        }
-        guard let household = member.household else {
-            throw NSError(domain: "AppState", code: 102, userInfo: [NSLocalizedDescriptionKey: "Member household could not be resolved."])
+            throw NSError(
+                domain: "AppState",
+                code: 101,
+                userInfo: [NSLocalizedDescriptionKey: "Sign in is required before claiming a profile."]
+            )
         }
 
-        let membership = try IdentityStore.ensureMembership(appUser: appUser, household: household, member: member, role: role, context: container.viewContext)
+        guard let household = member.household else {
+            throw NSError(
+                domain: "AppState",
+                code: 102,
+                userInfo: [NSLocalizedDescriptionKey: "Member household could not be resolved."]
+            )
+        }
+
+        let membership = try IdentityStore.ensureMembership(
+            appUser: appUser,
+            household: household,
+            member: member,
+            role: role,
+            context: container.viewContext
+        )
+
         applyMembership(membership, reason: "claimed member profile")
         needsMemberClaim = false
     }
 
     func createAndClaimMember(named name: String, in household: Household, role: String = "member") throws -> HouseholdMember {
         guard let appUser else {
-            throw NSError(domain: "AppState", code: 103, userInfo: [NSLocalizedDescriptionKey: "Sign in is required before creating a profile."])
+            throw NSError(
+                domain: "AppState",
+                code: 103,
+                userInfo: [NSLocalizedDescriptionKey: "Sign in is required before creating a profile."]
+            )
         }
 
         let context = container.viewContext
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
-            throw NSError(domain: "AppState", code: 104, userInfo: [NSLocalizedDescriptionKey: "Could not resolve household in active context."])
+            throw NSError(
+                domain: "AppState",
+                code: 104,
+                userInfo: [NSLocalizedDescriptionKey: "Could not resolve household in active context."]
+            )
         }
 
         let member = HouseholdMember(context: context)
@@ -191,7 +242,15 @@ final class AppState: ObservableObject {
         member.household = scopedHousehold
 
         try context.save()
-        let membership = try IdentityStore.ensureMembership(appUser: appUser, household: scopedHousehold, member: member, role: role, context: context)
+
+        let membership = try IdentityStore.ensureMembership(
+            appUser: appUser,
+            household: scopedHousehold,
+            member: member,
+            role: role,
+            context: context
+        )
+
         applyMembership(membership, reason: "created and claimed member")
         needsMemberClaim = false
         return member
@@ -257,20 +316,36 @@ final class AppState: ObservableObject {
         .sink { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                if self.route == .onboarding || (self.route == .main && self.isCurrentHouseholdInPrivateStore()) {
-                    self.scheduleStartDebounced(label: "NSPersistentStoreRemoteChange(primary)")
+                guard self.shouldHandleRemoteChange() else {
+                    self.debugLog("skipping remote change due to cooldown")
                     return
                 }
 
-                if self.route == .main,
-                   let currentHousehold = self.household,
-                   let store = currentHousehold.objectID.persistentStore,
-                   store == PersistenceController.shared.privateStore {
+                // Keep onboarding stable during CloudKit zone reset storms.
+                // Only re-evaluate if we are already on main and our selection may have changed.
+                guard self.route == .main else { return }
+
+                if self.household == nil || self.member == nil {
+                    self.scheduleStartDebounced(label: "NSPersistentStoreRemoteChange(main-unresolved)")
+                    return
+                }
+
+                if self.isCurrentHouseholdInPrivateStore() {
                     self.scheduleStartDebounced(label: "NSPersistentStoreRemoteChange(private-main)")
                 }
             }
         }
         .store(in: &cancellables)
+    }
+
+    private func shouldHandleRemoteChange() -> Bool {
+        let now = Date()
+        if let lastRemoteChangeStartAt,
+           now.timeIntervalSince(lastRemoteChangeStartAt) < remoteChangeCooldown {
+            return false
+        }
+        lastRemoteChangeStartAt = now
+        return true
     }
 
     private func runQueuedStartIfNeeded() async {
@@ -290,6 +365,7 @@ final class AppState: ObservableObject {
     private func setSelection(household: Household?, member: HouseholdMember?, membership: HouseholdMembership?, reason: String) {
         let oldHousehold = self.household
         let oldMember = self.member
+
         self.household = household
         self.member = member
         self.currentMembership = membership
@@ -308,7 +384,13 @@ final class AppState: ObservableObject {
             return
         }
 
-        setSelection(household: membershipHousehold, member: membershipMember, membership: membership, reason: reason)
+        setSelection(
+            household: membershipHousehold,
+            member: membershipMember,
+            membership: membership,
+            reason: reason
+        )
+
         SelectionStore.save(household: membershipHousehold, member: membershipMember)
         SelectionStore.saveDeviceMember(membershipMember, for: membershipHousehold)
     }
@@ -325,7 +407,8 @@ final class AppState: ObservableObject {
         let context = container.viewContext
         let (selectedHousehold, selectedMember) = SelectionStore.load(context: context)
 
-        if let selectedHousehold, let selectedMember,
+        if let selectedHousehold,
+           let selectedMember,
            let match = memberships.first(where: {
                $0.household?.objectID == selectedHousehold.objectID &&
                $0.memberProfile?.objectID == selectedMember.objectID
@@ -354,12 +437,13 @@ final class AppState: ObservableObject {
 
         if isSharedHousehold(household) { return nil }
 
-        let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
-        req.predicate = NSPredicate(format: "household == %@", household)
-        req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
-        let members = (try? context.fetch(req)) ?? []
+        let request = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
+        request.predicate = NSPredicate(format: "household == %@", household)
+        request.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
 
+        let members = (try? context.fetch(request)) ?? []
         guard members.count == 1, let onlyMember = members.first else { return nil }
+
         let role = roleForAutoMigration(in: household) ?? "leader"
         return try? IdentityStore.ensureMembership(
             appUser: appUser,
@@ -371,10 +455,11 @@ final class AppState: ObservableObject {
     }
 
     private func roleForAutoMigration(in household: Household) -> String? {
-        let req = NSFetchRequest<HouseholdMembership>(entityName: "HouseholdMembership")
-        req.fetchLimit = 1
-        req.predicate = NSPredicate(format: "household == %@ AND status == %@", household, "active")
-        let hasMembership = ((try? container.viewContext.fetch(req))?.isEmpty == false)
+        let request = NSFetchRequest<HouseholdMembership>(entityName: "HouseholdMembership")
+        request.fetchLimit = 1
+        request.predicate = NSPredicate(format: "household == %@ AND status == %@", household, "active")
+
+        let hasMembership = ((try? container.viewContext.fetch(request))?.isEmpty == false)
         return hasMembership ? "member" : "leader"
     }
 
@@ -398,10 +483,10 @@ final class AppState: ObservableObject {
     }
 
     private func debugLog(_ message: String) {
-#if DEBUG
+        #if DEBUG
         let ts = ISO8601DateFormatter().string(from: Date())
         print("🧭 [AppState \(ts)] \(message)")
-#endif
+        #endif
     }
 
     private func isCurrentHouseholdInPrivateStore() -> Bool {
@@ -411,14 +496,14 @@ final class AppState: ObservableObject {
     }
 
     private func hasAnyHousehold() -> Bool {
-        let ctx = container.viewContext
-        let req = NSFetchRequest<NSFetchRequestResult>(entityName: "Household")
-        req.fetchLimit = 1
-        req.includesPendingChanges = true
-        req.affectedStores = container.persistentStoreCoordinator.persistentStores
+        let context = container.viewContext
+        let request = NSFetchRequest<NSFetchRequestResult>(entityName: "Household")
+        request.fetchLimit = 1
+        request.includesPendingChanges = true
+        request.affectedStores = container.persistentStoreCoordinator.persistentStores
 
         do {
-            return try ctx.count(for: req) > 0
+            return try context.count(for: request) > 0
         } catch {
             print("❌ hasAnyHousehold failed: \(error)")
             return false
@@ -433,15 +518,15 @@ final class AppState: ObservableObject {
     }
 
     private func fetchMostRecentHousehold(in store: NSPersistentStore) -> Household? {
-        let ctx = container.viewContext
+        let context = container.viewContext
 
-        let req = Household.fetchRequest()
-        req.fetchLimit = 1
-        req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
-        req.affectedStores = [store]
+        let request = Household.fetchRequest()
+        request.fetchLimit = 1
+        request.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
+        request.affectedStores = [store]
 
         do {
-            return (try ctx.fetch(req).first as? Household)
+            return try context.fetch(request).first as? Household
         } catch {
             print("❌ fetchMostRecentHousehold failed: \(error)")
             return nil
@@ -475,7 +560,12 @@ final class AppState: ObservableObject {
         }
 
         do {
-            return try IdentityStore.fetchOrCreateAppUser(provider: IdentityStore.providerApple, subject: subject, displayName: nil, context: container.viewContext)
+            return try IdentityStore.fetchOrCreateAppUser(
+                provider: IdentityStore.providerApple,
+                subject: subject,
+                displayName: nil,
+                context: container.viewContext
+            )
         } catch {
             print("❌ Failed to resolve authenticated user: \(error)")
             return nil
