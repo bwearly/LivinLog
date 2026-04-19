@@ -142,6 +142,9 @@ struct OnboardingView: View {
                 .joined(separator: " ")
 
             do {
+#if DEBUG
+                print("🍎 Apple Sign-In credential received (user id length: \(credential.user.count))")
+#endif
                 try appState.handleAppleSignIn(subject: credential.user, displayName: prettyName.isEmpty ? nil : prettyName)
                 if myName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     myName = prettyName
