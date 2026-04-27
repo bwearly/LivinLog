@@ -18,7 +18,7 @@ struct BooksListView: View {
     }
 
     private var selectedMember: HouseholdMember? {
-        guard let selectedMemberID else { return members.first }
+        guard let selectedMemberID else { return nil }
         return members.first(where: { $0.objectID == selectedMemberID })
     }
 
@@ -39,8 +39,9 @@ struct BooksListView: View {
         List {
             if !members.isEmpty {
                 Picker("Member", selection: Binding(get: {
-                    selectedMemberID ?? members.first?.objectID
+                    selectedMemberID
                 }, set: { selectedMemberID = $0 })) {
+                    Text("Select profile").tag(Optional<NSManagedObjectID>.none)
                     ForEach(members, id: \.objectID) { member in
                         Text(member.displayName ?? "Member").tag(Optional(member.objectID))
                     }
@@ -48,7 +49,10 @@ struct BooksListView: View {
                 .pickerStyle(.segmented)
             }
 
-            if books.isEmpty {
+            if selectedMember == nil {
+                Text("Choose a profile to view books.")
+                    .foregroundStyle(.secondary)
+            } else if books.isEmpty {
                 Text("No books added yet.")
                     .foregroundStyle(.secondary)
             } else {
@@ -105,8 +109,12 @@ struct BooksListView: View {
             }
         }
         .onAppear {
-            if selectedMemberID == nil {
-                selectedMemberID = appState.member?.objectID ?? members.first?.objectID
+            if let appMemberID = appState.member?.objectID,
+               members.contains(where: { $0.objectID == appMemberID }) {
+                selectedMemberID = appMemberID
+            } else if selectedMemberID != nil,
+                      members.contains(where: { $0.objectID == selectedMemberID }) == false {
+                selectedMemberID = nil
             }
         }
     }
