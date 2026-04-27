@@ -65,21 +65,27 @@ struct RootView: View {
 
         .onChange(of: appState.route) { _, newRoute in
             guard newRoute == .main else { return }
-            if appState.shouldPromptForSharedMemberProfile() || appState.needsMemberClaim {
-                showingCreateMemberProfileSheet = true
-            }
-            showingMembershipChooser = appState.candidateMemberships.count > 1
+            let needsClaim = appState.shouldPromptForSharedMemberProfile() || appState.needsMemberClaim
+            showingCreateMemberProfileSheet = needsClaim
+            showingMembershipChooser = !needsClaim && appState.candidateMemberships.count > 1
         }
         .onChange(of: appState.candidateMemberships.count) { _, count in
             guard appState.route == .main else { return }
-            showingMembershipChooser = count > 1
+            let needsClaim = appState.shouldPromptForSharedMemberProfile() || appState.needsMemberClaim
+            showingMembershipChooser = !needsClaim && count > 1
+        }
+        .onChange(of: appState.needsMemberClaim) { _, needsClaim in
+            guard appState.route == .main else { return }
+            if needsClaim {
+                showingMembershipChooser = false
+            }
         }
         .sheet(item: $pendingInvite) { pendingInvite in
             AcceptHouseholdInviteSheet(pendingInvite: pendingInvite) {
                 await appState.start(callSite: "RootView.acceptInvite.onAccepted")
-                if appState.shouldPromptForSharedMemberProfile() || appState.needsMemberClaim {
-                    showingCreateMemberProfileSheet = true
-                }
+                let needsClaim = appState.shouldPromptForSharedMemberProfile() || appState.needsMemberClaim
+                showingCreateMemberProfileSheet = needsClaim
+                showingMembershipChooser = !needsClaim && appState.candidateMemberships.count > 1
             }
         }
         .sheet(isPresented: $showingMembershipChooser) {
