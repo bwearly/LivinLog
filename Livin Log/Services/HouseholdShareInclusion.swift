@@ -66,14 +66,12 @@ func includeInHouseholdShare(
 
 #if DEBUG
 private func debugPrintStorePlacement(household: Household, objects: [NSManagedObject], label: String) {
-    let context = household.managedObjectContext
-    let coordinator = context?.persistentStoreCoordinator
-    let householdStore = coordinator?.persistentStore(for: household.objectID)?.url?.lastPathComponent ?? "unknown-store"
+    let householdStore = household.objectID.persistentStore?.url?.lastPathComponent ?? "unknown-store"
 
     print("🧩 [ShareInclusion] \(label) householdStore=\(householdStore)")
 
     for object in objects {
-        let storeName = coordinator?.persistentStore(for: object.objectID)?.url?.lastPathComponent ?? "unknown-store"
+        let storeName = object.objectID.persistentStore?.url?.lastPathComponent ?? "unknown-store"
         print("🧩 [ShareInclusion] \(label) object=\(object.objectID.uriRepresentation().absoluteString) store=\(storeName)")
     }
 }
