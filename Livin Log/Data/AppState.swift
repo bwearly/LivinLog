@@ -104,6 +104,19 @@ final class AppState: ObservableObject {
         let memberships = IdentityStore.memberships(for: resolvedAppUser, context: container.viewContext)
         candidateMemberships = memberships
 
+        if let pendingSharedHousehold = preferredSharedHouseholdNeedingClaim(from: memberships) {
+            setSelection(
+                household: pendingSharedHousehold,
+                member: nil,
+                membership: nil,
+                reason: "shared household accepted but member profile not yet claimed"
+            )
+            needsMemberClaim = true
+            setRoute(.main, reason: "requires claim flow for shared household")
+            await runQueuedStartIfNeeded()
+            return
+        }
+
         if memberships.count == 1, let membership = memberships.first {
             applyMembership(membership, reason: "single membership")
             needsMemberClaim = false
@@ -535,6 +548,17 @@ final class AppState: ObservableObject {
 
     private func isSharedHousehold(_ household: Household) -> Bool {
         household.objectID.persistentStore == PersistenceController.shared.sharedStore
+    }
+
+    private func preferredSharedHouseholdNeedingClaim(from memberships: [HouseholdMembership]) -> Household? {
+        guard let preferredHousehold = fetchPreferredHousehold() else { return nil }
+        guard isSharedHousehold(preferredHousehold) else { return nil }
+
+        let hasMembershipForPreferredHousehold = memberships.contains { membership in
+            membership.household?.objectID == preferredHousehold.objectID
+        }
+
+        return hasMembershipForPreferredHousehold ? nil : preferredHousehold
     }
 
     private func fetchICloudStatus() async -> CKAccountStatus {
