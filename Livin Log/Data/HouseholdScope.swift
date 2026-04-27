@@ -30,7 +30,7 @@ func storeForParent(_ parent: NSManagedObject) -> NSPersistentStore? {
 
 #if DEBUG
 func debugStoreName(for objectID: NSManagedObjectID, context: NSManagedObjectContext) -> String {
-    let store = context.persistentStoreCoordinator?.persistentStore(for: objectID)
+    let store = objectID.persistentStore
     return store?.url?.lastPathComponent ?? "unknown-store"
 }
 
