@@ -60,9 +60,11 @@ struct BooksListView: View {
                     NavigationLink {
                         BookDetailView(book: book, household: household)
                     } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(book.title ?? "Untitled")
-                                .font(.headline)
+                        HStack(spacing: 12) {
+                            BookCoverThumb(book: book)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(book.title ?? "Untitled")
+                                    .font(.headline)
                             Text(book.author ?? "Unknown author")
                                 .foregroundStyle(.secondary)
                             Text(String(format: "Rating %.2f/10", book.rating))
@@ -72,6 +74,7 @@ struct BooksListView: View {
                                 Text("Finished \(finishedAt.formatted(date: .abbreviated, time: .omitted))")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                            }
                             }
                         }
                     }
@@ -116,6 +119,31 @@ struct BooksListView: View {
                       members.contains(where: { $0.objectID == selectedMemberID }) == false {
                 selectedMemberID = nil
             }
+        }
+    }
+}
+
+
+private struct BookCoverThumb: View {
+    let book: BookEntry
+
+    var body: some View {
+        let s = (book.value(forKey: "coverURL") as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: s), !s.isEmpty {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                default:
+                    RoundedRectangle(cornerRadius: 6).fill(Color(.secondarySystemFill))
+                }
+            }
+            .frame(width: 42, height: 62)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        } else {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color(.secondarySystemFill))
+                .frame(width: 42, height: 62)
         }
     }
 }

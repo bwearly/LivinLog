@@ -22,6 +22,23 @@ struct BookDetailView: View {
 
     var body: some View {
         List {
+            if let url = coverURL {
+                Section {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image.resizable().scaledToFit()
+                        default:
+                            RoundedRectangle(cornerRadius: 12).fill(Color(.secondarySystemFill))
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 240)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                }
+            }
+
             Section("Book") {
                 LabeledContent("Title", value: displayValue(book.title))
                 LabeledContent("Author", value: displayValue(book.author))
@@ -88,6 +105,11 @@ struct BookDetailView: View {
         context.delete(book)
         try? context.save()
         dismiss()
+    }
+
+    private var coverURL: URL? {
+        let s = (book.value(forKey: "coverURL") as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return URL(string: s)
     }
 
     private func displayValue(_ value: String?) -> String {

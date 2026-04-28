@@ -17,6 +17,8 @@ struct AddEditBookView: View {
     @State private var spiceLevel = 0
     @State private var bookLength = ""
     @State private var finishedAt = Date()
+    @State private var coverURLString = ""
+    @State private var isLookingUpCover = false
 
     init(household: Household, selectedMember: HouseholdMember?, editingBook: BookEntry? = nil) {
         self.household = household
@@ -43,6 +45,11 @@ struct AddEditBookView: View {
             Section("Book") {
                 TextField("Title", text: $title)
                 TextField("Author", text: $author)
+
+                if isLookingUpCover {
+                    ProgressView("Looking up cover…")
+                        .font(.caption)
+                }
             }
 
             Section("Details") {
@@ -74,6 +81,9 @@ struct AddEditBookView: View {
                 .disabled(!canEdit || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || parsedRating == nil)
             }
         }
+        .task(id: "\(title)|\(author)") {
+            await lookupCover()
+        }
         .onAppear {
             if let editingBook {
                 title = editingBook.title ?? ""
@@ -83,10 +93,26 @@ struct AddEditBookView: View {
                 spiceLevel = Int(editingBook.spiceLevel)
                 bookLength = editingBook.bookLength ?? ""
                 finishedAt = editingBook.finishedAt ?? Date()
+                coverURLString = editingBook.value(forKey: "coverURL") as? String ?? ""
             } else if ratingText.isEmpty {
                 ratingText = "0.00"
             }
         }
+    }
+
+
+    private func lookupCover() async {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAuthor = author.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty || !trimmedAuthor.isEmpty else {
+            if editingBook == nil { coverURLString = "" }
+            return
+        }
+
+        isLookingUpCover = true
+        let fetched = await OpenLibraryCoverService.coverURL(title: trimmedTitle, author: trimmedAuthor)
+        coverURLString = fetched?.absoluteString ?? ""
+        isLookingUpCover = false
     }
 
     private func saveBook() {
@@ -110,6 +136,7 @@ struct AddEditBookView: View {
         entry.spiceLevel = Int16(spiceLevel)
         entry.bookLength = bookLength.trimmingCharacters(in: .whitespacesAndNewlines)
         entry.finishedAt = finishedAt
+        entry.setValue(coverURLString.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "coverURL")
         entry.household = scopedHousehold
         entry.ownerMember = selectedMember
         entry.ownerAppUser = appUser
