@@ -118,7 +118,7 @@ enum CloudSharing {
                             (householdInContext.name ?? "Livin Log Household") as CKRecordValue
                         share.publicPermission = .readWrite
 
-                        // TEMP DEBUG LOGGING
+#if DEBUG
                         print("[CloudSharing] share.publicPermission=\(share.publicPermission.rawValue)")
                         if let shareURL = share.url {
                             print("[CloudSharing] share.url=\(shareURL.absoluteString)")
@@ -128,6 +128,7 @@ enum CloudSharing {
                         print("[CloudSharing] share.recordID=\(share.recordID.recordName)")
                         let storeURLString = store.url?.absoluteString ?? "nil"
                         print("[CloudSharing] persisting updated share into storeURL=\(storeURLString)")
+#endif
 
                         // ✅ Persist updated share fields back to CloudKit
                         persistentContainer.persistUpdatedShare(share, in: store) { _, persistError in

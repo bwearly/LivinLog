@@ -9,6 +9,7 @@ struct BooksListView: View {
 
     @State private var selectedMemberID: NSManagedObjectID?
     @State private var showAdd = false
+    @State private var deleteErrorMessage: String?
 
     private var members: [HouseholdMember] {
         let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
@@ -61,7 +62,7 @@ struct BooksListView: View {
                         BookDetailView(book: book, household: household)
                     } label: {
                         HStack(spacing: 12) {
-                            BookCoverThumb(book: book)
+                            BookCoverArtwork(urlString: book.value(forKey: "coverURL") as? String ?? "", size: CGSize(width: 42, height: 62))
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(book.title ?? "Untitled")
                                     .font(.headline)
@@ -80,11 +81,7 @@ struct BooksListView: View {
                     }
                 }
                 .onDelete { offsets in
-                    guard canEditSelectedMember else { return }
-                    for index in offsets where books.indices.contains(index) {
-                        context.delete(books[index])
-                    }
-                    try? context.save()
+                    deleteBooks(at: offsets)
                 }
             }
         }
@@ -111,6 +108,11 @@ struct BooksListView: View {
                     .padding(.bottom, 8)
             }
         }
+        .alert("Could Not Delete Book", isPresented: Binding(get: { deleteErrorMessage != nil }, set: { if !$0 { deleteErrorMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(deleteErrorMessage ?? "The selected book could not be deleted.")
+        }
         .onAppear {
             if let appMemberID = appState.member?.objectID,
                members.contains(where: { $0.objectID == appMemberID }) {
@@ -121,29 +123,22 @@ struct BooksListView: View {
             }
         }
     }
-}
 
+    private func deleteBooks(at offsets: IndexSet) {
+        guard canEditSelectedMember else {
+            deleteErrorMessage = "You can delete only books on your own claimed member profile."
+            return
+        }
 
-private struct BookCoverThumb: View {
-    let book: BookEntry
-
-    var body: some View {
-        let s = (book.value(forKey: "coverURL") as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if let url = URL(string: s), !s.isEmpty {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFill()
-                default:
-                    RoundedRectangle(cornerRadius: 6).fill(Color(.secondarySystemFill))
-                }
+        do {
+            for index in offsets where books.indices.contains(index) {
+                context.delete(books[index])
             }
-            .frame(width: 42, height: 62)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-        } else {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color(.secondarySystemFill))
-                .frame(width: 42, height: 62)
+            try context.save()
+        } catch {
+            context.rollback()
+            deleteErrorMessage = "Could not delete book: \(error.localizedDescription)"
+            print("❌ [BookDelete] list delete failed: \(error)")
         }
     }
 }

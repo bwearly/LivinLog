@@ -130,6 +130,7 @@ struct AcceptHouseholdInviteSheet: View {
                 } else {
                     PendingInviteStore.clear(reason: "accepted invite")
                 }
+                SharedHouseholdLeaveStore.clearAll()
                 dismiss()
                 NotificationCenter.default.post(name: .didAcceptCloudKitShare, object: nil)
                 print("✅ Invite accepted; posted didAcceptCloudKitShare; rerunning app state")

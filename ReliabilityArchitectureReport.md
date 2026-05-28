@@ -15,6 +15,7 @@
 - `HouseholdMembership` is the source of acting authority. It carries durable scalar IDs in addition to relationships so launch and authorization do not depend solely on object URI caches.
 - `HouseholdMember.claimedByAppUserId` records the durable owner of a profile. Legacy/imported members may remain nil until explicitly claimed.
 - Book writes require a resolved current `AppUser`, `Household`, and claimed/authorized `HouseholdMember`; writes are denied with visible errors when the actor cannot be resolved or attempts to write for another member.
+- Pending invite URLs are stored only until accepted or explicitly cleared. Resume attempts are guarded so the same invalid invite cannot continuously refetch or re-present an error loop in one app session.
 
 ## Data model changes
 
@@ -23,17 +24,62 @@
 - `HouseholdMember.claimedByAppUserId`
 - `HouseholdMembership.appUserId`, `householdId`, `householdMemberId`, `joinedAt`
 - `BookEntry.householdId`, `ownerMemberId`, `ownerAppUserId`
+- `BookEntry.coverID`, `isbn`, `firstPublishYear` for reliable OpenLibrary cover/result persistence
 - New `Invite` entity for future first-class invite tracking (`inviteCode`, `token`, `householdId`, creator, dates, max uses, status, relationship to household)
 
 All new fields are optional to preserve lightweight migration compatibility with already-shipped stores.
 
-## Migration implications
+## CloudKit Production schema checklist
+
+TestFlight and App Store builds use the **Production** CloudKit schema. Before uploading a TestFlight build, deploy the Development schema containing these Core Data entities, attributes, and relationships to Production:
+
+| Entity | Attributes | Relationships |
+| --- | --- | --- |
+| `Household` | `createdByAppUserId`, `createdAt`, `id`, `name` | `calendarEvents`, `feedbacks`, `members`, `movies`, `puzzles`, `children`, `quotes`, `tvshows`, `viewings`, `memberships`, `bookEntries`, `invites` |
+| `HouseholdMember` | `claimedByAppUserId`, `createdAt`, `displayName`, `id` | `feedbacks`, `household`, `memberships`, `bookEntries` |
+| `LLCalendarEvent` | `createdAt`, `day`, `id`, `month`, `name`, `notificationsEnabledForEvent`, `tag`, `updatedAt`, `year` | `household` |
+| `LLChild` | `birthday`, `createdAt`, `id`, `name`, `updatedAt` | `household`, `quotes` |
+| `LLPuzzle` | `brand`, `completedAt`, `createdAt`, `id`, `name`, `notes`, `photoData`, `pieceCount`, `updatedAt` | `household` |
+| `LLQuote` | `ageInMonthsAtSaidAt`, `contextText`, `createdAt`, `id`, `saidAt`, `speakerName`, `text`, `updatedAt` | `child`, `household` |
+| `Movie` | `createdAt`, `genre`, `householdID`, `id`, `mpaaRating`, `notes`, `posterURL`, `title`, `year` | `feedbacks`, `household`, `viewing` |
+| `MovieFeedback` | `id`, `notes`, `rating`, `slept`, `updatedAt` | `household`, `member`, `movie` |
+| `TVShow` | `createdAt`, `householdID`, `id`, `notes`, `posterURL`, `ratingText`, `rewatch`, `seasons`, `title`, `year` | `household` |
+| `Viewing` | `id`, `isRewatch`, `notes`, `watchedOn` | `household`, `movie` |
+| `AppUser` | `lastSeenAt`, `id`, `authProvider`, `providerSubject`, `displayName`, `createdAt` | `memberships`, `bookEntries` |
+| `HouseholdMembership` | `joinedAt`, `householdMemberId`, `householdId`, `appUserId`, `id`, `role`, `status`, `createdAt` | `household`, `memberProfile`, `appUser` |
+| `BookEntry` | `ownerAppUserId`, `ownerMemberId`, `householdId`, `id`, `title`, `author`, `rating`, `notes`, `spiceLevel`, `bookLength`, `createdAt`, `finishedAt`, `coverURL`, `coverID`, `isbn`, `firstPublishYear` | `household`, `ownerMember`, `ownerAppUser` |
+| `Invite` | `id`, `inviteCode`, `token`, `createdByAppUserId`, `householdId`, `status`, `createdAt`, `expiresAt`, `maxUses` | `household` |
+
+## Migration and recovery implications
 
 - Lightweight migration is enabled explicitly on both persistent store descriptions.
-- The app does **not** silently delete production stores. On load failure, it logs the store URL, configuration, metadata, and Core Data error. In DEBUG only, logs explain that simulator/dev stores can be manually removed.
+- The app does **not** silently delete production stores. On load failure, it logs the store URL, configuration, metadata, and Core Data error. In DEBUG only, logs explain that simulator/dev stores can be manually removed and the recovery UI exposes a development reset action.
+- The production recovery screen does not expose destructive reset controls. Its user-visible diagnostics are limited to the store file name, configuration, Core Data error domain/code, and localized system message.
 - Existing single-member private households can be auto-migrated to a membership only when the member is unclaimed or already claimed by the same durable user.
 - Shared households are never auto-claimed from `UserDefaults`; invitees must create or explicitly claim a profile.
-- CloudKit schema must be deployed to Production before TestFlight/App Store validation because TestFlight uses the Production CloudKit schema.
+
+## Before TestFlight upload checklist
+
+1. Confirm the Release build configuration does not define `DEBUG`, and verify the DEBUG-only store reset UI is absent in an archive/Release build.
+2. Confirm `StoreRecoveryView.swift` and `PendingInviteStore.swift` are part of the app target via the Xcode file-system-synchronized `Livin Log` target folder.
+3. Deploy the exact CloudKit schema listed above from Development to Production, including the optional BookEntry OpenLibrary metadata fields.
+4. Archive with the corrected `Livin Log/LivinLog.entitlements` path and validate signing capabilities for iCloud/CloudKit.
+5. Install the archived build on a device or TestFlight internal tester before external release and complete the ordered manual checklist below.
+
+## Final ordered manual testing checklist
+
+1. App Store build update to new TestFlight build.
+2. Fresh install owner flow.
+3. Delete/reinstall same Apple ID recovery.
+4. New phone recovery.
+5. Owner invite link generation.
+6. Signed-out invite link resume.
+7. Signed-out manual invite resume.
+8. Invitee joins with second Apple ID.
+9. Owner and invitee book creation.
+10. Cross-member book edit blocked.
+11. Invalid invite clear.
+12. Store recovery screen test.
 
 ## TestFlight/App Store style checklist
 
@@ -49,9 +95,6 @@ All new fields are optional to preserve lightweight migration compatibility with
 10. Block another member write: choose another member and verify Add/Save is disabled or shows the visible authorization error.
 11. iCloud disabled/unavailable: verify app routes to the iCloud-required state instead of creating disconnected local identities.
 12. Migration failure path: use an intentionally incompatible dev store and verify logs show store URL/configuration/metadata without deleting data.
-
-## Additional P0/P1 reliability checklist additions
-
 13. Store load failure recovery screen path: install/run with an intentionally incompatible development store and verify the app shows the Data Recovery screen instead of crashing; confirm diagnostics include store file, configuration, and error domain/code.
 14. Signed-out invite link resume flow: fresh install, open an invite link while signed out, verify the invite is captured, sign in with Apple, and verify the invite acceptance sheet is re-presented automatically.
 15. Signed-out manual invite resume flow: fresh install, manually enter the invite token/code while signed out, verify the app asks for Sign in with Apple, sign in, and verify the saved invite resumes.

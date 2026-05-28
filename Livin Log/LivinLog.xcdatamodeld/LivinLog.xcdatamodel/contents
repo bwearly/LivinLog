@@ -155,6 +155,9 @@
         <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
         <attribute name="finishedAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
         <attribute name="coverURL" optional="YES" attributeType="String" />
+        <attribute name="coverID" optional="YES" attributeType="Integer 64" usesScalarValueType="NO" />
+        <attribute name="isbn" optional="YES" attributeType="String" />
+        <attribute name="firstPublishYear" optional="YES" attributeType="Integer 16" usesScalarValueType="NO" />
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="bookEntries" inverseEntity="Household" />
         <relationship name="ownerMember" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="HouseholdMember" inverseName="bookEntries" inverseEntity="HouseholdMember" />
         <relationship name="ownerAppUser" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="AppUser" inverseName="bookEntries" inverseEntity="AppUser" />
