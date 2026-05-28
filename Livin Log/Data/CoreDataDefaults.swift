@@ -62,16 +62,20 @@ extension Viewing {
 extension AppUser {
     public override nonisolated func awakeFromInsert() {
         super.awakeFromInsert()
+        let now = Date()
         setPrimitiveValue(UUID(), forKey: "id")
-        setPrimitiveValue(Date(), forKey: "createdAt")
+        setPrimitiveValue(now, forKey: "createdAt")
+        setPrimitiveValue(now, forKey: "lastSeenAt")
     }
 }
 
 extension HouseholdMembership {
     public override nonisolated func awakeFromInsert() {
         super.awakeFromInsert()
+        let now = Date()
         setPrimitiveValue(UUID(), forKey: "id")
-        setPrimitiveValue(Date(), forKey: "createdAt")
+        setPrimitiveValue(now, forKey: "createdAt")
+        setPrimitiveValue(now, forKey: "joinedAt")
         setPrimitiveValue("active", forKey: "status")
         setPrimitiveValue("member", forKey: "role")
     }
@@ -82,5 +86,15 @@ extension BookEntry {
         super.awakeFromInsert()
         setPrimitiveValue(UUID(), forKey: "id")
         setPrimitiveValue(Date(), forKey: "createdAt")
+    }
+}
+
+
+extension Invite {
+    public override nonisolated func awakeFromInsert() {
+        super.awakeFromInsert()
+        setPrimitiveValue(UUID(), forKey: "id")
+        setPrimitiveValue(Date(), forKey: "createdAt")
+        setPrimitiveValue("active", forKey: "status")
     }
 }

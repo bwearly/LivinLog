@@ -150,6 +150,9 @@ struct ManageMembersView: View {
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
 
         let member = HouseholdMember(context: context)
+        if let store = scopedHousehold.objectID.persistentStore {
+            context.assign(member, to: store)
+        }
         member.id = UUID()
         member.displayName = trimmed
         member.createdAt = Date()

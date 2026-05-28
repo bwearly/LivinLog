@@ -2,7 +2,9 @@ import SwiftUI
 import CloudKit
 
 struct PasteInviteLinkSheet: View {
+    let isSignedIn: Bool
     let onInviteReady: (PendingShareInvite) -> Void
+    let onInviteDeferred: (URL) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
@@ -15,11 +17,11 @@ struct PasteInviteLinkSheet: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Paste your iCloud share link to join a household.")
+                Text("Paste an iCloud share link or enter the share code from the link to join a household.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
-                TextField("https://icloud.com/share/...", text: $inviteURLText)
+                TextField("Invite link or code", text: $inviteURLText)
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
                     .autocorrectionDisabled()
@@ -60,7 +62,16 @@ struct PasteInviteLinkSheet: View {
         errorMessage = nil
 
         guard let cleanedURL = normalizedInviteURL(from: inviteURLText) else {
-            errorMessage = "Enter a valid iCloud share link."
+            errorMessage = "Enter a valid iCloud share link or share code."
+            return
+        }
+
+        PendingInviteStore.save(cleanedURL, reason: "manual invite entry")
+
+        guard isSignedIn else {
+            print("🔗 [PendingInvite] sign-in required before manual invite can be accepted")
+            onInviteDeferred(cleanedURL)
+            dismiss()
             return
         }
 
@@ -79,7 +90,7 @@ struct PasteInviteLinkSheet: View {
                     return
                 }
 
-                onInviteReady(PendingShareInvite(metadata: metadata))
+                onInviteReady(PendingShareInvite(metadata: metadata, sourceURL: cleanedURL))
                 dismiss()
             }
         }
@@ -89,7 +100,22 @@ struct PasteInviteLinkSheet: View {
         let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        guard var components = URLComponents(string: trimmed) else { return nil }
+        let candidate: String
+        if trimmed.localizedCaseInsensitiveContains("icloud.com") {
+            candidate = trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://")
+                ? trimmed
+                : "https://\(trimmed)"
+        } else {
+            let token = trimmed
+                .replacingOccurrences(of: "https://www.icloud.com/share/", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: "https://icloud.com/share/", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: "share/", with: "", options: .caseInsensitive)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard !token.isEmpty, token.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return nil }
+            candidate = "https://www.icloud.com/share/\(token)"
+        }
+
+        guard var components = URLComponents(string: candidate) else { return nil }
         components.fragment = nil
 
         guard let url = components.url else { return nil }

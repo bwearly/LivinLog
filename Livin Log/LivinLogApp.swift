@@ -28,8 +28,12 @@ struct LivinLogApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(container: persistenceController.container)
-                .environment(\.managedObjectContext, persistenceController.container.viewContext)
+            if let loadError = persistenceController.loadError {
+                StoreRecoveryView(error: loadError)
+            } else {
+                RootView(container: persistenceController.container)
+                    .environment(\.managedObjectContext, persistenceController.container.viewContext)
+            }
         }
     }
 }

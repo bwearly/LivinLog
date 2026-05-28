@@ -19,6 +19,7 @@ struct AddEditBookView: View {
     @State private var finishedAt = Date()
     @State private var coverURLString = ""
     @State private var isLookingUpCover = false
+    @State private var errorMessage: String?
 
     init(household: Household, selectedMember: HouseholdMember?, editingBook: BookEntry? = nil) {
         self.household = household
@@ -68,6 +69,14 @@ struct AddEditBookView: View {
                 TextEditor(text: $notes)
                     .frame(minHeight: 120)
             }
+
+            if let errorMessage {
+                Section {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+            }
         }
         .navigationTitle(editingBook == nil ? "Add Book" : "Edit Book")
         .toolbar {
@@ -116,32 +125,72 @@ struct AddEditBookView: View {
     }
 
     private func saveBook() {
-        guard canEdit,
-              let selectedMember,
-              let appUser = appState.appUser,
-              let rating = parsedRating,
-              let scopedHousehold = activeHouseholdInContext(household, context: context) else {
+        errorMessage = nil
+
+        guard let selectedMember else {
+            errorMessage = "Choose your member profile before saving a book."
+            return
+        }
+        guard let appUser = appState.appUser else {
+            errorMessage = "Sign in is required before saving a book."
+            return
+        }
+        guard let rating = parsedRating else {
+            errorMessage = "Enter a rating between 0 and 10."
+            return
+        }
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context),
+              let scopedMember = try? context.existingObject(with: selectedMember.objectID) as? HouseholdMember else {
+            errorMessage = "Could not resolve your household member profile."
+            return
+        }
+        guard scopedMember.household?.objectID == scopedHousehold.objectID else {
+            errorMessage = "That member profile does not belong to this household."
+            return
+        }
+        guard IdentityStore.canAct(as: scopedMember, appUser: appUser, context: context) else {
+            errorMessage = "You can add books only to your own claimed member profile."
+            print("🚫 [BookSave] denied: unresolved actor/member or attempted write to another member")
             return
         }
 
-        let entry = editingBook ?? BookEntry(context: context)
-        if let store = scopedHousehold.objectID.persistentStore, entry.isInserted {
-            context.assign(entry, to: store)
+        if let editingBook,
+           let existingOwner = editingBook.ownerMember,
+           existingOwner.objectID != scopedMember.objectID {
+            errorMessage = "You can edit books only on your own claimed member profile."
+            print("🚫 [BookSave] denied: attempted edit of another member's book")
+            return
         }
 
-        entry.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        entry.author = author.trimmingCharacters(in: .whitespacesAndNewlines)
-        entry.rating = rating
-        entry.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        entry.spiceLevel = Int16(spiceLevel)
-        entry.bookLength = bookLength.trimmingCharacters(in: .whitespacesAndNewlines)
-        entry.finishedAt = finishedAt
-        entry.setValue(coverURLString.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "coverURL")
-        entry.household = scopedHousehold
-        entry.ownerMember = selectedMember
-        entry.ownerAppUser = appUser
+        do {
+            let scopedUser = try IdentityStore.storeScopedAppUser(matching: appUser, household: scopedHousehold, context: context)
+            let entry = editingBook ?? BookEntry(context: context)
+            if let store = scopedHousehold.objectID.persistentStore, entry.isInserted {
+                context.assign(entry, to: store)
+            }
 
-        try? context.save()
-        dismiss()
+            entry.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            entry.author = author.trimmingCharacters(in: .whitespacesAndNewlines)
+            entry.rating = rating
+            entry.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+            entry.spiceLevel = Int16(spiceLevel)
+            entry.bookLength = bookLength.trimmingCharacters(in: .whitespacesAndNewlines)
+            entry.finishedAt = finishedAt
+            entry.setValue(coverURLString.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "coverURL")
+            entry.household = scopedHousehold
+            entry.ownerMember = scopedMember
+            entry.ownerAppUser = scopedUser
+            entry.setValue(scopedHousehold.id, forKey: "householdId")
+            entry.setValue(scopedMember.id, forKey: "ownerMemberId")
+            entry.setValue(IdentityStore.durableUserId(for: scopedUser), forKey: "ownerAppUserId")
+
+            try context.save()
+            print("✅ [BookSave] saved title=\(entry.title ?? "Untitled") household=\(scopedHousehold.name ?? "Household") member=\(scopedMember.displayName ?? "Member")")
+            dismiss()
+        } catch {
+            context.rollback()
+            errorMessage = "Could not save book: \(error.localizedDescription)"
+            print("❌ [BookSave] save failed: \(error)")
+        }
     }
 }

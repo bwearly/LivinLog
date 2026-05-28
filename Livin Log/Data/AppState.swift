@@ -181,9 +181,14 @@ final class AppState: ObservableObject {
         let trimmedMemberName = memberName.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let household = Household(context: context)
+        household.id = household.id ?? UUID()
+        household.createdAt = household.createdAt ?? Date()
         household.name = trimmedHouseholdName.isEmpty ? "Our Household" : trimmedHouseholdName
+        household.setValue(IdentityStore.durableUserId(for: appUser), forKey: "createdByAppUserId")
 
         let createdMember = HouseholdMember(context: context)
+        createdMember.id = createdMember.id ?? UUID()
+        createdMember.createdAt = createdMember.createdAt ?? Date()
         createdMember.displayName = trimmedMemberName
         createdMember.household = household
 
@@ -249,6 +254,7 @@ final class AppState: ObservableObject {
         }
 
         let member = HouseholdMember(context: context)
+        if let store = scopedHousehold.objectID.persistentStore { context.assign(member, to: store) }
         member.id = UUID()
         member.createdAt = Date()
         member.displayName = name
@@ -392,6 +398,15 @@ final class AppState: ObservableObject {
     }
 
     private func applyMembership(_ membership: HouseholdMembership, reason: String) {
+        IdentityStore.backfillMembershipIfPossible(membership)
+        if container.viewContext.hasChanges {
+            do {
+                try container.viewContext.save()
+            } catch {
+                debugLog("failed to backfill selected membership: \(error.localizedDescription)")
+            }
+        }
+
         guard let membershipHousehold = membership.household,
               let membershipMember = membership.memberProfile else {
             return
@@ -436,6 +451,11 @@ final class AppState: ObservableObject {
         let context = container.viewContext
         let (_, selectedMember) = SelectionStore.load(context: context)
 
+        if isSharedHousehold(household) {
+            debugLog("refusing UserDefaults-based auto-migration for shared household; user must explicitly create or claim a member")
+            return nil
+        }
+
         if let selectedMember,
            selectedMember.household?.objectID == household.objectID,
            let role = roleForAutoMigration(in: household) {
@@ -448,8 +468,6 @@ final class AppState: ObservableObject {
             )
         }
 
-        if isSharedHousehold(household) { return nil }
-
         let request = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
         request.predicate = NSPredicate(format: "household == %@", household)
         request.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
@@ -458,6 +476,14 @@ final class AppState: ObservableObject {
         guard members.count == 1, let onlyMember = members.first else { return nil }
 
         let role = roleForAutoMigration(in: household) ?? "leader"
+        if let claimed = onlyMember.value(forKey: "claimedByAppUserId") as? String,
+           let durableId = IdentityStore.durableUserId(for: appUser),
+           !claimed.isEmpty,
+           claimed != durableId {
+            debugLog("refusing auto-migration because the only member is claimed by a different app user")
+            return nil
+        }
+
         return try? IdentityStore.ensureMembership(
             appUser: appUser,
             household: household,

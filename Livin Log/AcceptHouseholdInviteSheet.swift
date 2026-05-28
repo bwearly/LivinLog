@@ -5,13 +5,21 @@ import CoreData
 struct PendingShareInvite: Identifiable {
     let id = UUID()
     let metadata: CKShare.Metadata
+    let sourceURL: URL?
+
+    init(metadata: CKShare.Metadata, sourceURL: URL? = nil) {
+        self.metadata = metadata
+        self.sourceURL = sourceURL
+    }
 }
 
 struct AcceptHouseholdInviteSheet: View {
     let pendingInvite: PendingShareInvite
     let onAccepted: @MainActor () async -> Void
+    let onCancelInvite: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
     @State private var isAccepting = false
     @State private var errorMessage: String?
 
@@ -48,6 +56,13 @@ struct AcceptHouseholdInviteSheet: View {
                         .multilineTextAlignment(.center)
                 }
 
+                if appState.appUser == nil {
+                    Text("Sign in with Apple before accepting this household invite so your profile can be tied to your durable identity.")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                }
+
                 if let errorMessage {
                     Text(errorMessage)
                         .font(.footnote)
@@ -56,7 +71,14 @@ struct AcceptHouseholdInviteSheet: View {
                 }
 
                 HStack(spacing: 12) {
-                    Button("Not Now") {
+                    Button("Keep for Later") {
+                        dismiss()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isAccepting)
+
+                    Button("Cancel Invite", role: .destructive) {
+                        onCancelInvite()
                         dismiss()
                     }
                     .buttonStyle(.bordered)
@@ -66,7 +88,7 @@ struct AcceptHouseholdInviteSheet: View {
                         acceptInvite()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isAccepting)
+                    .disabled(isAccepting || appState.appUser == nil)
                 }
 
                 if isAccepting {
@@ -82,6 +104,11 @@ struct AcceptHouseholdInviteSheet: View {
     }
 
     private func acceptInvite() {
+        guard appState.appUser != nil else {
+            errorMessage = "Sign in with Apple before accepting this household invite."
+            return
+        }
+
         isAccepting = true
         errorMessage = nil
 
@@ -98,6 +125,11 @@ struct AcceptHouseholdInviteSheet: View {
                 }
 
                 isAccepting = false
+                if let sourceURL = pendingInvite.sourceURL {
+                    PendingInviteStore.clear(reason: "accepted invite \(sourceURL.absoluteString)")
+                } else {
+                    PendingInviteStore.clear(reason: "accepted invite")
+                }
                 dismiss()
                 NotificationCenter.default.post(name: .didAcceptCloudKitShare, object: nil)
                 print("✅ Invite accepted; posted didAcceptCloudKitShare; rerunning app state")

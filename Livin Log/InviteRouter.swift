@@ -32,7 +32,7 @@ final class InviteRouter {
                 }
 
                 print("✅ Fetched share metadata for \(normalized.absoluteString)")
-                continuation.resume(returning: PendingShareInvite(metadata: metadata))
+                continuation.resume(returning: PendingShareInvite(metadata: metadata, sourceURL: normalized))
             }
         }
     }
