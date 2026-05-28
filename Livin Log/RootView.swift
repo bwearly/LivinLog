@@ -24,29 +24,7 @@ struct RootView: View {
     }
 
     var body: some View {
-        Group {
-            switch appState.route {
-            case .loading:
-                ProgressView("Setting up Livin Log…")
-                    .task {
-                        guard !isPresentingPendingInvite else { return }
-                        await appState.start(callSite: "RootView.loading.task")
-                    }
-
-            case .iCloudRequired:
-                ICloudRequiredView {
-                    Task { await appState.start(callSite: "RootView.iCloudRequired.retry") }
-                }
-
-            case .onboarding:
-                OnboardingView(onFinished: {
-                    Task { await appState.start(callSite: "RootView.onboarding.finished") }
-                })
-
-            case .main:
-                HomeDashboardView(household: $appState.household, member: $appState.member)
-            }
-        }
+        rootContent
         .environmentObject(appState)
         .task {
             guard !isPresentingPendingInvite else { return }
@@ -114,8 +92,10 @@ struct RootView: View {
                     onCancelInvite: {
                         PendingInviteStore.clear(reason: "cancelled from root accept sheet")
                         activeSheet = nil
-                    }
+                    },
+                    isSignedIn: appState.appUser != nil
                 )
+                .environmentObject(appState)
             case .membershipChooser:
                 MembershipPickerSheet(
                     memberships: appState.candidateMemberships,
@@ -171,7 +151,7 @@ struct RootView: View {
         case .loading:
             ProgressView("Setting up Livin Log…")
                 .task {
-                    guard pendingInvite == nil else { return }
+                    guard !isPresentingPendingInvite else { return }
                     await appState.start(callSite: "RootView.loading.task")
                 }
 
@@ -179,6 +159,7 @@ struct RootView: View {
             ICloudRequiredView {
                 Task { await appState.start(callSite: "RootView.iCloudRequired.retry") }
             }
+            .environmentObject(appState)
 
         case .onboarding:
             OnboardingView(onFinished: {
