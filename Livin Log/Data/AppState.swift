@@ -102,6 +102,7 @@ final class AppState: ObservableObject {
         }
 
         let memberships = IdentityStore.memberships(for: resolvedAppUser, context: container.viewContext)
+            .filter { !SharedHouseholdLeaveStore.contains($0) }
         candidateMemberships = memberships
 
         if let pendingSharedHousehold = preferredSharedHouseholdNeedingClaim(from: memberships) {
@@ -560,12 +561,15 @@ final class AppState: ObservableObject {
         let context = container.viewContext
 
         let request = Household.fetchRequest()
-        request.fetchLimit = 1
+        request.fetchLimit = 12
         request.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
         request.affectedStores = [store]
 
         do {
-            return try context.fetch(request).first as? Household
+            let households = try context.fetch(request) as? [Household] ?? []
+            return households.first { household in
+                store != PersistenceController.shared.sharedStore || !SharedHouseholdLeaveStore.contains(household)
+            }
         } catch {
             print("❌ fetchMostRecentHousehold failed: \(error)")
             return nil

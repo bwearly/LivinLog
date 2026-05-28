@@ -53,6 +53,7 @@ struct SettingsView: View {
             joinHouseholdSection
             notificationsSection
             membersSection
+            profilesSection
 
             if hasSharingIssue {
                 sharingIssueSection
@@ -284,6 +285,20 @@ struct SettingsView: View {
         }
     }
 
+    private var profilesSection: some View {
+        Section("Profiles & Households") {
+            NavigationLink {
+                HouseholdProfileManagementView(memberships: currentMemberships())
+                    .environmentObject(appState)
+            } label: {
+                Label("Manage Duplicate Profiles", systemImage: "person.2.badge.gearshape")
+            }
+            Text("Review duplicate-looking households/profiles with creation dates, roles, and safe cleanup actions.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private var hasSharingIssue: Bool {
         if let shareErrorText, !shareErrorText.isEmpty { return true }
         if !persistedLastShareError.isEmpty { return true }
@@ -467,6 +482,12 @@ struct SettingsView: View {
         }
     }
 
+    private func currentMemberships() -> [HouseholdMembership] {
+        guard let appUser = appState.appUser else { return [] }
+        return IdentityStore.memberships(for: appUser, context: context)
+            .filter { !SharedHouseholdLeaveStore.contains($0) }
+    }
+
     private func isAuthorized(_ member: HouseholdMember) -> Bool {
         IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
     }
@@ -536,6 +557,7 @@ struct SettingsView: View {
             }
 
             SelectionStore.clearAll()
+            SharedHouseholdLeaveStore.clearAll()
             household = nil
             member = nil
             print("🧨 Delete All: cleared selection + deleted local stores; restarting")

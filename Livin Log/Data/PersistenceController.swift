@@ -201,6 +201,7 @@ struct PersistenceController {
             }
         }
         SelectionStore.clearAll()
+        SharedHouseholdLeaveStore.clearAll()
     }
     #endif
 }

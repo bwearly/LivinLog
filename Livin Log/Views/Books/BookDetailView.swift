@@ -11,6 +11,7 @@ struct BookDetailView: View {
 
     @State private var showingEdit = false
     @State private var showingDeleteConfirm = false
+    @State private var deleteErrorMessage: String?
 
     private var ownerMember: HouseholdMember? {
         book.ownerMember
@@ -22,21 +23,13 @@ struct BookDetailView: View {
 
     var body: some View {
         List {
-            if let url = coverURL {
-                Section {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().scaledToFit()
-                        default:
-                            RoundedRectangle(cornerRadius: 12).fill(Color(.secondarySystemFill))
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 240)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            Section {
+                HStack {
+                    Spacer()
+                    BookCoverArtwork(urlString: book.value(forKey: "coverURL") as? String ?? "", size: CGSize(width: 150, height: 220))
+                    Spacer()
                 }
+                .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
             }
 
             Section("Book") {
@@ -51,6 +44,14 @@ struct BookDetailView: View {
 
                 if let finishedAt = book.finishedAt {
                     LabeledContent("Finished", value: finishedAt.formatted(date: .abbreviated, time: .omitted))
+                }
+
+                if let firstPublishYear = (book.value(forKey: "firstPublishYear") as? NSNumber)?.intValue {
+                    LabeledContent("First Published", value: String(firstPublishYear))
+                }
+
+                if let isbn = book.value(forKey: "isbn") as? String, !isbn.isEmpty {
+                    LabeledContent("ISBN", value: isbn)
                 }
 
                 if let createdAt = book.createdAt {
@@ -98,13 +99,28 @@ struct BookDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+        .alert("Could Not Delete Book", isPresented: Binding(get: { deleteErrorMessage != nil }, set: { if !$0 { deleteErrorMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(deleteErrorMessage ?? "The book could not be deleted.")
+        }
     }
 
     private func deleteBook() {
-        guard canEdit else { return }
-        context.delete(book)
-        try? context.save()
-        dismiss()
+        guard canEdit else {
+            deleteErrorMessage = "You can delete only books on your own claimed member profile."
+            return
+        }
+
+        do {
+            context.delete(book)
+            try context.save()
+            dismiss()
+        } catch {
+            context.rollback()
+            deleteErrorMessage = "Could not delete book: \(error.localizedDescription)"
+            print("❌ [BookDelete] delete failed: \(error)")
+        }
     }
 
     private var coverURL: URL? {

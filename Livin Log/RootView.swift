@@ -18,6 +18,8 @@ struct RootView: View {
     @State private var showingCreateMemberProfileSheet = false
     @State private var showingMembershipChooser = false
     @State private var pendingInviteError: String?
+    @State private var isResumingPendingInvite = false
+    @State private var lastFailedPendingInviteURL: URL?
 
     init(container: NSPersistentCloudKitContainer) {
         _appState = StateObject(wrappedValue: AppState(container: container))
@@ -91,12 +93,21 @@ struct RootView: View {
                 resumePendingInviteIfPossible(reason: "appUser resolved")
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .didCapturePendingInvite)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .didCapturePendingInvite)) { note in
+            if let capturedURL = note.object as? URL, capturedURL != lastFailedPendingInviteURL {
+                lastFailedPendingInviteURL = nil
+            }
             if appState.appUser == nil {
                 print("🔗 [PendingInvite] pending invite captured; sign-in required")
             } else {
                 resumePendingInviteIfPossible(reason: "pending invite captured")
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .didClearPendingInvite)) { _ in
+            pendingInvite = nil
+            pendingInviteError = nil
+            lastFailedPendingInviteURL = nil
+            isResumingPendingInvite = false
         }
         .sheet(item: $pendingInvite) { pendingInvite in
             AcceptHouseholdInviteSheet(
@@ -148,6 +159,7 @@ struct RootView: View {
         guard lastProcessedShareURL != url else { return }
         lastProcessedShareURL = url
         PendingInviteStore.save(url, reason: "incoming deep link")
+        lastFailedPendingInviteURL = nil
 
         guard appState.appUser != nil else {
             print("🔗 [PendingInvite] sign-in required for incoming invite link")
@@ -158,8 +170,10 @@ struct RootView: View {
         Task { @MainActor in
             if let invite = await inviteRouter.pendingInvite(from: url) {
                 print("🔗 [PendingInvite] presenting invite for signed-in user")
+                lastFailedPendingInviteURL = nil
                 pendingInvite = invite
             } else {
+                lastFailedPendingInviteURL = url
                 pendingInviteError = "This invite link could not be loaded. It may be invalid, expired, unavailable, or from a different iCloud account."
             }
         }
@@ -168,15 +182,21 @@ struct RootView: View {
     private func resumePendingInviteIfPossible(reason: String) {
         guard appState.appUser != nil else { return }
         guard pendingInvite == nil else { return }
+        guard !isResumingPendingInvite else { return }
         guard let url = PendingInviteStore.load() else { return }
+        guard lastFailedPendingInviteURL != url else { return }
 
+        isResumingPendingInvite = true
         print("🔗 [PendingInvite] resuming pending invite reason=\(reason) url=\(url.absoluteString)")
         Task { @MainActor in
+            defer { isResumingPendingInvite = false }
             if let invite = await inviteRouter.pendingInvite(from: url) {
                 print("🔗 [PendingInvite] pending invite resumed")
+                lastFailedPendingInviteURL = nil
                 pendingInvite = invite
             } else {
                 print("🔗 [PendingInvite] pending invite resume failed")
+                lastFailedPendingInviteURL = url
                 pendingInviteError = "This saved invite could not be loaded. It may be invalid, expired, unavailable, or from a different iCloud account."
             }
         }
@@ -189,20 +209,11 @@ struct MembershipPickerSheet: View {
 
     var body: some View {
         NavigationStack {
-            List(memberships, id: \.objectID) { membership in
-                Button {
-                    onPicked(membership)
-                } label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(membership.household?.name ?? "Household")
-                            .font(.headline)
-                        Text(membership.memberProfile?.displayName ?? "Member")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .navigationTitle("Choose Profile")
-            .navigationBarTitleDisplayMode(.inline)
+            HouseholdProfileManagementView(
+                memberships: memberships,
+                showsPickerTitle: true,
+                onPicked: onPicked
+            )
         }
     }
 }
