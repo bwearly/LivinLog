@@ -186,6 +186,9 @@ struct TVShowDetailView: View {
         tvShowInContext.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
 
         do {
+            let objectsToValidate: [(String, NSManagedObject?)] = [("tvShow", tvShowInContext), ("household", scopedHousehold)]
+            context.debugLogStoreSafeSave(entityName: "TVShow", household: scopedHousehold, member: member, objects: objectsToValidate)
+            try context.validateSamePersistentStore(objectsToValidate)
             try context.save()
             print("ℹ️ TVShow inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
@@ -231,7 +234,13 @@ struct TVShowDetailView: View {
         await MainActor.run {
             tvShow.posterURL = fetched.absoluteString
             posterURL = fetched
-            try? context.save()
+            do {
+                try context.validateSamePersistentStore([("tvShow", tvShow), ("household", tvShow.household)])
+                try context.save()
+            } catch {
+                context.rollback()
+                print("❌ [TVShowPoster] save blocked:", error)
+            }
         }
     }
 
@@ -241,7 +250,13 @@ struct TVShowDetailView: View {
         await MainActor.run {
             tvShow.posterURL = fetched?.absoluteString
             posterURL = fetched
-            try? context.save()
+            do {
+                try context.validateSamePersistentStore([("tvShow", tvShow), ("household", tvShow.household)])
+                try context.save()
+            } catch {
+                context.rollback()
+                print("❌ [TVShowPoster] save blocked:", error)
+            }
         }
     }
 }

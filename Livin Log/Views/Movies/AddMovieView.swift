@@ -29,6 +29,7 @@ struct AddMovieView: View {
 
     // Feedback drafts
     @State private var feedbackByMemberID: [NSManagedObjectID: MemberFeedbackDraft] = [:]
+    @State private var saveError: String?
 
     private let persistentContainer = PersistenceController.shared.container
 
@@ -164,6 +165,11 @@ struct AddMovieView: View {
         .navigationDestination(isPresented: $showGenrePicker) {
             GenrePickerView(title: "Select Genres", allGenres: allGenres, selected: $selectedGenres)
         }
+        .alert("Could Not Save Movie", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(saveError ?? "The movie could not be saved.")
+        }
         .onAppear {
             seedFeedbackDraftsIfNeeded()
         }
@@ -220,9 +226,16 @@ struct AddMovieView: View {
     // MARK: - Save
 
     private func saveMovie() {
+        saveError = nil
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard actingMember != nil else { return }
-        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+        guard actingMember != nil else {
+            saveError = "Choose your member profile before saving a movie."
+            return
+        }
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
+            saveError = "Could not resolve the active household."
+            return
+        }
 
         let movie = Movie(context: context)
         if let store = scopedHousehold.objectID.persistentStore {
@@ -261,7 +274,9 @@ struct AddMovieView: View {
             if isDraftEmpty(draft) { continue }
 
             guard let memberInContext = (try? context.existingObject(with: m.objectID)) as? HouseholdMember else {
-                continue
+                saveError = "Could not resolve the selected member profile."
+                context.rollback()
+                return
             }
 
             let fb = MovieFeedback(context: context)
@@ -295,6 +310,17 @@ struct AddMovieView: View {
         v.household = scopedHousehold
 
         do {
+            var objectsToValidate: [(String, NSManagedObject?)] = [
+                ("movie", movie),
+                ("household", scopedHousehold),
+                ("viewing", v)
+            ]
+            for (index, feedback) in createdFeedbacks.enumerated() {
+                objectsToValidate.append(("feedback[\(index)]", feedback))
+                objectsToValidate.append(("feedback[\(index)].member", feedback.member))
+            }
+            context.debugLogStoreSafeSave(entityName: "Movie", household: scopedHousehold, member: actingMember, objects: objectsToValidate)
+            try context.validateSamePersistentStore(objectsToValidate)
             try context.save()
             print("ℹ️ Movie inherits household share via parent household relationship (no per-object share mutation)")
             if !createdFeedbacks.isEmpty {
@@ -319,13 +345,20 @@ struct AddMovieView: View {
 
                 await MainActor.run {
                     movie.posterURL = httpsURL?.absoluteString
-                    try? context.save()
+                    do {
+                        try context.validateSamePersistentStore([("movie", movie), ("household", movie.household)])
+                        try context.save()
+                    } catch {
+                        context.rollback()
+                        print("❌ [MoviePoster] save blocked:", error)
+                    }
                 }
             }
 
             dismiss()
         } catch {
             context.rollback()
+            saveError = "Could not save movie: \(error.localizedDescription)"
             print("Save movie failed:", error)
         }
 

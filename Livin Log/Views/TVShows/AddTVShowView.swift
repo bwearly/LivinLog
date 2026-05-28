@@ -24,6 +24,7 @@ struct AddTVShowView: View {
     @State private var rewatch: Bool = false
 
     @State private var isSaving = false
+    @State private var saveError: String?
 
     private let persistentContainer = PersistenceController.shared.container
     private var canWrite: Bool {
@@ -72,23 +73,34 @@ struct AddTVShowView: View {
                 .disabled(isSaving || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !canWrite)
             }
         }
+        .alert("Could Not Save TV Show", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(saveError ?? "The TV show could not be saved.")
+        }
     }
 
     @MainActor
     private func saveTVShow() async {
         guard !isSaving else { return }
-        guard canWrite else { return }
+        saveError = nil
+        guard canWrite else {
+            saveError = "You can add TV shows only from your own claimed member profile."
+            return
+        }
         isSaving = true
         defer { isSaving = false }
 
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
+            saveError = "Could not resolve the active household."
+            return
+        }
 
         // Ensure household has an id before linking
         if scopedHousehold.id == nil {
             scopedHousehold.id = UUID()
-            try? context.save()
         }
 
         let tvShow = TVShow(context: context)
@@ -126,6 +138,9 @@ struct AddTVShowView: View {
         tvShow.posterURL = fetched?.absoluteString
 
         do {
+            let objectsToValidate: [(String, NSManagedObject?)] = [("tvShow", tvShow), ("household", scopedHousehold)]
+            context.debugLogStoreSafeSave(entityName: "TVShow", household: scopedHousehold, member: member, objects: objectsToValidate)
+            try context.validateSamePersistentStore(objectsToValidate)
             try context.save()
             print("ℹ️ TVShow inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
@@ -135,6 +150,7 @@ struct AddTVShowView: View {
             dismiss()
         } catch {
             context.rollback()
+            saveError = "Could not save TV show: \(error.localizedDescription)"
             print("Save TV show failed:", error)
         }
     }

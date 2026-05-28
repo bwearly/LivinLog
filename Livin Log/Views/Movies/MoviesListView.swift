@@ -410,8 +410,16 @@ struct MoviesListView: View {
     private func deleteMoviesFromFiltered(offsets: IndexSet) {
         guard canWrite else { return }
         let toDelete = offsets.map { filteredMovies[$0] }
-        toDelete.forEach(context.delete)
-        save()
+        do {
+            for movie in toDelete {
+                try context.validateSamePersistentStore([("movie", movie), ("household", movie.household)])
+                context.delete(movie)
+            }
+            try context.save()
+        } catch {
+            context.rollback()
+            print("Delete movie failed:", error)
+        }
     }
 
     private func save() {

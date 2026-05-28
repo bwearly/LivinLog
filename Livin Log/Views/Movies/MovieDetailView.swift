@@ -499,6 +499,8 @@ struct MovieDetailView: View {
         movieInContext.notes = trimmed.isEmpty ? nil : trimmed
 
         do {
+            context.debugLogStoreSafeSave(entityName: "Movie", household: scopedHousehold, member: nil, objects: [("movie", movieInContext), ("household", scopedHousehold)])
+            try context.validateSamePersistentStore([("movie", movieInContext), ("household", scopedHousehold)])
             try context.save()
             seedMovieEditorFieldsFromMovie()
             print("ℹ️ Movie inherits household share via parent household relationship (no per-object share mutation)")
@@ -518,7 +520,13 @@ struct MovieDetailView: View {
             await MainActor.run {
                 movieInContext.posterURL = fetched?.absoluteString
                 posterURL = fetched
-                try? context.save()
+                do {
+                    try context.validateSamePersistentStore([("movie", movieInContext), ("household", movieInContext.household)])
+                    try context.save()
+                } catch {
+                    context.rollback()
+                    print("❌ [MoviePoster] save blocked:", error)
+                }
             }
         }
     }
@@ -529,10 +537,15 @@ struct MovieDetailView: View {
         guard let selectedMember else { return }
         guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
         guard let memberInContext = (try? context.existingObject(with: selectedMember.objectID)) as? HouseholdMember else { return }
-        let fb = MovieFeedbackStore.getOrCreate(movie: movieInContext, member: memberInContext, context: context)
-        editRating = fb.rating
-        editSlept = fb.slept
-        editNotes = fb.notes ?? ""
+        do {
+            let fb = try MovieFeedbackStore.getOrCreate(movie: movieInContext, member: memberInContext, context: context)
+            editRating = fb.rating
+            editSlept = fb.slept
+            editNotes = fb.notes ?? ""
+        } catch {
+            context.rollback()
+            print("❌ [MovieFeedback] load failed:", error)
+        }
     }
 
     private func saveSelectedMemberFeedback() {
@@ -542,7 +555,14 @@ struct MovieDetailView: View {
         guard let selectedMemberInContext = (try? context.existingObject(with: selectedMember.objectID)) as? HouseholdMember else { return }
         guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
 
-        let fb = MovieFeedbackStore.getOrCreate(movie: movieInContext, member: selectedMemberInContext, context: context)
+        let fb: MovieFeedback
+        do {
+            fb = try MovieFeedbackStore.getOrCreate(movie: movieInContext, member: selectedMemberInContext, context: context)
+        } catch {
+            context.rollback()
+            print("❌ [MovieFeedback] save blocked:", error)
+            return
+        }
         let store = storeForParent(movieInContext)
         assignIfInserted(fb, to: store, in: context)
 #if DEBUG
@@ -557,8 +577,16 @@ struct MovieDetailView: View {
         fb.notes = trimmed.isEmpty ? nil : trimmed
 
         fb.household = scopedHousehold
+        let objectsToValidate: [(String, NSManagedObject?)] = [
+            ("feedback", fb),
+            ("movie", movieInContext),
+            ("member", selectedMemberInContext),
+            ("household", scopedHousehold)
+        ]
+        context.debugLogStoreSafeSave(entityName: "MovieFeedback", household: scopedHousehold, member: selectedMemberInContext, objects: objectsToValidate)
 
         do {
+            try context.validateSamePersistentStore(objectsToValidate)
             try context.save()
             print("ℹ️ MovieFeedback inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
@@ -604,6 +632,8 @@ struct MovieDetailView: View {
             v.setValue(trimmed.isEmpty ? nil : trimmed, forKey: "notes")
 
             do {
+                context.debugLogStoreSafeSave(entityName: "Viewing", household: scopedHousehold, member: nil, objects: [("viewing", v), ("movie", movieInContext), ("household", scopedHousehold)])
+                try context.validateSamePersistentStore([("viewing", v), ("movie", movieInContext), ("household", scopedHousehold)])
                 try context.save()
 #if DEBUG
                 if let scopedHousehold = activeHouseholdInContext(household, context: context) {
@@ -633,13 +663,14 @@ struct MovieDetailView: View {
 
     private func deleteViewings(offsets: IndexSet) {
         guard canEdit else { return }
-        // Delete based on the same array SwiftUI rendered
-        for index in offsets {
-            guard viewings.indices.contains(index) else { continue }
-            context.delete(viewings[index])
-        }
-
         do {
+            // Delete based on the same array SwiftUI rendered
+            for index in offsets {
+                guard viewings.indices.contains(index) else { continue }
+                let viewing = viewings[index]
+                try context.validateSamePersistentStore([("viewing", viewing), ("movie", viewing.movie), ("household", viewing.household)])
+                context.delete(viewing)
+            }
             try context.save()
             reloadViewings()
             print("✅ Deleted viewings for movie:", movie.objectID, "count:", offsets.count)
@@ -651,8 +682,9 @@ struct MovieDetailView: View {
 
     private func deleteViewing(_ viewing: Viewing) {
         guard canEdit else { return }
-        context.delete(viewing)
         do {
+            try context.validateSamePersistentStore([("viewing", viewing), ("movie", viewing.movie), ("household", viewing.household)])
+            context.delete(viewing)
             try context.save()
             reloadViewings()
             print("✅ Deleted viewing:", viewing.objectID)
@@ -683,6 +715,8 @@ struct MovieDetailView: View {
 #endif
         viewingInContext.watchedOn = date
         do {
+            context.debugLogStoreSafeSave(entityName: "Viewing.edit", household: scopedHousehold, member: nil, objects: [("viewing", viewingInContext), ("household", viewingInContext.household)])
+            try context.validateSamePersistentStore([("viewing", viewingInContext), ("household", viewingInContext.household)])
             try context.save()
             print("ℹ️ Viewing inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
@@ -711,7 +745,13 @@ struct MovieDetailView: View {
         if let fetched {
             await MainActor.run {
                 movie.posterURL = fetched.absoluteString
-                try? context.save()
+                do {
+                    try context.validateSamePersistentStore([("movie", movie), ("household", movie.household)])
+                    try context.save()
+                } catch {
+                    context.rollback()
+                    print("❌ [MoviePoster] save blocked:", error)
+                }
             }
         }
     }
