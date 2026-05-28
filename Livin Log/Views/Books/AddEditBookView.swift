@@ -251,10 +251,17 @@ struct AddEditBookView: View {
 
         do {
             let scopedUser = try IdentityStore.storeScopedAppUser(matching: appUser, household: scopedHousehold, context: context)
-            let entry = editingBook ?? BookEntry(context: context)
-            if let store = scopedHousehold.objectID.persistentStore, entry.isInserted {
-                context.assign(entry, to: store)
+            let entry: BookEntry
+            if let editingBook {
+                guard let existing = try context.existingObject(with: editingBook.objectID) as? BookEntry else {
+                    errorMessage = "Could not resolve the book being edited."
+                    return
+                }
+                entry = existing
+            } else {
+                entry = BookEntry(context: context)
             }
+            try context.assign(entry, toSameStoreAs: scopedHousehold, referenceLabel: "active household")
 
             entry.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
             entry.author = author.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -273,6 +280,15 @@ struct AddEditBookView: View {
             entry.setValue(scopedHousehold.id, forKey: "householdId")
             entry.setValue(scopedMember.id, forKey: "ownerMemberId")
             entry.setValue(IdentityStore.durableUserId(for: scopedUser), forKey: "ownerAppUserId")
+
+            let objectsToValidate: [(String, NSManagedObject?)] = [
+                ("book", entry),
+                ("household", scopedHousehold),
+                ("ownerMember", scopedMember),
+                ("ownerAppUser", scopedUser)
+            ]
+            context.debugLogStoreSafeSave(entityName: "BookEntry", household: scopedHousehold, member: scopedMember, objects: objectsToValidate)
+            try context.validateSamePersistentStore(objectsToValidate)
 
             try context.save()
             print("✅ [BookSave] saved title=\(entry.title ?? "Untitled") household=\(scopedHousehold.name ?? "Household") member=\(scopedMember.displayName ?? "Member")")

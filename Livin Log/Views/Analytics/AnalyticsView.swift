@@ -150,10 +150,12 @@ struct AnalyticsView: View {
             in: RoundedRectangle(cornerRadius: 28, style: .continuous)
         )
         .overlay(alignment: .bottomTrailing) {
-            Circle()
-                .fill(.white.opacity(0.12))
-                .frame(width: 140, height: 140)
-                .offset(x: 38, y: 48)
+            Image(systemName: "chart.line.uptrend.xyaxis")
+                .font(.system(size: 76, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.10))
+                .padding(.trailing, 18)
+                .padding(.bottom, 12)
+                .accessibilityHidden(true)
         }
         .foregroundStyle(.white)
         .scaleEffect(appeared ? 1 : 0.96)

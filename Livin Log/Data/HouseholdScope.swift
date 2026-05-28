@@ -13,7 +13,6 @@ func householdScopedPredicate(_ household: Household) -> NSPredicate {
     return NSPredicate(format: "household == %@", household)
 }
 
-
 func assignIfInserted(_ obj: NSManagedObject, to store: NSPersistentStore?, in context: NSManagedObjectContext) {
     #if DEBUG
     let storeName = store?.url?.lastPathComponent ?? "nil-store"
@@ -26,6 +25,84 @@ func assignIfInserted(_ obj: NSManagedObject, to store: NSPersistentStore?, in c
 
 func storeForParent(_ parent: NSManagedObject) -> NSPersistentStore? {
     parent.objectID.persistentStore
+}
+
+enum StoreValidationError: LocalizedError {
+    case missingReferenceStore(String)
+    case unresolvedObjectStore(String)
+    case crossStoreRelationship(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingReferenceStore(let label):
+            return "Could not determine the persistent store for \(label). Please try again after the household finishes syncing."
+        case .unresolvedObjectStore(let label):
+            return "Could not determine the persistent store for \(label). Please try again before saving."
+        case .crossStoreRelationship(let details):
+            return "This save would link records across private and shared stores (\(details)). Nothing was saved."
+        }
+    }
+}
+
+extension NSManagedObjectContext {
+    func assign(_ object: NSManagedObject, toSameStoreAs reference: NSManagedObject, referenceLabel: String = "reference") throws {
+        guard let store = reference.objectID.persistentStore else {
+            throw StoreValidationError.missingReferenceStore(referenceLabel)
+        }
+        if object.isInserted {
+            assign(object, to: store)
+        }
+    }
+
+    func validateSamePersistentStore(_ labeledObjects: [(String, NSManagedObject?)]) throws {
+        var expectedStore: NSPersistentStore?
+        var expectedLabel: String?
+
+        for (label, object) in labeledObjects {
+            guard let object else { continue }
+            guard let store = object.objectID.persistentStore else {
+                throw StoreValidationError.unresolvedObjectStore(label)
+            }
+            if let expectedStore, store !== expectedStore {
+                let lhs = "\(expectedLabel ?? "first object")=\(storeDebugDescription(expectedStore))"
+                let rhs = "\(label)=\(storeDebugDescription(store))"
+                throw StoreValidationError.crossStoreRelationship("\(lhs), \(rhs)")
+            }
+            expectedStore = store
+            expectedLabel = label
+        }
+    }
+
+    func debugLogStoreSafeSave(entityName: String, household: Household?, member: HouseholdMember?, objects: [(String, NSManagedObject?)]) {
+        #if DEBUG
+        let householdName = household?.name ?? "<nil>"
+        let householdID = household?.id?.uuidString ?? "<nil>"
+        let memberName = member?.displayName ?? "<nil>"
+        let memberID = member?.id?.uuidString ?? "<nil>"
+        print("🧩 [StoreSafeSave] entity=\(entityName) household=\(householdName) id=\(householdID) member=\(memberName) id=\(memberID)")
+        for (label, object) in objects {
+            guard let object else {
+                print("🧩 [StoreSafeSave] \(label)=nil")
+                continue
+            }
+            print("🧩 [StoreSafeSave] \(label) entity=\(object.entity.name ?? "Unknown") objectID=\(object.objectID.uriRepresentation().absoluteString) store=\(storeDebugDescription(object.objectID.persistentStore))")
+        }
+        #endif
+    }
+}
+
+func storeDebugDescription(_ store: NSPersistentStore?) -> String {
+    guard let store else { return "nil-store" }
+    let url = store.url?.absoluteString ?? "<no-url>"
+    let scope: String
+    if url.contains("-shared") {
+        scope = "shared"
+    } else if url.contains("LivinLog.sqlite") {
+        scope = "private"
+    } else {
+        scope = "unknown"
+    }
+    return "\(url) scope=\(scope)"
 }
 
 #if DEBUG
@@ -62,7 +139,7 @@ func debugPrintHouseholdDiagnostics(household: Household, context: NSManagedObje
     let householdStore = debugStoreName(for: scopedHousehold.objectID, context: context)
     print("🧪 [SyncDiag] household=\(scopedHousehold.name ?? "Unnamed") id=\(scopedHousehold.objectID.uriRepresentation().absoluteString) store=\(householdStore) [\(reason)]")
 
-    let entities = ["LLQuote", "LLPuzzle", "LLCalendarEvent", "LLChild", "Movie", "TVShow"]
+    let entities = ["LLQuote", "LLPuzzle", "LLCalendarEvent", "LLChild", "Movie", "TVShow", "BookEntry"]
     for entity in entities {
         let req = NSFetchRequest<NSFetchRequestResult>(entityName: entity)
         req.predicate = householdScopedPredicate(scopedHousehold)

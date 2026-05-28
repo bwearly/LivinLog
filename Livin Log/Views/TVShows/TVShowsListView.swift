@@ -258,8 +258,16 @@ struct TVShowsListView: View {
             return filteredShows[idx]
         }
 
-        toDelete.forEach(context.delete)
-        save()
+        do {
+            for show in toDelete {
+                try context.validateSamePersistentStore([("tvShow", show), ("household", show.household)])
+                context.delete(show)
+            }
+            try context.save()
+        } catch {
+            context.rollback()
+            print("Delete TV show failed:", error)
+        }
     }
 
     private func save() {

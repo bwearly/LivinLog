@@ -13,10 +13,8 @@ struct RootView: View {
     @Environment(\.managedObjectContext) private var context
     @StateObject private var appState: AppState
     private let inviteRouter = InviteRouter()
-    @State private var pendingInvite: PendingShareInvite?
+    @State private var activeSheet: RootActiveSheet?
     @State private var lastProcessedShareURL: URL?
-    @State private var showingCreateMemberProfileSheet = false
-    @State private var showingMembershipChooser = false
     @State private var pendingInviteError: String?
     @State private var isResumingPendingInvite = false
     @State private var lastFailedPendingInviteURL: URL?
@@ -26,10 +24,32 @@ struct RootView: View {
     }
 
     var body: some View {
-        rootContent
+        Group {
+            switch appState.route {
+            case .loading:
+                ProgressView("Setting up Livin Log…")
+                    .task {
+                        guard !isPresentingPendingInvite else { return }
+                        await appState.start(callSite: "RootView.loading.task")
+                    }
+
+            case .iCloudRequired:
+                ICloudRequiredView {
+                    Task { await appState.start(callSite: "RootView.iCloudRequired.retry") }
+                }
+
+            case .onboarding:
+                OnboardingView(onFinished: {
+                    Task { await appState.start(callSite: "RootView.onboarding.finished") }
+                })
+
+            case .main:
+                HomeDashboardView(household: $appState.household, member: $appState.member)
+            }
+        }
         .environmentObject(appState)
         .task {
-            guard pendingInvite == nil else { return }
+            guard !isPresentingPendingInvite else { return }
             await NotificationScheduler.sync(context: context, household: appState.household)
             resumePendingInviteIfPossible(reason: "RootView.task")
         }
@@ -38,7 +58,7 @@ struct RootView: View {
             if appState.appUser == nil {
                 print("🔗 [PendingInvite] sign-in required before received CloudKit share can be accepted")
             }
-            pendingInvite = PendingShareInvite(metadata: metadata)
+            activeSheet = .pendingInvite(PendingShareInvite(metadata: metadata))
         }
         .onOpenURL { url in
             routeIncomingInviteURL(url)
@@ -50,20 +70,15 @@ struct RootView: View {
 
         .onChange(of: appState.route) { _, newRoute in
             guard newRoute == .main else { return }
-            let needsClaim = appState.shouldPromptForSharedMemberProfile() || appState.needsMemberClaim
-            showingCreateMemberProfileSheet = needsClaim
-            showingMembershipChooser = !needsClaim && appState.candidateMemberships.count > 1
+            presentPostRouteSheet()
         }
-        .onChange(of: appState.candidateMemberships.count) { _, count in
+        .onChange(of: appState.candidateMemberships.count) { _, _ in
             guard appState.route == .main else { return }
-            let needsClaim = appState.shouldPromptForSharedMemberProfile() || appState.needsMemberClaim
-            showingMembershipChooser = !needsClaim && count > 1
+            presentPostRouteSheet()
         }
         .onChange(of: appState.needsMemberClaim) { _, needsClaim in
             guard appState.route == .main else { return }
-            if needsClaim {
-                showingMembershipChooser = false
-            }
+            if needsClaim { activeSheet = .createMemberProfile }
         }
         .onChange(of: appState.appUser?.objectID) { _, _ in
             if appState.appUser != nil {
@@ -82,27 +97,43 @@ struct RootView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .didClearPendingInvite)) { _ in
-            pendingInvite = nil
+            activeSheet = nil
             pendingInviteError = nil
             lastFailedPendingInviteURL = nil
             isResumingPendingInvite = false
         }
-        .sheet(item: $pendingInvite) { pendingInvite in
-            AcceptHouseholdInviteSheet(
-                pendingInvite: pendingInvite,
-                onAccepted: {
-                    await appState.start(callSite: "RootView.acceptInvite.onAccepted")
-                    let needsClaim = appState.shouldPromptForSharedMemberProfile() || appState.needsMemberClaim
-                    showingCreateMemberProfileSheet = needsClaim
-                    showingMembershipChooser = !needsClaim && appState.candidateMemberships.count > 1
-                },
-                onCancelInvite: {
-                    PendingInviteStore.clear(reason: "cancelled from root accept sheet")
-                    self.pendingInvite = nil
-                },
-                isSignedIn: appState.appUser != nil
-            )
-            .environmentObject(appState)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .pendingInvite(let pendingInvite):
+                AcceptHouseholdInviteSheet(
+                    pendingInvite: pendingInvite,
+                    onAccepted: {
+                        await appState.start(callSite: "RootView.acceptInvite.onAccepted")
+                        presentPostRouteSheet()
+                    },
+                    onCancelInvite: {
+                        PendingInviteStore.clear(reason: "cancelled from root accept sheet")
+                        activeSheet = nil
+                    }
+                )
+            case .membershipChooser:
+                MembershipPickerSheet(
+                    memberships: appState.candidateMemberships,
+                    onPicked: { membership in
+                        appState.selectMembership(membership)
+                        activeSheet = nil
+                    }
+                )
+                .presentationDetents([.medium, .large])
+            case .createMemberProfile:
+                if let activeHousehold = appState.household {
+                    CreateMemberProfileSheet(household: activeHousehold) { createdMember in
+                        appState.applyCreatedSharedMember(createdMember, for: activeHousehold)
+                        activeSheet = nil
+                    }
+                    .environmentObject(appState)
+                }
+            }
         }
         .alert("Invite Unavailable", isPresented: Binding(get: { pendingInviteError != nil }, set: { if !$0 { pendingInviteError = nil } })) {
             Button("Keep for Later", role: .cancel) {
@@ -115,24 +146,22 @@ struct RootView: View {
         } message: {
             Text(pendingInviteError ?? "The invite could not be loaded.")
         }
-        .sheet(isPresented: $showingMembershipChooser) {
-            MembershipPickerSheet(
-                memberships: appState.candidateMemberships,
-                onPicked: { membership in
-                    appState.selectMembership(membership)
-                    showingMembershipChooser = false
-                }
-            )
-            .environmentObject(appState)
-            .presentationDetents([.medium, .large])
-        }
-        .sheet(isPresented: $showingCreateMemberProfileSheet) {
-            if let activeHousehold = appState.household {
-                CreateMemberProfileSheet(household: activeHousehold) { createdMember in
-                    appState.applyCreatedSharedMember(createdMember, for: activeHousehold)
-                }
-                .environmentObject(appState)
-            }
+    }
+
+    private var isPresentingPendingInvite: Bool {
+        if case .pendingInvite = activeSheet { return true }
+        return false
+    }
+
+    private func presentPostRouteSheet() {
+        guard appState.route == .main else { return }
+        let needsClaim = appState.shouldPromptForSharedMemberProfile() || appState.needsMemberClaim
+        if needsClaim {
+            activeSheet = .createMemberProfile
+        } else if appState.candidateMemberships.count > 1 {
+            activeSheet = .membershipChooser
+        } else if activeSheet != nil, !isPresentingPendingInvite {
+            activeSheet = nil
         }
     }
 
@@ -171,7 +200,7 @@ struct RootView: View {
 
         guard appState.appUser != nil else {
             print("🔗 [PendingInvite] sign-in required for incoming invite link")
-            pendingInvite = nil
+            activeSheet = nil
             return
         }
 
@@ -179,7 +208,7 @@ struct RootView: View {
             if let invite = await inviteRouter.pendingInvite(from: url) {
                 print("🔗 [PendingInvite] presenting invite for signed-in user")
                 lastFailedPendingInviteURL = nil
-                pendingInvite = invite
+                activeSheet = .pendingInvite(invite)
             } else {
                 lastFailedPendingInviteURL = url
                 pendingInviteError = "This invite link could not be loaded. It may be invalid, expired, unavailable, or from a different iCloud account."
@@ -189,7 +218,7 @@ struct RootView: View {
 
     private func resumePendingInviteIfPossible(reason: String) {
         guard appState.appUser != nil else { return }
-        guard pendingInvite == nil else { return }
+        guard !isPresentingPendingInvite else { return }
         guard !isResumingPendingInvite else { return }
         guard let url = PendingInviteStore.load() else { return }
         guard lastFailedPendingInviteURL != url else { return }
@@ -201,12 +230,26 @@ struct RootView: View {
             if let invite = await inviteRouter.pendingInvite(from: url) {
                 print("🔗 [PendingInvite] pending invite resumed")
                 lastFailedPendingInviteURL = nil
-                pendingInvite = invite
+                activeSheet = .pendingInvite(invite)
             } else {
                 print("🔗 [PendingInvite] pending invite resume failed")
                 lastFailedPendingInviteURL = url
                 pendingInviteError = "This saved invite could not be loaded. It may be invalid, expired, unavailable, or from a different iCloud account."
             }
+        }
+    }
+}
+
+enum RootActiveSheet: Identifiable {
+    case pendingInvite(PendingShareInvite)
+    case membershipChooser
+    case createMemberProfile
+
+    var id: String {
+        switch self {
+        case .pendingInvite(let invite): return "pendingInvite-\(invite.id)"
+        case .membershipChooser: return "membershipChooser"
+        case .createMemberProfile: return "createMemberProfile"
         }
     }
 }
