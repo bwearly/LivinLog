@@ -17,6 +17,7 @@ struct AddEditQuoteView: View {
     @State private var contextText = ""
     @State private var selectedChildID: NSManagedObjectID?
     @State private var showingDeleteAlert = false
+    @State private var saveError: String?
 
     private let persistentContainer = PersistenceController.shared.container
     private var canWrite: Bool {
@@ -111,6 +112,11 @@ struct AddEditQuoteView: View {
         } message: {
             Text("This can’t be undone.")
         }
+        .alert("Could Not Save Quote", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(saveError ?? "The quote could not be saved.")
+        }
         .onAppear(perform: seed)
     }
 
@@ -134,10 +140,15 @@ struct AddEditQuoteView: View {
     }
 
     private func saveQuote() {
-        guard canWrite else { return }
+        saveError = nil
+        guard canWrite else {
+            saveError = "You can save quotes only from your authorized member profile."
+            return
+        }
         let now = Date()
 
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
+            saveError = "Could not resolve the active household."
             print("❌ Could not resolve household in context for quote save")
             return
         }
@@ -179,6 +190,9 @@ struct AddEditQuoteView: View {
         }
 
         do {
+            let objectsToValidate: [(String, NSManagedObject?)] = [("quote", quote), ("household", scopedHousehold), ("child", quote.child)]
+            context.debugLogStoreSafeSave(entityName: "LLQuote", household: scopedHousehold, member: appState.member, objects: objectsToValidate)
+            try context.validateSamePersistentStore(objectsToValidate)
             try context.save()
             print("ℹ️ LLQuote inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
@@ -188,6 +202,7 @@ struct AddEditQuoteView: View {
             dismiss()
         } catch {
             context.rollback()
+            saveError = "Could not save quote: \(error.localizedDescription)"
             print("Save quote failed:", error)
         }
     }
@@ -195,9 +210,9 @@ struct AddEditQuoteView: View {
     private func deleteQuote() {
         guard canWrite else { return }
         guard let editingQuote else { return }
-        context.delete(editingQuote)
-
         do {
+            try context.validateSamePersistentStore([("quote", editingQuote), ("household", editingQuote.household), ("child", editingQuote.child)])
+            context.delete(editingQuote)
             try context.save()
             dismiss()
         } catch {

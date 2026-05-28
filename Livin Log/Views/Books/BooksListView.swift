@@ -132,7 +132,16 @@ struct BooksListView: View {
 
         do {
             for index in offsets where books.indices.contains(index) {
-                context.delete(books[index])
+                let book = books[index]
+                let objectsToValidate: [(String, NSManagedObject?)] = [
+                    ("book", book),
+                    ("household", book.household),
+                    ("ownerMember", book.ownerMember),
+                    ("ownerAppUser", book.ownerAppUser)
+                ]
+                context.debugLogStoreSafeSave(entityName: "BookEntry.delete", household: book.household, member: book.ownerMember, objects: objectsToValidate)
+                try context.validateSamePersistentStore(objectsToValidate)
+                context.delete(book)
             }
             try context.save()
         } catch {

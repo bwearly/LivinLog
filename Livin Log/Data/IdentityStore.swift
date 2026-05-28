@@ -26,6 +26,9 @@ enum IdentityStore {
         if let store { req.affectedStores = [store] }
 
         if let existing = try context.fetch(req).first {
+            if let store, existing.objectID.persistentStore !== store {
+                throw StoreValidationError.crossStoreRelationship("AppUser=\(storeDebugDescription(existing.objectID.persistentStore)), requested=\(storeDebugDescription(store))")
+            }
             var changed = false
             if let displayName, !displayName.isEmpty, (existing.displayName ?? "").isEmpty {
                 existing.displayName = displayName
