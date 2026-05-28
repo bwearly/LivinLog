@@ -104,22 +104,35 @@ struct SettingsView: View {
 
         // Paste link sheet (bulletproof join)
         .sheet(isPresented: $showingPasteInviteSheet) {
-            PasteInviteLinkSheet { invite in
-                Task { @MainActor in
-                    pendingInvite = invite
+            PasteInviteLinkSheet(
+                isSignedIn: appState.appUser != nil,
+                onInviteReady: { invite in
+                    Task { @MainActor in
+                        pendingInvite = invite
+                    }
+                },
+                onInviteDeferred: { _ in
+                    shareErrorText = "Sign in with Apple to finish joining this household invite."
                 }
-            }
+            )
         }
 
         // Accept invite sheet
         .sheet(item: $pendingInvite) { invite in
-            AcceptHouseholdInviteSheet(pendingInvite: invite) {
-                NotificationCenter.default.post(name: .didAcceptCloudKitShare, object: nil)
-                await MainActor.run {
-                    reloadShareStatus()
-                    resolveSharedMemberPromptNeed()
+            AcceptHouseholdInviteSheet(
+                pendingInvite: invite,
+                onAccepted: {
+                    NotificationCenter.default.post(name: .didAcceptCloudKitShare, object: nil)
+                    await MainActor.run {
+                        reloadShareStatus()
+                        resolveSharedMemberPromptNeed()
+                    }
+                },
+                onCancelInvite: {
+                    PendingInviteStore.clear(reason: "cancelled from settings accept sheet")
+                    pendingInvite = nil
                 }
-            }
+            )
         }
         .sheet(item: $sharedHouseholdNeedingProfile) { sharedHousehold in
             CreateMemberProfileSheet(household: sharedHousehold) { createdMember in
@@ -173,7 +186,16 @@ struct SettingsView: View {
                         }
                     }
                 }
-                 .disabled(isSharing || shareActionsDisabled)
+                 .disabled(isSharing || shareActionsDisabled || appState.appUser == nil || !appState.isCurrentMemberAuthorized())
+                if appState.appUser == nil {
+                    Text("Sign in with Apple before sharing this household.")
+                        .foregroundStyle(.secondary)
+                        .font(.footnote)
+                } else if !appState.isCurrentMemberAuthorized() {
+                    Text("Select or create your claimed member profile before sharing this household.")
+                        .foregroundStyle(.secondary)
+                        .font(.footnote)
+                }
                 if shareActionsDisabled {
                     Text(accountUnavailableFriendlyMessage)
                         .foregroundStyle(.secondary)
@@ -200,6 +222,11 @@ struct SettingsView: View {
                 showingPasteInviteSheet = true
             } label: {
                 Label("Join with Invite Link", systemImage: "link")
+            }
+            if appState.appUser == nil {
+                Text("Sign in with Apple before joining so your invite membership can be tied to your durable identity.")
+                    .foregroundStyle(.secondary)
+                    .font(.footnote)
             }
         }
     }
@@ -327,18 +354,19 @@ struct SettingsView: View {
         let isShared = selectedHousehold.objectID.persistentStore == PersistenceController.shared.sharedStore
         let selectedMatches = selectedMember?.household?.objectID == selectedHousehold.objectID
 
-        if selectedMatches, let selectedMember {
+        if selectedMatches, let selectedMember, isAuthorized(selectedMember) {
             member = selectedMember
-            print("✅ Using existing selected member for this household")
+            print("✅ Using authorized selected member for this household")
             SelectionStore.saveDeviceMember(selectedMember, for: selectedHousehold)
             sharedHouseholdNeedingProfile = nil
             return
         }
 
-        if let deviceMember = SelectionStore.loadDeviceMember(for: selectedHousehold, context: context) {
+        if let deviceMember = SelectionStore.loadDeviceMember(for: selectedHousehold, context: context),
+           isAuthorized(deviceMember) {
             member = deviceMember
             SelectionStore.save(household: selectedHousehold, member: deviceMember)
-            print("✅ Using existing selected member for this household")
+            print("✅ Using authorized cached member for this household")
             sharedHouseholdNeedingProfile = nil
             return
         }
@@ -357,6 +385,10 @@ struct SettingsView: View {
 
     private func inviteMember() {
         guard household != nil else { return }
+        guard appState.appUser != nil, appState.isCurrentMemberAuthorized() else {
+            shareErrorText = "Select or create your claimed member profile before sharing this household."
+            return
+        }
         guard !shareActionsDisabled else {
             shareErrorText = accountUnavailableFriendlyMessage
             return
@@ -435,16 +467,22 @@ struct SettingsView: View {
         }
     }
 
+    private func isAuthorized(_ member: HouseholdMember) -> Bool {
+        IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
+    }
+
     private func ensureDefaultMemberExists(in household: Household) {
         let isSharedHousehold = household.objectID.persistentStore == PersistenceController.shared.sharedStore
-        let members = fetchMembers(for: household)
 
-        if let selected = member, selected.household?.objectID == household.objectID {
+        if let selected = member,
+           selected.household?.objectID == household.objectID,
+           isAuthorized(selected) {
             SelectionStore.saveDeviceMember(selected, for: household)
             return
         }
 
-        if let selected = SelectionStore.loadDeviceMember(for: household, context: context) {
+        if let selected = SelectionStore.loadDeviceMember(for: household, context: context),
+           isAuthorized(selected) {
             member = selected
             SelectionStore.save(household: household, member: selected)
             return
@@ -642,7 +680,7 @@ private struct AdvancedSharingView: View {
             }
 
             Section("How sharing works") {
-                Text("Inviting someone creates an iCloud share for your household. People you invite can see and edit the same household data.")
+                Text("Inviting someone creates an iCloud share link for your household. They can tap the link or manually enter the code/token from the link, then create their own claimed member profile.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

@@ -5,6 +5,28 @@
 
 import CoreData
 import CloudKit
+import Foundation
+
+struct PersistenceLoadError: Identifiable, Equatable {
+    let id = UUID()
+    let message: String
+    let storeURL: URL?
+    let configuration: String
+    let underlyingDomain: String
+    let underlyingCode: Int
+    let underlyingUserInfo: [String: String]
+
+    init(error: NSError, description: NSPersistentStoreDescription) {
+        self.message = error.localizedDescription
+        self.storeURL = description.url
+        self.configuration = description.configuration ?? "default"
+        self.underlyingDomain = error.domain
+        self.underlyingCode = error.code
+        self.underlyingUserInfo = error.userInfo.reduce(into: [:]) { partialResult, pair in
+            partialResult[String(describing: pair.key)] = String(describing: pair.value)
+        }
+    }
+}
 
 struct PersistenceController {
     static let shared = PersistenceController()
@@ -12,10 +34,26 @@ struct PersistenceController {
     let container: NSPersistentCloudKitContainer
 
     /// The private (owner) store.
-    let privateStore: NSPersistentStore
+    let privateStore: NSPersistentStore!
 
     /// The shared store (where accepted shares land on recipients).
-    let sharedStore: NSPersistentStore
+    let sharedStore: NSPersistentStore!
+
+    /// Non-nil when Core Data/CloudKit stores could not be opened. The app should
+    /// render recovery UI instead of touching the managed object context.
+    let loadError: PersistenceLoadError?
+
+    var isLoaded: Bool { loadError == nil }
+
+    private static let containerId = "iCloud.com.blakeearly.livinlog"
+
+    private static func storeURLs() -> (privateURL: URL, sharedURL: URL) {
+        let storeDirectory = NSPersistentContainer.defaultDirectoryURL()
+        return (
+            storeDirectory.appendingPathComponent("LivinLog.sqlite"),
+            storeDirectory.appendingPathComponent("LivinLog-shared.sqlite")
+        )
+    }
 
     init(inMemory: Bool = false) {
         let container = NSPersistentCloudKitContainer(name: "LivinLog")
@@ -25,26 +63,27 @@ struct PersistenceController {
         // Two stores are required for Core Data + CloudKit sharing:
         // - Private: the owner's database
         // - Shared:  the recipient's shared database
-        let storeDirectory = NSPersistentContainer.defaultDirectoryURL()
-
-        // IMPORTANT: keep the private store filename stable so existing on-device data
-        // continues to load after introducing the shared store.
-        //
-        // Historically the app used a single default store; that typically results in a
-        // `LivinLog.sqlite` filename. If we switch filenames, the app will look like it
-        // "lost" data because it is reading a new empty file.
-        let privateURL = storeDirectory.appendingPathComponent("LivinLog.sqlite")
-        let sharedURL  = storeDirectory.appendingPathComponent("LivinLog-shared.sqlite")
+        let urls = Self.storeURLs()
+        let privateURL = urls.privateURL
+        let sharedURL = urls.sharedURL
 
         let privateDesc = NSPersistentStoreDescription(url: privateURL)
         let sharedDesc  = NSPersistentStoreDescription(url: sharedURL)
+
+        // Keep both stores on the model's default configuration. A previous build or a
+        // future refactor that writes one store with a named configuration and then opens
+        // it with another is what produces Core Data's "model configuration ...
+        // incompatible" launch failure. This app does not define named model
+        // configurations, so be explicit and log it.
+        privateDesc.configuration = nil
+        sharedDesc.configuration = nil
 
         if inMemory {
             privateDesc.url = URL(fileURLWithPath: "/dev/null")
             sharedDesc.url  = URL(fileURLWithPath: "/dev/null")
         }
 
-        let containerId = "iCloud.com.blakeearly.livinlog"
+        let containerId = Self.containerId
         print("ℹ️ PersistenceController CloudKit containerIdentifier=\(containerId)")
 
         // Private scope
@@ -63,13 +102,18 @@ struct PersistenceController {
             desc.setOption(true as NSNumber, forKey: NSInferMappingModelAutomaticallyOption)
             desc.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
             desc.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
+            desc.shouldMigrateStoreAutomatically = true
+            desc.shouldInferMappingModelAutomatically = true
         }
 
         container.persistentStoreDescriptions = [privateDesc, sharedDesc]
 
+        var capturedLoadError: PersistenceLoadError?
         container.loadPersistentStores { description, error in
             if let error = error as NSError? {
-                fatalError("Unresolved error \(error), \(error.userInfo)")
+                Self.logPersistentStoreFailure(error, description: description)
+                capturedLoadError = PersistenceLoadError(error: error, description: description)
+                return
             }
 
             let scope = description.cloudKitContainerOptions?.databaseScope
@@ -80,7 +124,19 @@ struct PersistenceController {
             case .public: scopeLabel = "public"
             default: scopeLabel = "unknown"
             }
-            print("ℹ️ Loaded persistent store url=\(description.url?.absoluteString ?? "<nil>") scope=\(scopeLabel) ckContainer=\(description.cloudKitContainerOptions?.containerIdentifier ?? "<nil>")")
+            print("ℹ️ Loaded persistent store url=\(description.url?.absoluteString ?? "<nil>") scope=\(scopeLabel) configuration=\(description.configuration ?? "default") migrate=\(description.shouldMigrateStoreAutomatically) infer=\(description.shouldInferMappingModelAutomatically) ckContainer=\(description.cloudKitContainerOptions?.containerIdentifier ?? "<nil>")")
+            Self.logStoreMetadata(at: description.url)
+        }
+
+        self.container = container
+
+        guard capturedLoadError == nil else {
+            self.privateStore = nil
+            self.sharedStore = nil
+            self.loadError = capturedLoadError
+            container.viewContext.automaticallyMergesChangesFromParent = false
+            print("⚠️ [Persistence] Store load failed; app will show StoreRecoveryView instead of using Core Data.")
+            return
         }
 
         // Resolve stores by URL from the coordinator after load.
@@ -90,14 +146,61 @@ struct PersistenceController {
 
         guard let p = store(matching: privateURL),
               let s = store(matching: sharedURL) else {
-            fatalError("Failed to resolve private/shared stores after loading.")
+            let error = NSError(
+                domain: "PersistenceController",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to resolve private/shared stores after loading."]
+            )
+            let description = NSPersistentStoreDescription(url: privateURL)
+            Self.logPersistentStoreFailure(error, description: description)
+            self.privateStore = nil
+            self.sharedStore = nil
+            self.loadError = PersistenceLoadError(error: error, description: description)
+            return
         }
 
-        self.container = container
         self.privateStore = p
         self.sharedStore = s
+        self.loadError = nil
 
         container.viewContext.automaticallyMergesChangesFromParent = true
         container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
     }
+
+    private static func logPersistentStoreFailure(_ error: NSError, description: NSPersistentStoreDescription) {
+        print("❌ [Persistence] Failed to load store url=\(description.url?.absoluteString ?? "<nil>") configuration=\(description.configuration ?? "default")")
+        print("❌ [Persistence] domain=\(error.domain) code=\(error.code) userInfo=\(error.userInfo)")
+        logStoreMetadata(at: description.url)
+        #if DEBUG
+        print("🧪 [Persistence] Development-only recovery: delete the app, or use the debug reset button in StoreRecoveryView. Production builds must not silently delete user stores.")
+        #endif
+    }
+
+    private static func logStoreMetadata(at url: URL?) {
+        guard let url else { return }
+        do {
+            let metadata = try NSPersistentStoreCoordinator.metadataForPersistentStore(ofType: NSSQLiteStoreType, at: url)
+            let configuration = metadata[NSStoreModelVersionIdentifiersKey] ?? "<no model identifiers>"
+            print("ℹ️ [Persistence] metadata url=\(url.lastPathComponent) modelVersionIdentifiers=\(configuration)")
+        } catch {
+            print("ℹ️ [Persistence] no readable metadata at \(url.lastPathComponent): \(error.localizedDescription)")
+        }
+    }
+
+    #if DEBUG
+    static func resetDevelopmentStores() throws {
+        let urls = storeURLs()
+        let fileManager = FileManager.default
+        for baseURL in [urls.privateURL, urls.sharedURL] {
+            for suffix in ["", "-shm", "-wal"] {
+                let url = suffix.isEmpty ? baseURL : URL(fileURLWithPath: baseURL.path + suffix)
+                if fileManager.fileExists(atPath: url.path) {
+                    try fileManager.removeItem(at: url)
+                    print("🧪 [Persistence] Removed development store file \(url.path)")
+                }
+            }
+        }
+        SelectionStore.clearAll()
+    }
+    #endif
 }

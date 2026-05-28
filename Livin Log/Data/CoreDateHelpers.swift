@@ -7,6 +7,7 @@
 
 import CoreData
 
+@available(*, unavailable, message: "Use AppState.createInitialHousehold so every household is tied to a durable signed-in AppUser.")
 @discardableResult
 func fetchOrCreateDefaultHousehold(in context: NSManagedObjectContext) -> Household {
     let request = Household.fetchRequest()

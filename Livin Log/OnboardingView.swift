@@ -92,7 +92,6 @@ struct OnboardingView: View {
                 }
                 .buttonStyle(.bordered)
                 .padding(.horizontal)
-                .disabled(!isSignedIn)
 
                 Spacer()
             }
@@ -100,14 +99,25 @@ struct OnboardingView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .sheet(isPresented: $showingPasteInvite) {
-            PasteInviteLinkSheet { invite in
-                pendingInvite = invite
-            }
+            PasteInviteLinkSheet(
+                isSignedIn: isSignedIn,
+                onInviteReady: { invite in
+                    pendingInvite = invite
+                },
+                onInviteDeferred: { _ in
+                    errorText = "Sign in with Apple to finish joining this household invite."
+                }
+            )
         }
         .sheet(item: $pendingInvite) { invite in
-            AcceptHouseholdInviteSheet(pendingInvite: invite) {
-                onFinished()
-            }
+            AcceptHouseholdInviteSheet(
+                pendingInvite: invite,
+                onAccepted: { onFinished() },
+                onCancelInvite: {
+                    PendingInviteStore.clear(reason: "cancelled from onboarding accept sheet")
+                    pendingInvite = nil
+                }
+            )
         }
     }
 
