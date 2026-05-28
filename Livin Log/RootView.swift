@@ -26,29 +26,7 @@ struct RootView: View {
     }
 
     var body: some View {
-        Group {
-            switch appState.route {
-            case .loading:
-                ProgressView("Setting up Livin Log…")
-                    .task {
-                        guard pendingInvite == nil else { return }
-                        await appState.start(callSite: "RootView.loading.task")
-                    }
-
-            case .iCloudRequired:
-                ICloudRequiredView {
-                    Task { await appState.start(callSite: "RootView.iCloudRequired.retry") }
-                }
-
-            case .onboarding:
-                OnboardingView(onFinished: {
-                    Task { await appState.start(callSite: "RootView.onboarding.finished") }
-                })
-
-            case .main:
-                HomeDashboardView(household: $appState.household, member: $appState.member)
-            }
-        }
+        rootContent
         .environmentObject(appState)
         .task {
             guard pendingInvite == nil else { return }
@@ -121,8 +99,10 @@ struct RootView: View {
                 onCancelInvite: {
                     PendingInviteStore.clear(reason: "cancelled from root accept sheet")
                     self.pendingInvite = nil
-                }
+                },
+                isSignedIn: appState.appUser != nil
             )
+            .environmentObject(appState)
         }
         .alert("Invite Unavailable", isPresented: Binding(get: { pendingInviteError != nil }, set: { if !$0 { pendingInviteError = nil } })) {
             Button("Keep for Later", role: .cancel) {
@@ -143,6 +123,7 @@ struct RootView: View {
                     showingMembershipChooser = false
                 }
             )
+            .environmentObject(appState)
             .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showingCreateMemberProfileSheet) {
@@ -152,6 +133,33 @@ struct RootView: View {
                 }
                 .environmentObject(appState)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var rootContent: some View {
+        switch appState.route {
+        case .loading:
+            ProgressView("Setting up Livin Log…")
+                .task {
+                    guard pendingInvite == nil else { return }
+                    await appState.start(callSite: "RootView.loading.task")
+                }
+
+        case .iCloudRequired:
+            ICloudRequiredView {
+                Task { await appState.start(callSite: "RootView.iCloudRequired.retry") }
+            }
+
+        case .onboarding:
+            OnboardingView(onFinished: {
+                Task { await appState.start(callSite: "RootView.onboarding.finished") }
+            })
+            .environmentObject(appState)
+
+        case .main:
+            HomeDashboardView(household: $appState.household, member: $appState.member)
+                .environmentObject(appState)
         }
     }
 

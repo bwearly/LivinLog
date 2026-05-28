@@ -132,7 +132,8 @@ struct SettingsView: View {
                 onCancelInvite: {
                     PendingInviteStore.clear(reason: "cancelled from settings accept sheet")
                     pendingInvite = nil
-                }
+                },
+                isSignedIn: appState.appUser != nil
             )
         }
         .sheet(item: $sharedHouseholdNeedingProfile) { sharedHousehold in

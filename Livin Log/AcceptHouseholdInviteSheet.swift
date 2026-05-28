@@ -17,9 +17,9 @@ struct AcceptHouseholdInviteSheet: View {
     let pendingInvite: PendingShareInvite
     let onAccepted: @MainActor () async -> Void
     let onCancelInvite: () -> Void
+    let isSignedIn: Bool
 
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var appState: AppState
     @State private var isAccepting = false
     @State private var errorMessage: String?
 
@@ -56,7 +56,7 @@ struct AcceptHouseholdInviteSheet: View {
                         .multilineTextAlignment(.center)
                 }
 
-                if appState.appUser == nil {
+                if !isSignedIn {
                     Text("Sign in with Apple before accepting this household invite so your profile can be tied to your durable identity.")
                         .font(.footnote)
                         .foregroundStyle(.orange)
@@ -88,7 +88,7 @@ struct AcceptHouseholdInviteSheet: View {
                         acceptInvite()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isAccepting || appState.appUser == nil)
+                    .disabled(isAccepting || !isSignedIn)
                 }
 
                 if isAccepting {
@@ -104,7 +104,7 @@ struct AcceptHouseholdInviteSheet: View {
     }
 
     private func acceptInvite() {
-        guard appState.appUser != nil else {
+        guard isSignedIn else {
             errorMessage = "Sign in with Apple before accepting this household invite."
             return
         }

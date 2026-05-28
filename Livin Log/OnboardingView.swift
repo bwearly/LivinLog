@@ -116,7 +116,8 @@ struct OnboardingView: View {
                 onCancelInvite: {
                     PendingInviteStore.clear(reason: "cancelled from onboarding accept sheet")
                     pendingInvite = nil
-                }
+                },
+                isSignedIn: isSignedIn
             )
         }
     }
