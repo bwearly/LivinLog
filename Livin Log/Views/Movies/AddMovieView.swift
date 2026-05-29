@@ -228,12 +228,26 @@ struct AddMovieView: View {
     private func saveMovie() {
         saveError = nil
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard actingMember != nil else {
+        guard let actingMember else {
             saveError = "Choose your member profile before saving a movie."
             return
         }
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
             saveError = "Could not resolve the active household."
+            return
+        }
+
+        let scopedActingMember: HouseholdMember
+        do {
+            guard let resolvedMember = try MovieStoreSafety.resolveMember(actingMember, in: scopedHousehold, context: context) else {
+                saveError = "Could not resolve your member profile in this household store."
+                return
+            }
+            scopedActingMember = resolvedMember
+            try context.validateSamePersistentStore([("household", scopedHousehold), ("actingMember", scopedActingMember)])
+        } catch {
+            context.rollback()
+            saveError = error.localizedDescription
             return
         }
 
@@ -273,15 +287,11 @@ struct AddMovieView: View {
 
         // Feedback rows
         var createdFeedbacks: [MovieFeedback] = []
-        for m in [actingMember].compactMap({ $0 }) {
-            let draft = feedbackByMemberID[m.objectID] ?? MemberFeedbackDraft()
+        for m in [scopedActingMember] {
+            let draft = feedbackByMemberID[actingMember.objectID] ?? feedbackByMemberID[m.objectID] ?? MemberFeedbackDraft()
             if isDraftEmpty(draft) { continue }
 
-            guard let memberInContext = (try? context.existingObject(with: m.objectID)) as? HouseholdMember else {
-                saveError = "Could not resolve the selected member profile."
-                context.rollback()
-                return
-            }
+            let memberInContext = m
 
             let fb = MovieFeedback(context: context)
             do {
@@ -331,9 +341,10 @@ struct AddMovieView: View {
                 objectsToValidate.append(("feedback[\(index)]", feedback))
                 objectsToValidate.append(("feedback[\(index)].member", feedback.member))
             }
-            context.debugLogStoreSafeSave(entityName: "Movie", household: scopedHousehold, member: actingMember, objects: objectsToValidate)
+            context.debugLogViewingSave(operation: "Movie.add.initialViewing", viewing: v, movie: movie, household: scopedHousehold, member: scopedActingMember, assignedBeforeRelationships: true)
+            context.debugLogStoreSafeSave(entityName: "Movie", household: scopedHousehold, member: scopedActingMember, objects: objectsToValidate)
             try context.validateSamePersistentStore(objectsToValidate)
-            try MovieStoreSafety.validateMovieGraph(movie: movie, household: scopedHousehold, context: context, operation: "Movie.add")
+            try MovieStoreSafety.validateViewingGraph(viewing: v, movie: movie, household: scopedHousehold, member: scopedActingMember, context: context, operation: "Movie.add.initialViewing", assignedBeforeRelationships: true)
             try context.save()
             print("ℹ️ Movie inherits household share via parent household relationship (no per-object share mutation)")
             if !createdFeedbacks.isEmpty {

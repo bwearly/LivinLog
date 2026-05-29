@@ -552,7 +552,19 @@ struct MovieDetailView: View {
     private func loadSelectedMemberFeedback() {
         guard let selectedMember else { return }
         guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
-        guard let memberInContext = (try? context.existingObject(with: selectedMember.objectID)) as? HouseholdMember else { return }
+        guard let fallbackHousehold = activeHouseholdInContext(household, context: context) else { return }
+        let scopedHousehold = movieInContext.household ?? fallbackHousehold
+        let memberInContext: HouseholdMember
+        do {
+            guard let resolvedMember = try MovieStoreSafety.resolveMember(selectedMember, in: scopedHousehold, context: context) else { return }
+            memberInContext = resolvedMember
+            try context.validateSamePersistentStore([("movie", movieInContext), ("household", scopedHousehold), ("member", memberInContext)])
+        } catch {
+            context.rollback()
+            saveError = error.localizedDescription
+            print("❌ [MovieFeedback] load member store validation failed:", error)
+            return
+        }
 
         let request = NSFetchRequest<MovieFeedback>(entityName: "MovieFeedback")
         request.fetchLimit = 1
@@ -584,9 +596,23 @@ struct MovieDetailView: View {
     private func saveSelectedMemberFeedback() -> Bool {
         guard canEdit else { return false }
         guard let selectedMember else { return true }
-        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { saveError = "Could not resolve the active household."; return false }
-        guard let selectedMemberInContext = (try? context.existingObject(with: selectedMember.objectID)) as? HouseholdMember else { saveError = "Could not resolve the selected member."; return false }
+        guard let fallbackHousehold = activeHouseholdInContext(household, context: context) else { saveError = "Could not resolve the active household."; return false }
         guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { saveError = "Could not resolve this movie in the current context."; return false }
+        let scopedHousehold = movieInContext.household ?? fallbackHousehold
+        let selectedMemberInContext: HouseholdMember
+        do {
+            guard let resolvedMember = try MovieStoreSafety.resolveMember(selectedMember, in: scopedHousehold, context: context) else {
+                saveError = "Could not resolve the selected member in this household store."
+                return false
+            }
+            selectedMemberInContext = resolvedMember
+            try context.validateSamePersistentStore([("movie", movieInContext), ("household", scopedHousehold), ("member", selectedMemberInContext)])
+        } catch {
+            context.rollback()
+            saveError = error.localizedDescription
+            print("❌ [MovieFeedback] selected member store validation failed:", error)
+            return false
+        }
 
         let fb: MovieFeedback
         do {
@@ -649,12 +675,24 @@ struct MovieDetailView: View {
         }
 
         context.performAndWait {
-            guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+            guard let fallbackHousehold = activeHouseholdInContext(household, context: context) else { return }
             guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
+            let scopedHousehold = movieInContext.household ?? fallbackHousehold
+            let scopedMember: HouseholdMember?
+            do {
+                scopedMember = try MovieStoreSafety.resolveMember(authorizedActingMember, in: scopedHousehold, context: context)
+                try context.validateSamePersistentStore([("movie", movieInContext), ("household", scopedHousehold), ("member", scopedMember)])
+            } catch {
+                context.rollback()
+                saveError = error.localizedDescription
+                print("❌ [Viewing] related object store validation failed before create:", error)
+                return
+            }
             let v = Viewing(context: context)
+            let assignedBeforeRelationships: Bool
             let store = storeForParent(movieInContext)
             do {
-                try MovieStoreSafety.assignInserted(v, toSameStoreAs: movieInContext, label: "Viewing(new)", context: context)
+                assignedBeforeRelationships = try MovieStoreSafety.assignInserted(v, toSameStoreAs: movieInContext, label: "Viewing(new)", context: context)
             } catch {
                 context.rollback()
                 saveError = error.localizedDescription
@@ -677,14 +715,11 @@ struct MovieDetailView: View {
             v.setValue(trimmed.isEmpty ? nil : trimmed, forKey: "notes")
 
             do {
-                context.debugLogStoreSafeSave(entityName: "Viewing", household: scopedHousehold, member: nil, objects: [("viewing", v), ("movie", movieInContext), ("household", scopedHousehold)])
-                try context.validateSamePersistentStore([("viewing", v), ("movie", movieInContext), ("household", scopedHousehold)])
-                try MovieStoreSafety.validateMovieGraph(movie: movieInContext, household: scopedHousehold, context: context, operation: "Viewing.add")
+                context.debugLogStoreSafeSave(entityName: "Viewing", household: scopedHousehold, member: scopedMember, objects: [("viewing", v), ("movie", movieInContext), ("household", scopedHousehold), ("member", scopedMember)])
+                try MovieStoreSafety.validateViewingGraph(viewing: v, movie: movieInContext, household: scopedHousehold, member: scopedMember, context: context, operation: "Viewing.add", assignedBeforeRelationships: assignedBeforeRelationships)
                 try context.save()
 #if DEBUG
-                if let scopedHousehold = activeHouseholdInContext(household, context: context) {
-                    debugLogHouseholdAssignment(entityName: "Viewing", object: v, household: scopedHousehold, context: context)
-                }
+                debugLogHouseholdAssignment(entityName: "Viewing", object: v, household: scopedHousehold, context: context)
 #endif
                 print("ℹ️ Viewing inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
@@ -715,11 +750,9 @@ struct MovieDetailView: View {
             for index in offsets {
                 guard viewings.indices.contains(index) else { continue }
                 let viewing = viewings[index]
-                if let movie = viewing.movie {
-                    try MovieStoreSafety.validateMovieGraph(movie: movie, household: viewing.household, context: context, operation: "Viewing.delete")
-                } else {
-                    try context.validateSamePersistentStore([("viewing", viewing), ("household", viewing.household)])
-                }
+                let viewingHousehold = viewing.household ?? viewing.movie?.household
+                let scopedMember = try MovieStoreSafety.resolveMember(authorizedActingMember, in: viewingHousehold ?? household, context: context)
+                try MovieStoreSafety.validateViewingGraph(viewing: viewing, movie: viewing.movie, household: viewingHousehold, member: scopedMember, context: context, operation: "Viewing.delete", assignedBeforeRelationships: true)
                 context.delete(viewing)
             }
             try context.save()
@@ -735,11 +768,9 @@ struct MovieDetailView: View {
     private func deleteViewing(_ viewing: Viewing) {
         guard canEdit else { return }
         do {
-            if let movie = viewing.movie {
-                try MovieStoreSafety.validateMovieGraph(movie: movie, household: viewing.household, context: context, operation: "Viewing.delete")
-            } else {
-                try context.validateSamePersistentStore([("viewing", viewing), ("household", viewing.household)])
-            }
+            let viewingHousehold = viewing.household ?? viewing.movie?.household
+            let scopedMember = try MovieStoreSafety.resolveMember(authorizedActingMember, in: viewingHousehold ?? household, context: context)
+            try MovieStoreSafety.validateViewingGraph(viewing: viewing, movie: viewing.movie, household: viewingHousehold, member: scopedMember, context: context, operation: "Viewing.delete", assignedBeforeRelationships: true)
             context.delete(viewing)
             try context.save()
             reloadViewings()
@@ -764,20 +795,27 @@ struct MovieDetailView: View {
     @MainActor
     private func saveViewingDate(_ viewing: Viewing, date: Date) {
         guard canEdit else { return }
-        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
+        guard let fallbackHousehold = activeHouseholdInContext(household, context: context) else { return }
         guard let viewingInContext = (try? context.existingObject(with: viewing.objectID)) as? Viewing else { return }
+        let scopedHousehold = viewingInContext.household ?? viewingInContext.movie?.household ?? fallbackHousehold
+        let scopedMember: HouseholdMember?
+        do {
+            scopedMember = try MovieStoreSafety.resolveMember(authorizedActingMember, in: scopedHousehold, context: context)
+            try context.validateSamePersistentStore([("viewing", viewingInContext), ("movie", viewingInContext.movie), ("household", scopedHousehold), ("member", scopedMember)])
+        } catch {
+            context.rollback()
+            saveError = error.localizedDescription
+            print("❌ [Viewing] edit validation failed before save:", error)
+            return
+        }
 #if DEBUG
         let store = storeForParent(viewingInContext)
         print("🧩 [EditSave] entity=Viewing(edit) store=\(store?.url?.lastPathComponent ?? "nil-store") objectID=\(viewingInContext.objectID.uriRepresentation().absoluteString)")
 #endif
         viewingInContext.watchedOn = date
         do {
-            context.debugLogStoreSafeSave(entityName: "Viewing.edit", household: scopedHousehold, member: nil, objects: [("viewing", viewingInContext), ("movie", viewingInContext.movie), ("household", viewingInContext.household)])
-            if let movie = viewingInContext.movie {
-                try MovieStoreSafety.validateMovieGraph(movie: movie, household: scopedHousehold, context: context, operation: "Viewing.edit")
-            } else {
-                try context.validateSamePersistentStore([("viewing", viewingInContext), ("household", viewingInContext.household)])
-            }
+            context.debugLogStoreSafeSave(entityName: "Viewing.edit", household: scopedHousehold, member: scopedMember, objects: [("viewing", viewingInContext), ("movie", viewingInContext.movie), ("household", scopedHousehold), ("member", scopedMember)])
+            try MovieStoreSafety.validateViewingGraph(viewing: viewingInContext, movie: viewingInContext.movie, household: scopedHousehold, member: scopedMember, context: context, operation: "Viewing.edit", assignedBeforeRelationships: true)
             try context.save()
             print("ℹ️ Viewing inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
