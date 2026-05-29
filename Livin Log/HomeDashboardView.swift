@@ -74,6 +74,7 @@ struct HomeDashboardView: View {
                 title: "Movies",
                 subtitle: "Track what you watch",
                 systemImage: "film",
+                style: .movies,
                 destination: MoviesListView(household: household, member: member)
             )
         } else {
@@ -81,6 +82,7 @@ struct HomeDashboardView: View {
                 title: "Movies",
                 subtitle: "Select a household first",
                 systemImage: "film",
+                style: .movies,
                 destination: SharedViews.PlaceholderView(title: "Select Household")
             )
             .opacity(0.6)
@@ -94,6 +96,7 @@ struct HomeDashboardView: View {
                 title: "Books",
                 subtitle: "Track what you read",
                 systemImage: "books.vertical",
+                style: .books,
                 destination: BooksListView(household: household)
             )
         } else {
@@ -101,6 +104,7 @@ struct HomeDashboardView: View {
                 title: "Books",
                 subtitle: "Select a household first",
                 systemImage: "books.vertical",
+                style: .books,
                 destination: SharedViews.PlaceholderView(title: "Select Household")
             )
             .opacity(0.6)
@@ -114,6 +118,7 @@ struct HomeDashboardView: View {
                 title: "TV Shows",
                 subtitle: "Track what you watch",
                 systemImage: "tv",
+                style: .tvShows,
                 destination: TVShowsListView(household: household, member: member)
             )
         } else {
@@ -121,6 +126,7 @@ struct HomeDashboardView: View {
                 title: "TV Shows",
                 subtitle: "Select a household first",
                 systemImage: "tv",
+                style: .tvShows,
                 destination: SharedViews.PlaceholderView(title: "Select Household")
             )
             .opacity(0.6)
@@ -134,6 +140,7 @@ struct HomeDashboardView: View {
                 title: "Dates",
                 subtitle: "Important moments",
                 systemImage: "calendar",
+                style: .dates,
                 destination: CalendarMainView(household: household)
             )
         } else {
@@ -141,6 +148,7 @@ struct HomeDashboardView: View {
                 title: "Dates",
                 subtitle: "Select a household first",
                 systemImage: "calendar",
+                style: .dates,
                 destination: SharedViews.PlaceholderView(title: "Select Household")
             )
             .opacity(0.6)
@@ -154,6 +162,7 @@ struct HomeDashboardView: View {
                 title: "Puzzles",
                 subtitle: "Track completed puzzles",
                 systemImage: "puzzlepiece.fill",
+                style: .puzzles,
                 destination: PuzzlesListView(household: household, member: member)
             )
         } else {
@@ -161,6 +170,7 @@ struct HomeDashboardView: View {
                 title: "Puzzles",
                 subtitle: "Select a household first",
                 systemImage: "puzzlepiece.fill",
+                style: .puzzles,
                 destination: SharedViews.PlaceholderView(title: "Select Household")
             )
             .opacity(0.6)
@@ -175,6 +185,7 @@ struct HomeDashboardView: View {
                 title: "Quotes",
                 subtitle: "Capture household sayings",
                 systemImage: "quote.bubble",
+                style: .quotes,
                 destination: QuotesListView(household: household)
             )
         } else {
@@ -182,6 +193,7 @@ struct HomeDashboardView: View {
                 title: "Quotes",
                 subtitle: "Select a household first",
                 systemImage: "quote.bubble",
+                style: .quotes,
                 destination: SharedViews.PlaceholderView(title: "Select Household")
             )
             .opacity(0.6)
@@ -195,6 +207,7 @@ struct HomeDashboardView: View {
                 title: "Analytics",
                 subtitle: "Trends & stats",
                 systemImage: "chart.bar",
+                style: .analytics,
                 destination: AnalyticsView(household: household, member: member)
             )
         } else {
@@ -202,6 +215,7 @@ struct HomeDashboardView: View {
                 title: "Analytics",
                 subtitle: "Select a household first",
                 systemImage: "chart.bar",
+                style: .analytics,
                 destination: SharedViews.PlaceholderView(title: "Select Household")
             )
             .opacity(0.6)
