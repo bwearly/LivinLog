@@ -21,12 +21,10 @@ enum MovieFeedbackStore {
         ]
         try context.validateSamePersistentStore(relatedObjects)
 
-        let req = MovieFeedback.fetchRequest()
+        let req = NSFetchRequest<MovieFeedback>(entityName: "MovieFeedback")
         req.fetchLimit = 1
         req.predicate = NSPredicate(format: "movie == %@ AND member == %@", movie, member)
-        if let store = movie.objectID.persistentStore { req.affectedStores = [store] }
-
-        if let existing = (try? context.fetch(req))?.first as? MovieFeedback {
+        if let existing = try context.fetch(req).first {
             let existingObjects: [(String, NSManagedObject?)] = [
                 ("feedback", existing),
                 ("movie", movie),
@@ -40,7 +38,7 @@ enum MovieFeedbackStore {
         }
 
         let fb = MovieFeedback(context: context)
-        try context.assign(fb, toSameStoreAs: movie, referenceLabel: "movie")
+        try MovieStoreSafety.assignInserted(fb, toSameStoreAs: movie, label: "MovieFeedback.getOrCreate", context: context)
         fb.id = UUID()
         fb.updatedAt = Date()
         fb.rating = 0
@@ -54,6 +52,7 @@ enum MovieFeedbackStore {
             ("member", member),
             ("household", movie.household)
         ])
+        try MovieStoreSafety.validateMovieGraph(movie: movie, household: movie.household, context: context, operation: "MovieFeedback.getOrCreate")
         #if DEBUG
         if let household = movie.household {
             context.debugLogStoreSafeSave(entityName: "MovieFeedback", household: household, member: member, objects: [("feedback", fb), ("movie", movie), ("member", member), ("household", household)])

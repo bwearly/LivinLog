@@ -52,6 +52,7 @@ struct MovieDetailView: View {
 
     // Poster
     @State private var posterURL: URL?
+    @State private var saveError: String?
 
     private let persistentContainer = PersistenceController.shared.container
 
@@ -94,9 +95,10 @@ struct MovieDetailView: View {
             Button(isEditing ? "Save" : "Edit") {
                 guard canEdit else { return }
                 if isEditing {
-                    saveAll()
-                    isEditing = false
-                    reloadAll()
+                    if saveAll() {
+                        isEditing = false
+                        reloadAll()
+                    }
                 } else {
                     beginEditing()
                     isEditing = true
@@ -132,6 +134,11 @@ struct MovieDetailView: View {
                     saveViewingDate(viewing, date: updatedDate)
                 }
             )
+        }
+        .alert("Could Not Save Movie", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+            Button("OK", role: .cancel) { saveError = nil }
+        } message: {
+            Text(saveError ?? "Unknown error")
         }
     }
 
@@ -412,10 +419,13 @@ struct MovieDetailView: View {
         loadSelectedMemberFeedback()
     }
 
-    private func saveAll() {
-        saveMovieDetails()
-        saveSelectedMemberFeedback()
+    @discardableResult
+    private func saveAll() -> Bool {
+        saveError = nil
+        guard saveMovieDetails() else { return false }
+        guard saveSelectedMemberFeedback() else { return false }
         reloadAll()
+        return true
     }
 
     // MARK: - Reload data
@@ -467,10 +477,11 @@ struct MovieDetailView: View {
         )
     }
 
-    private func saveMovieDetails() {
-        guard canEdit else { return }
-        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
-        guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
+    @discardableResult
+    private func saveMovieDetails() -> Bool {
+        guard canEdit else { return false }
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { saveError = "Could not resolve the active household."; return false }
+        guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { saveError = "Could not resolve this movie in the current context."; return false }
         let store = storeForParent(movieInContext)
 #if DEBUG
         print("🧩 [EditSave] entity=Movie store=\(store?.url?.lastPathComponent ?? "nil-store") objectID=\(movieInContext.objectID.uriRepresentation().absoluteString)")
@@ -499,8 +510,7 @@ struct MovieDetailView: View {
         movieInContext.notes = trimmed.isEmpty ? nil : trimmed
 
         do {
-            context.debugLogStoreSafeSave(entityName: "Movie", household: scopedHousehold, member: nil, objects: [("movie", movieInContext), ("household", scopedHousehold)])
-            try context.validateSamePersistentStore([("movie", movieInContext), ("household", scopedHousehold)])
+            try MovieStoreSafety.validateMovieGraph(movie: movieInContext, household: scopedHousehold, context: context, operation: "Movie.edit")
             try context.save()
             seedMovieEditorFieldsFromMovie()
             print("ℹ️ Movie inherits household share via parent household relationship (no per-object share mutation)")
@@ -510,18 +520,23 @@ struct MovieDetailView: View {
 #endif
         } catch {
             context.rollback()
+            saveError = error.localizedDescription
             print("Save movie details failed:", error)
-            return
+            return false
         }
 
         // Refresh poster after changing title/year
+        let movieObjectID = movieInContext.objectID
+        let posterTitle = movieInContext.title
+        let posterYear = movieInContext.year
         Task {
-            let fetched = await OMDbPosterService.posterURL(title: movieInContext.title, year: movieInContext.year)
+            let fetched = await OMDbPosterService.posterURL(title: posterTitle, year: posterYear)
             await MainActor.run {
-                movieInContext.posterURL = fetched?.absoluteString
+                guard let movieForPoster = (try? context.existingObject(with: movieObjectID)) as? Movie else { return }
+                movieForPoster.posterURL = fetched?.absoluteString
                 posterURL = fetched
                 do {
-                    try context.validateSamePersistentStore([("movie", movieInContext), ("household", movieInContext.household)])
+                    try MovieStoreSafety.validateMovieGraph(movie: movieForPoster, household: movieForPoster.household, context: context, operation: "Movie.poster.edit")
                     try context.save()
                 } catch {
                     context.rollback()
@@ -529,6 +544,7 @@ struct MovieDetailView: View {
                 }
             }
         }
+        return true
     }
 
     // MARK: - Feedback
@@ -537,31 +553,49 @@ struct MovieDetailView: View {
         guard let selectedMember else { return }
         guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
         guard let memberInContext = (try? context.existingObject(with: selectedMember.objectID)) as? HouseholdMember else { return }
+
+        let request = NSFetchRequest<MovieFeedback>(entityName: "MovieFeedback")
+        request.fetchLimit = 1
+        request.predicate = NSPredicate(format: "movie == %@ AND member == %@", movieInContext, memberInContext)
         do {
-            let fb = try MovieFeedbackStore.getOrCreate(movie: movieInContext, member: memberInContext, context: context)
-            editRating = fb.rating
-            editSlept = fb.slept
-            editNotes = fb.notes ?? ""
+            if let fb = try context.fetch(request).first {
+                try context.validateSamePersistentStore([
+                    ("feedback", fb),
+                    ("movie", movieInContext),
+                    ("member", memberInContext),
+                    ("household", fb.household ?? movieInContext.household)
+                ])
+                editRating = fb.rating
+                editSlept = fb.slept
+                editNotes = fb.notes ?? ""
+            } else {
+                editRating = 0
+                editSlept = false
+                editNotes = ""
+            }
         } catch {
             context.rollback()
+            saveError = error.localizedDescription
             print("❌ [MovieFeedback] load failed:", error)
         }
     }
 
-    private func saveSelectedMemberFeedback() {
-        guard canEdit else { return }
-        guard let selectedMember else { return }
-        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
-        guard let selectedMemberInContext = (try? context.existingObject(with: selectedMember.objectID)) as? HouseholdMember else { return }
-        guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
+    @discardableResult
+    private func saveSelectedMemberFeedback() -> Bool {
+        guard canEdit else { return false }
+        guard let selectedMember else { return true }
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { saveError = "Could not resolve the active household."; return false }
+        guard let selectedMemberInContext = (try? context.existingObject(with: selectedMember.objectID)) as? HouseholdMember else { saveError = "Could not resolve the selected member."; return false }
+        guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { saveError = "Could not resolve this movie in the current context."; return false }
 
         let fb: MovieFeedback
         do {
             fb = try MovieFeedbackStore.getOrCreate(movie: movieInContext, member: selectedMemberInContext, context: context)
         } catch {
             context.rollback()
+            saveError = error.localizedDescription
             print("❌ [MovieFeedback] save blocked:", error)
-            return
+            return false
         }
         let store = storeForParent(movieInContext)
         assignIfInserted(fb, to: store, in: context)
@@ -587,6 +621,7 @@ struct MovieDetailView: View {
 
         do {
             try context.validateSamePersistentStore(objectsToValidate)
+            try MovieStoreSafety.validateMovieGraph(movie: movieInContext, household: scopedHousehold, context: context, operation: "MovieFeedback.save")
             try context.save()
             print("ℹ️ MovieFeedback inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
@@ -594,9 +629,12 @@ struct MovieDetailView: View {
             debugLogHouseholdAssignment(entityName: "MovieFeedback", object: fb, household: scopedHousehold, context: context)
 #endif
             print("✅ Saved feedback for movie:", movie.objectID, "member:", selectedMember.objectID)
+            return true
         } catch {
             context.rollback()
+            saveError = error.localizedDescription
             print("Save feedback failed:", error)
+            return false
         }
     }
 
@@ -615,7 +653,14 @@ struct MovieDetailView: View {
             guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
             let v = Viewing(context: context)
             let store = storeForParent(movieInContext)
-            assignIfInserted(v, to: store, in: context)
+            do {
+                try MovieStoreSafety.assignInserted(v, toSameStoreAs: movieInContext, label: "Viewing(new)", context: context)
+            } catch {
+                context.rollback()
+                saveError = error.localizedDescription
+                print("❌ Failed to assign viewing store:", error)
+                return
+            }
 #if DEBUG
             print("🧩 [EditSave] entity=Viewing(new) store=\(store?.url?.lastPathComponent ?? "nil-store") parentObjectID=\(movieInContext.objectID.uriRepresentation().absoluteString)")
 #endif
@@ -634,6 +679,7 @@ struct MovieDetailView: View {
             do {
                 context.debugLogStoreSafeSave(entityName: "Viewing", household: scopedHousehold, member: nil, objects: [("viewing", v), ("movie", movieInContext), ("household", scopedHousehold)])
                 try context.validateSamePersistentStore([("viewing", v), ("movie", movieInContext), ("household", scopedHousehold)])
+                try MovieStoreSafety.validateMovieGraph(movie: movieInContext, household: scopedHousehold, context: context, operation: "Viewing.add")
                 try context.save()
 #if DEBUG
                 if let scopedHousehold = activeHouseholdInContext(household, context: context) {
@@ -648,6 +694,7 @@ struct MovieDetailView: View {
                 print("✅ Added viewing for movie:", movie.objectID, "rewatch:", isRewatch)
             } catch {
                 context.rollback()
+                saveError = error.localizedDescription
                 print("❌ Failed to save viewing:", error)
 
                 // This prints *why* validation failed (super helpful)
@@ -668,7 +715,11 @@ struct MovieDetailView: View {
             for index in offsets {
                 guard viewings.indices.contains(index) else { continue }
                 let viewing = viewings[index]
-                try context.validateSamePersistentStore([("viewing", viewing), ("movie", viewing.movie), ("household", viewing.household)])
+                if let movie = viewing.movie {
+                    try MovieStoreSafety.validateMovieGraph(movie: movie, household: viewing.household, context: context, operation: "Viewing.delete")
+                } else {
+                    try context.validateSamePersistentStore([("viewing", viewing), ("household", viewing.household)])
+                }
                 context.delete(viewing)
             }
             try context.save()
@@ -676,6 +727,7 @@ struct MovieDetailView: View {
             print("✅ Deleted viewings for movie:", movie.objectID, "count:", offsets.count)
         } catch {
             context.rollback()
+            saveError = error.localizedDescription
             print("Failed to delete viewings:", error)
         }
     }
@@ -683,13 +735,18 @@ struct MovieDetailView: View {
     private func deleteViewing(_ viewing: Viewing) {
         guard canEdit else { return }
         do {
-            try context.validateSamePersistentStore([("viewing", viewing), ("movie", viewing.movie), ("household", viewing.household)])
+            if let movie = viewing.movie {
+                try MovieStoreSafety.validateMovieGraph(movie: movie, household: viewing.household, context: context, operation: "Viewing.delete")
+            } else {
+                try context.validateSamePersistentStore([("viewing", viewing), ("household", viewing.household)])
+            }
             context.delete(viewing)
             try context.save()
             reloadViewings()
             print("✅ Deleted viewing:", viewing.objectID)
         } catch {
             context.rollback()
+            saveError = error.localizedDescription
             print("Failed to delete viewing:", error)
         }
     }
@@ -715,8 +772,12 @@ struct MovieDetailView: View {
 #endif
         viewingInContext.watchedOn = date
         do {
-            context.debugLogStoreSafeSave(entityName: "Viewing.edit", household: scopedHousehold, member: nil, objects: [("viewing", viewingInContext), ("household", viewingInContext.household)])
-            try context.validateSamePersistentStore([("viewing", viewingInContext), ("household", viewingInContext.household)])
+            context.debugLogStoreSafeSave(entityName: "Viewing.edit", household: scopedHousehold, member: nil, objects: [("viewing", viewingInContext), ("movie", viewingInContext.movie), ("household", viewingInContext.household)])
+            if let movie = viewingInContext.movie {
+                try MovieStoreSafety.validateMovieGraph(movie: movie, household: scopedHousehold, context: context, operation: "Viewing.edit")
+            } else {
+                try context.validateSamePersistentStore([("viewing", viewingInContext), ("household", viewingInContext.household)])
+            }
             try context.save()
             print("ℹ️ Viewing inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
@@ -727,6 +788,7 @@ struct MovieDetailView: View {
             print("✅ Updated viewing date:", viewingInContext.objectID)
         } catch {
             context.rollback()
+            saveError = error.localizedDescription
             print("Failed to update viewing date:", error)
         }
     }
@@ -744,9 +806,10 @@ struct MovieDetailView: View {
 
         if let fetched {
             await MainActor.run {
-                movie.posterURL = fetched.absoluteString
                 do {
-                    try context.validateSamePersistentStore([("movie", movie), ("household", movie.household)])
+                    guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
+                    movieInContext.posterURL = fetched.absoluteString
+                    try MovieStoreSafety.validateMovieGraph(movie: movieInContext, household: movieInContext.household, context: context, operation: "Movie.poster.load")
                     try context.save()
                 } catch {
                     context.rollback()
