@@ -85,7 +85,7 @@ extension NSManagedObjectContext {
                 print("🧩 [StoreSafeSave] \(label)=nil")
                 continue
             }
-            print("🧩 [StoreSafeSave] \(label) entity=\(object.entity.name ?? "Unknown") objectID=\(object.objectID.uriRepresentation().absoluteString) store=\(storeDebugDescription(object.objectID.persistentStore))")
+            print("🧩 [StoreSafeSave] \(label) entity=\(object.entity.name ?? "Unknown") objectID=\(object.objectID.uriRepresentation().absoluteString) store=\(storeDebugDescription(object.objectID.persistentStore)) isInserted=\(object.isInserted) assignCalled=see-prior-StoreAssign-or-MovieStoreAssign-log")
         }
         #endif
     }

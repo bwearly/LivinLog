@@ -28,6 +28,7 @@ struct MoviesListView: View {
     @State private var members: [HouseholdMember] = []
     @State private var ratingByMovieID: [NSManagedObjectID: RatingSummary] = [:]
     @State private var sleptMovieIDs: Set<NSManagedObjectID> = []
+    @State private var saveError: String?
 
     private var canWrite: Bool {
         IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
@@ -151,6 +152,9 @@ struct MoviesListView: View {
             await reloadAggregates()
 
             if canWrite {
+#if DEBUG
+                MovieStoreSafety.diagnoseMovieGraphs(household: household, context: context, reason: "MoviesListView.task")
+#endif
                 await backfillHouseholdIDAndPostersIfNeeded()
             }
 
@@ -166,6 +170,11 @@ struct MoviesListView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSManagedObjectContextObjectsDidChange, object: context)) { _ in
             Task { await reloadAggregates() }
+        }
+        .alert("Could Not Update Movies", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+            Button("OK", role: .cancel) { saveError = nil }
+        } message: {
+            Text(saveError ?? "Unknown error")
         }
     }
 
@@ -275,7 +284,15 @@ struct MoviesListView: View {
         if household.id == nil {
             await MainActor.run {
                 household.id = UUID()
-                try? context.save()
+                do {
+                    context.debugLogStoreSafeSave(entityName: "Movie.householdIDBackfill.household", household: household, member: member, objects: [("household", household)])
+                    try MovieStoreSafety.validateHouseholdMovieGraphs(household: household, context: context, operation: "Movie.householdIDBackfill.household")
+                    try context.save()
+                } catch {
+                    context.rollback()
+                    saveError = error.localizedDescription
+                    print("❌ [MovieBackfill] household save blocked:", error)
+                }
             }
         }
 
@@ -286,10 +303,17 @@ struct MoviesListView: View {
             request.predicate = NSPredicate(format: "household == %@ AND householdID == nil", household)
 
             if let legacyMovies = try? context.fetch(request), !legacyMovies.isEmpty {
-                for movie in legacyMovies {
-                    movie.householdID = householdID
+                do {
+                    for movie in legacyMovies {
+                        movie.householdID = householdID
+                        try MovieStoreSafety.validateMovieGraph(movie: movie, household: household, context: context, operation: "Movie.householdIDBackfill")
+                    }
+                    try context.save()
+                } catch {
+                    context.rollback()
+                    saveError = error.localizedDescription
+                    print("❌ [MovieBackfill] householdID save blocked:", error)
                 }
-                try? context.save()
             }
         }
 
@@ -315,9 +339,23 @@ struct MoviesListView: View {
             for (objectID, urlString) in updates {
                 if let movie = try? context.existingObject(with: objectID) as? Movie {
                     movie.posterURL = urlString
+                    do {
+                        try MovieStoreSafety.validateMovieGraph(movie: movie, household: movie.household, context: context, operation: "Movie.posterBackfill")
+                    } catch {
+                        context.rollback()
+                        saveError = error.localizedDescription
+                        print("❌ [MoviePosterBackfill] save blocked:", error)
+                        return
+                    }
                 }
             }
-            try? context.save()
+            do {
+                try context.save()
+            } catch {
+                context.rollback()
+                saveError = error.localizedDescription
+                print("❌ [MoviePosterBackfill] save failed:", error)
+            }
         }
     }
 
@@ -412,12 +450,13 @@ struct MoviesListView: View {
         let toDelete = offsets.map { filteredMovies[$0] }
         do {
             for movie in toDelete {
-                try context.validateSamePersistentStore([("movie", movie), ("household", movie.household)])
+                try MovieStoreSafety.validateMovieDelete(movie: movie, context: context)
                 context.delete(movie)
             }
             try context.save()
         } catch {
             context.rollback()
+            saveError = error.localizedDescription
             print("Delete movie failed:", error)
         }
     }
