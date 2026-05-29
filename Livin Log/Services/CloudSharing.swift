@@ -98,8 +98,13 @@ enum CloudSharing {
                         return
                     }
 
+                    let householdURI = householdInContext.objectID.uriRepresentation().absoluteString
+                    let storeURLString = store.url?.lastPathComponent ?? "unknown-store"
+                    print("ℹ️ [CloudSharing] Creating/updating owner Household share household=\(householdURI) store=\(storeURLString)")
+
                     persistentContainer.share([householdInContext], to: nil) { _, share, _, error in
                         if let error {
+                            print("❌ [CloudSharing] Household share creation failed: \(error.localizedDescription)")
                             continuation.resume(throwing: error)
                             return
                         }
@@ -126,8 +131,8 @@ enum CloudSharing {
                             print("[CloudSharing] share.url=nil")
                         }
                         print("[CloudSharing] share.recordID=\(share.recordID.recordName)")
-                        let storeURLString = store.url?.absoluteString ?? "nil"
-                        print("[CloudSharing] persisting updated share into storeURL=\(storeURLString)")
+                        let debugStoreURLString = store.url?.absoluteString ?? "nil"
+                        print("[CloudSharing] persisting updated share into storeURL=\(debugStoreURLString)")
 #endif
 
                         // ✅ Persist updated share fields back to CloudKit
@@ -136,6 +141,8 @@ enum CloudSharing {
                                 continuation.resume(throwing: persistError)
                                 return
                             }
+
+                            print("ℹ️ [CloudSharing] Household share persisted recordID=\(share.recordID.recordName) urlAvailable=\(share.url != nil)")
 
                             do {
                                 let persisted = try persistentContainer.fetchShares(matching: [householdInContext.objectID])

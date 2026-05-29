@@ -296,8 +296,14 @@ struct SettingsView: View {
     private var profilesSection: some View {
         Section("Profiles & Households") {
             NavigationLink {
-                HouseholdProfileManagementView(memberships: currentMemberships())
-                    .environmentObject(appState)
+                HouseholdProfileManagementView(
+                    memberships: currentMemberships(),
+                    currentMembership: appState.currentMembership,
+                    currentHousehold: appState.household,
+                    currentMember: appState.member,
+                    currentAppUser: appState.appUser,
+                    onCleanupCompleted: { await appState.start(callSite: "SettingsView.profileCleanup") }
+                )
             } label: {
                 Label("Manage Duplicate Profiles", systemImage: "person.2.badge.gearshape")
             }
@@ -637,7 +643,13 @@ struct SettingsView: View {
             defer { isSharing = false }
 
             do {
-                let hh = try context.existingObject(with: household.objectID) as! Household
+                guard let hh = try context.existingObject(with: household.objectID) as? Household else {
+                    throw NSError(
+                        domain: "SettingsView",
+                        code: 1001,
+                        userInfo: [NSLocalizedDescriptionKey: "Household could not be resolved before resetting sharing."]
+                    )
+                }
                 if let existing = try CloudSharing.fetchShare(for: hh.objectID, persistentContainer: persistentContainer) {
                     try await CloudSharing.stopSharing(share: existing, persistentContainer: persistentContainer)
                     persistedLastShareStatus = "Stopped previous share"

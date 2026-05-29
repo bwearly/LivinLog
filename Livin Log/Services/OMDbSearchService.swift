@@ -83,7 +83,7 @@ enum OMDbSearchService {
             return cached
         }
 
-        var components = URLComponents(string: "https://www.omdbapi.com/")!
+        guard var components = URLComponents(string: "https://www.omdbapi.com/") else { return [] }
         var queryItems: [URLQueryItem] = [
             URLQueryItem(name: "apikey", value: OMDbAPIConfig.apiKey),
             URLQueryItem(name: "s", value: trimmedTitle)

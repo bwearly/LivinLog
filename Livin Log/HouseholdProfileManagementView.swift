@@ -3,11 +3,15 @@ import CoreData
 
 struct HouseholdProfileManagementView: View {
     @Environment(\.managedObjectContext) private var context
-    @EnvironmentObject private var appState: AppState
 
     let memberships: [HouseholdMembership]
     let onPicked: ((HouseholdMembership) -> Void)?
     let showsPickerTitle: Bool
+    let currentMembership: HouseholdMembership?
+    let currentHousehold: Household?
+    let currentMember: HouseholdMember?
+    let currentAppUser: AppUser?
+    let onCleanupCompleted: (() async -> Void)?
 
     @State private var pendingCleanup: CleanupCandidate?
     @State private var cleanupError: String?
@@ -17,11 +21,21 @@ struct HouseholdProfileManagementView: View {
     init(
         memberships: [HouseholdMembership],
         showsPickerTitle: Bool = false,
-        onPicked: ((HouseholdMembership) -> Void)? = nil
+        currentMembership: HouseholdMembership? = nil,
+        currentHousehold: Household? = nil,
+        currentMember: HouseholdMember? = nil,
+        currentAppUser: AppUser? = nil,
+        onPicked: ((HouseholdMembership) -> Void)? = nil,
+        onCleanupCompleted: (() async -> Void)? = nil
     ) {
         self.memberships = memberships
         self.showsPickerTitle = showsPickerTitle
+        self.currentMembership = currentMembership
+        self.currentHousehold = currentHousehold
+        self.currentMember = currentMember
+        self.currentAppUser = currentAppUser
         self.onPicked = onPicked
+        self.onCleanupCompleted = onCleanupCompleted
     }
 
     var body: some View {
@@ -70,7 +84,7 @@ struct HouseholdProfileManagementView: View {
 
     @ViewBuilder
     private func profileRow(for membership: HouseholdMembership) -> some View {
-        let summary = ProfileSummary(membership: membership, currentMembership: appState.currentMembership, currentHousehold: appState.household, currentMember: appState.member)
+        let summary = ProfileSummary(membership: membership, currentMembership: currentMembership, currentHousehold: currentHousehold, currentMember: currentMember)
         VStack(alignment: .leading, spacing: 10) {
             Button {
                 onPicked?(membership)
@@ -180,7 +194,7 @@ struct HouseholdProfileManagementView: View {
     }
 
     private func isProvenOwner(of household: Household, via membership: HouseholdMembership) -> Bool {
-        guard let appUser = appState.appUser,
+        guard let appUser = currentAppUser,
               let durableId = IdentityStore.durableUserId(for: appUser) else { return false }
         let role = (membership.role ?? "").lowercased()
         let createdBy = household.value(forKey: "createdByAppUserId") as? String
@@ -203,8 +217,12 @@ struct HouseholdProfileManagementView: View {
             pendingCleanup = nil
             SelectionStore.clearAll()
             debugCleanup("cleared cached selection after \(candidate.kind.logLabel)")
-            Task { @MainActor in
-                await appState.start(callSite: "HouseholdProfileManagementView.cleanup")
+            if let onCleanupCompleted {
+                Task { @MainActor in
+                    await onCleanupCompleted()
+                    isCleaningUp = false
+                }
+            } else {
                 isCleaningUp = false
             }
         } catch {

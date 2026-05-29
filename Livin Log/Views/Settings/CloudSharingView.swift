@@ -27,7 +27,13 @@ struct CloudSharingView: UIViewControllerRepresentable {
             Task { @MainActor in
                 do {
                     // ✅ Re-fetch the object in THIS context (important)
-                    let hh = try viewContext.existingObject(with: household.objectID) as! Household
+                    guard let hh = try viewContext.existingObject(with: household.objectID) as? Household else {
+                        throw NSError(
+                            domain: "CloudSharingView",
+                            code: 1,
+                            userInfo: [NSLocalizedDescriptionKey: "Household could not be resolved before sharing."]
+                        )
+                    }
 
                     // Save any pending changes before sharing
                     if viewContext.hasChanges {

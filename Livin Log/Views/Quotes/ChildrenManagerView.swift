@@ -422,13 +422,7 @@ private struct AddEditChildView: View {
 
         do {
             try context.save()
-
-            includeInHouseholdShare(
-                persistentContainer: persistentContainer,
-                household: scopedHousehold,
-                objects: [child],
-                label: "LLChild"
-            )
+            print("ℹ️ LLChild inherits household share via parent household relationship (no per-object share mutation)")
 
             #if DEBUG
             debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")

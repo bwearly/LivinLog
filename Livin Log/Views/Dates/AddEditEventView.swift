@@ -141,12 +141,7 @@ struct AddEditEventView: View {
 
         do {
             try context.save()
-            includeInHouseholdShare(
-                persistentContainer: persistentContainer,
-                household: scopedHousehold,
-                objects: [event],
-                label: "LLCalendarEvent"
-            )
+            print("ℹ️ LLCalendarEvent inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
             debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
             debugLogHouseholdAssignment(entityName: "LLCalendarEvent", object: event, household: scopedHousehold, context: context)
