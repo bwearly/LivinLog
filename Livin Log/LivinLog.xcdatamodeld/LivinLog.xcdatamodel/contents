@@ -12,7 +12,7 @@
         <relationship name="puzzles" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="LLPuzzle" inverseName="household" inverseEntity="LLPuzzle" />
         <relationship name="children" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="LLChild" inverseName="household" inverseEntity="LLChild" />
         <relationship name="quotes" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="LLQuote" inverseName="household" inverseEntity="LLQuote" />
-        <relationship name="tvshows" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="TVShow" inverseName="household" inverseEntity="TVShow" />
+        <relationship name="tvshows" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="TVShow" inverseName="household" inverseEntity="TVShow" />
         <relationship name="viewings" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Viewing" inverseName="household" inverseEntity="Viewing" />
         <relationship name="memberships" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="HouseholdMembership" inverseName="household" inverseEntity="HouseholdMembership" />
         <relationship name="bookEntries" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="BookEntry" inverseName="household" inverseEntity="BookEntry" />
@@ -78,6 +78,8 @@
         <attribute name="genre" optional="YES" attributeType="String" />
         <attribute name="householdID" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
         <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
+        <attribute name="imdbID" optional="YES" attributeType="String" />
+        <attribute name="mediaType" optional="YES" attributeType="String" />
         <attribute name="mpaaRating" optional="YES" attributeType="String" />
         <attribute name="notes" optional="YES" attributeType="String" />
         <attribute name="posterURL" optional="YES" attributeType="String" />
@@ -101,6 +103,8 @@
         <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
         <attribute name="householdID" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
         <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
+        <attribute name="imdbID" optional="YES" attributeType="String" />
+        <attribute name="mediaType" optional="YES" attributeType="String" />
         <attribute name="notes" optional="YES" attributeType="String" />
         <attribute name="posterURL" optional="YES" attributeType="String" />
         <attribute name="ratingText" optional="YES" attributeType="String" />

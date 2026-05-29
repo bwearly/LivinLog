@@ -22,6 +22,28 @@ struct AddTVShowView: View {
     @State private var seasonsText: String = ""
     @State private var notes: String = ""
     @State private var rewatch: Bool = false
+    @State private var selectedPosterURLString: String = ""
+    @State private var selectedIMDbID: String?
+    @State private var selectedMediaType: String?
+
+    @State private var searchResults: [OMDbSearchResult] = []
+    @State private var isSearchingMedia = false
+    @State private var searchMessage: String?
+    @State private var searchError: String?
+    @FocusState private var focusedMediaField: MediaAutocompleteField?
+
+    private enum MediaAutocompleteField: String {
+        case title
+        case year
+    }
+
+    private var isMediaAutocompleteFocused: Bool {
+        focusedMediaField == .title || focusedMediaField == .year
+    }
+
+    private var shouldShowMediaAutocomplete: Bool {
+        isMediaAutocompleteFocused && !searchResults.isEmpty
+    }
 
     @State private var isSaving = false
     @State private var saveError: String?
@@ -35,9 +57,26 @@ struct AddTVShowView: View {
         Form {
             Section("TV Show") {
                 TextField("Title", text: $title)
+                    .focused($focusedMediaField, equals: .title)
 
                 TextField("Year", text: $yearText)
                     .keyboardType(.numberPad)
+                    .focused($focusedMediaField, equals: .year)
+
+                if isMediaAutocompleteFocused {
+                    if isSearchingMedia {
+                        ProgressView("Searching OMDb…")
+                            .font(.caption)
+                    } else if let searchError {
+                        Text(searchError)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    } else if let searchMessage {
+                        Text(searchMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
                 Picker("Rating", selection: $contentRating) {
                     ForEach(ContentRating.allCases) { r in
@@ -61,9 +100,30 @@ struct AddTVShowView: View {
                         }
                     }
             }
+
+            if shouldShowMediaAutocomplete {
+                Section("TV Show Search Results") {
+                    ForEach(searchResults) { result in
+                        Button {
+                            applySearchResult(result)
+                        } label: {
+                            MediaSearchResultRow(result: result)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
         }
         .navigationTitle("Add TV Show")
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: "\(title)|\(yearText)|\(focusedMediaField?.rawValue ?? "none")") {
+            await searchTVShowsDebounced()
+        }
+        .onChange(of: focusedMediaField) { _, newFocus in
+            if newFocus == nil {
+                hideMediaAutocomplete()
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
@@ -79,6 +139,86 @@ struct AddTVShowView: View {
             Text(saveError ?? "The TV show could not be saved.")
         }
     }
+
+
+    private func searchTVShowsDebounced() async {
+        guard isMediaAutocompleteFocused else {
+            hideMediaAutocomplete()
+            return
+        }
+
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard OMDbSearchService.meaningfulCharacterCount(in: trimmedTitle) >= 3 else {
+            searchResults = []
+            searchError = nil
+            searchMessage = trimmedTitle.isEmpty ? nil : "Type at least 3 characters to search OMDb."
+            isSearchingMedia = false
+            return
+        }
+
+        do {
+            try await Task.sleep(nanoseconds: 500_000_000)
+        } catch {
+            return
+        }
+        guard !Task.isCancelled, isMediaAutocompleteFocused else { return }
+
+        isSearchingMedia = true
+        searchMessage = nil
+        searchError = nil
+
+        do {
+            let results = try await OMDbSearchService.search(title: trimmedTitle, year: yearText, preferredType: .series)
+            guard !Task.isCancelled, isMediaAutocompleteFocused else { return }
+            searchResults = results
+            searchMessage = results.isEmpty ? "No OMDb matches yet. You can still save manually." : nil
+        } catch let error as URLError where error.code == .cancelled {
+            return
+        } catch {
+            guard !Task.isCancelled else { return }
+            searchResults = []
+            searchMessage = nil
+            searchError = "TV show search is temporarily unavailable. You can still enter details manually."
+#if DEBUG
+            print("📺 [TVShowSearch] active search failed: \(error)")
+#endif
+        }
+
+        isSearchingMedia = false
+    }
+
+    private func applySearchResult(_ result: OMDbSearchResult) {
+        title = result.title
+        if let year = result.yearInt16 {
+            yearText = String(Int(year))
+        }
+        selectedPosterURLString = result.normalizedPosterURLString
+        selectedIMDbID = result.imdbID
+        selectedMediaType = result.type
+        hideMediaAutocomplete()
+        focusedMediaField = nil
+    }
+
+    private func hideMediaAutocomplete() {
+        searchResults = []
+        searchMessage = nil
+        searchError = nil
+        isSearchingMedia = false
+    }
+
+#if DEBUG
+    private static func tvShowCount(in household: Household, context: NSManagedObjectContext) -> Int {
+        let request = NSFetchRequest<TVShow>(entityName: "TVShow")
+        request.predicate = householdScopedPredicate(household)
+        request.includesPendingChanges = true
+        do {
+            return try context.count(for: request)
+        } catch {
+            print("❌ [TVShowSave] count failed: \(error.localizedDescription)")
+            return -1
+        }
+    }
+#endif
 
     @MainActor
     private func saveTVShow() async {
@@ -114,6 +254,12 @@ struct AddTVShowView: View {
         tvShow.id = UUID()
         tvShow.createdAt = Date()
         tvShow.title = trimmedTitle
+#if DEBUG
+        let debugObjectIDBeforeSave = tvShow.objectID.uriRepresentation().absoluteString
+        print("📺 [TVShowSave] title=\(trimmedTitle) objectIDBeforeSave=\(debugObjectIDBeforeSave) isInserted=\(tvShow.isInserted)")
+        print("📺 [TVShowSave] household name=\(scopedHousehold.name ?? "<unnamed>") id=\(scopedHousehold.id?.uuidString ?? "<nil>") objectID=\(scopedHousehold.objectID.uriRepresentation().absoluteString) store=\(storeDebugDescription(scopedHousehold.objectID.persistentStore))")
+        print("📺 [TVShowSave] tvShow store after assignment=\(storeDebugDescription(tvShow.objectID.persistentStore))")
+#endif
         tvShow.household = scopedHousehold
         tvShow.householdID = scopedHousehold.id
 
@@ -130,6 +276,9 @@ struct AddTVShowView: View {
         }
 
         tvShow.rewatch = rewatch
+        tvShow.posterURL = selectedPosterURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : selectedPosterURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        tvShow.setValue(selectedIMDbID, forKey: "imdbID")
+        tvShow.setValue(selectedMediaType, forKey: "mediaType")
 
         // Store rating as text (Core Data: TVShow.ratingText : String)
         tvShow.ratingText = contentRating.rawValue
@@ -138,8 +287,10 @@ struct AddTVShowView: View {
         tvShow.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
 
         // ✅ Fetch poster and store it on TVShow.posterURL (Core Data: String)
-        let fetched = await OMDbPosterService.posterURL(title: tvShow.title, year: tvShow.year)
-        tvShow.posterURL = fetched?.absoluteString
+        if (tvShow.posterURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let fetched = await OMDbPosterService.posterURL(title: tvShow.title, year: tvShow.year)
+            tvShow.posterURL = fetched?.absoluteString
+        }
 
         do {
             let objectsToValidate: [(String, NSManagedObject?)] = [("tvShow", tvShow), ("household", scopedHousehold)]
@@ -149,6 +300,9 @@ struct AddTVShowView: View {
             try context.save()
             print("ℹ️ TVShow inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
+            let totalAfterSave = Self.tvShowCount(in: scopedHousehold, context: context)
+            print("📺 [TVShowSave] title=\(tvShow.title ?? "<untitled>") year=\(Int(tvShow.year)) objectIDBeforeSave=\(debugObjectIDBeforeSave) objectIDAfterSave=\(tvShow.objectID.uriRepresentation().absoluteString) isInserted=\(tvShow.isInserted)")
+            print("📺 [TVShowSave] household name=\(scopedHousehold.name ?? "<unnamed>") id=\(scopedHousehold.id?.uuidString ?? "<nil>") store=\(storeDebugDescription(scopedHousehold.objectID.persistentStore)) totalTVShowsForHousehold=\(totalAfterSave)")
             debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
             debugLogHouseholdAssignment(entityName: "TVShow", object: tvShow, household: scopedHousehold, context: context)
 #endif

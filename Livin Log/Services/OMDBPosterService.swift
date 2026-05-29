@@ -14,8 +14,6 @@ actor PosterCache {
 }
 
 enum OMDbPosterService {
-    private static let apiKey = "fcedff92"
-
     private struct OMDbResponse: Decodable {
         let Response: String
         let Poster: String?
@@ -31,7 +29,7 @@ enum OMDbPosterService {
 
         var components = URLComponents(string: "https://www.omdbapi.com/")!
         var items: [URLQueryItem] = [
-            URLQueryItem(name: "apikey", value: apiKey),
+            URLQueryItem(name: "apikey", value: OMDbAPIConfig.apiKey),
             URLQueryItem(name: "t", value: trimmed)
         ]
         if year != 0 {
@@ -44,9 +42,20 @@ enum OMDbPosterService {
         do {
             let (data, response) = try await URLSession.shared.data(from: url)
 
-            // Helpful debug if needed
-            if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-                print("🎬 OMDb HTTP:", http.statusCode)
+            guard let http = response as? HTTPURLResponse else { return nil }
+            guard http.statusCode == 200 else {
+#if DEBUG
+                print("🎬 [OMDbPoster] non-200 status=\(http.statusCode)")
+#endif
+                return nil
+            }
+
+            let contentType = http.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
+            guard contentType.contains("json") || contentType.isEmpty else {
+#if DEBUG
+                print("🎬 [OMDbPoster] non-json content-type=\(contentType)")
+#endif
+                return nil
             }
 
             let decoded = try JSONDecoder().decode(OMDbResponse.self, from: data)
@@ -55,7 +64,9 @@ enum OMDbPosterService {
                   let posterStr = decoded.Poster,
                   posterStr != "N/A"
             else {
-                if let err = decoded.Error { print("🎬 OMDb error:", err) }
+#if DEBUG
+                if let err = decoded.Error { print("🎬 [OMDbPoster] response error:", err) }
+#endif
                 return nil
             }
 
@@ -65,8 +76,15 @@ enum OMDbPosterService {
 
             await PosterCache.shared.set(key, url: posterURL)
             return posterURL
+        } catch let error as URLError where error.code == .cancelled {
+#if DEBUG
+            print("🎬 [OMDbPoster] request cancelled")
+#endif
+            return nil
         } catch {
-            print("🎬 OMDb exception:", error)
+#if DEBUG
+            print("🎬 [OMDbPoster] exception:", error)
+#endif
             return nil
         }
     }
