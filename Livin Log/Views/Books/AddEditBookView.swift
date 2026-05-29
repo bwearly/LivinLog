@@ -63,7 +63,7 @@ struct AddEditBookView: View {
 
     var body: some View {
         Form {
-            Section("Book") {
+            Section {
                 HStack(alignment: .top, spacing: 12) {
                     BookCoverArtwork(urlString: coverURLString, size: CGSize(width: 64, height: 92))
 
@@ -92,10 +92,12 @@ struct AddEditBookView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+            } header: {
+                SharedViews.AccentSectionHeader(title: "Book", systemImage: "book.closed.fill", style: .books)
             }
 
             if shouldShowBookAutocomplete {
-                Section("Book Search Results") {
+                Section {
                     ForEach(searchResults) { result in
                         Button {
                             applySearchResult(result)
@@ -104,10 +106,12 @@ struct AddEditBookView: View {
                         }
                         .buttonStyle(.plain)
                     }
+                } header: {
+                    SharedViews.AccentSectionHeader(title: "Book Search Results", systemImage: "magnifyingglass", style: .books)
                 }
             }
 
-            Section("Details") {
+            Section {
                 TextField("Rating (0.00 - 10.00)", text: $ratingText)
                     .keyboardType(.decimalPad)
                 Text("Decimal rating out of 10 (e.g., 7.23)")
@@ -117,11 +121,15 @@ struct AddEditBookView: View {
                 Stepper("Spice Level: \(spiceLevel)", value: $spiceLevel, in: 0...5)
                 TextField("Book Length (e.g., 420 pages)", text: $bookLength)
                 DatePicker("Finished", selection: $finishedAt, displayedComponents: .date)
+            } header: {
+                SharedViews.AccentSectionHeader(title: "Details", systemImage: "slider.horizontal.3", style: .books)
             }
 
-            Section("Notes") {
+            Section {
                 TextEditor(text: $notes)
                     .frame(minHeight: 120)
+            } header: {
+                SharedViews.AccentSectionHeader(title: "Notes", systemImage: "text.alignleft", style: .books)
             }
 
             if let errorMessage {
@@ -132,6 +140,8 @@ struct AddEditBookView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(AppCategoryStyle.books.gradient.opacity(0.18))
         .navigationTitle(editingBook == nil ? "Add Book" : "Edit Book")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {

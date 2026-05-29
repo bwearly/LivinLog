@@ -122,10 +122,13 @@ struct MoviesListView: View {
     var body: some View {
         List {
             if filteredMovies.isEmpty {
-                ContentUnavailableView(
-                    searchText.isEmpty ? "No movies yet" : "No results",
-                    systemImage: "film"
+                SharedViews.SoftEmptyState(
+                    title: searchText.isEmpty ? "No movies yet" : "No results",
+                    systemImage: "film.fill",
+                    style: .movies,
+                    description: searchText.isEmpty ? "Add your first family movie night." : "Try another title, genre, or year."
                 )
+                .listRowBackground(Color.clear)
             } else {
                 moviesSection
             }
@@ -136,6 +139,8 @@ struct MoviesListView: View {
             leading: filtersMenuButton,
             trailing: trailingButtons
         )
+        .scrollContentBackground(.hidden)
+        .background(AppCategoryStyle.movies.gradient.opacity(0.12))
         .searchable(text: $searchText, prompt: "Search title, genre, year…")
         .navigationDestination(isPresented: $showGenrePicker) {
             GenrePickerView(title: "Select Genres", allGenres: allGenres, selected: $selectedGenres)
@@ -519,7 +524,9 @@ private struct MovieRowView: View {
                 }
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 4)
+        .background(AppCategoryStyle.movies.gradient, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 
@@ -530,7 +537,7 @@ private struct PosterThumb: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 10)
-                .fill(Color(.secondarySystemBackground))
+                .fill(AppCategoryStyle.movies.gradient)
 
             if let url {
                 AsyncImage(url: url) { phase in

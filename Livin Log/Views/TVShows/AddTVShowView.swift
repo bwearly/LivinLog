@@ -25,6 +25,7 @@ struct AddTVShowView: View {
     @State private var selectedPosterURLString: String = ""
     @State private var selectedIMDbID: String?
     @State private var selectedMediaType: String?
+    @State private var hasSelectedMediaResult = false
 
     @State private var searchResults: [OMDbSearchResult] = []
     @State private var isSearchingMedia = false
@@ -55,7 +56,7 @@ struct AddTVShowView: View {
 
     var body: some View {
         Form {
-            Section("TV Show") {
+            Section {
                 TextField("Title", text: $title)
                     .focused($focusedMediaField, equals: .title)
 
@@ -77,10 +78,12 @@ struct AddTVShowView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+            } header: {
+                SharedViews.AccentSectionHeader(title: "TV Show", systemImage: "tv.fill", style: .tvShows)
             }
 
             if shouldShowMediaAutocomplete {
-                Section("TV Show Search Results") {
+                Section {
                     ForEach(searchResults) { result in
                         Button {
                             applySearchResult(result)
@@ -89,10 +92,24 @@ struct AddTVShowView: View {
                         }
                         .buttonStyle(.plain)
                     }
+                } header: {
+                    SharedViews.AccentSectionHeader(title: "TV Show Search Results", systemImage: "magnifyingglass", style: .tvShows)
                 }
             }
 
-            Section("Details") {
+            if hasSelectedMediaResult {
+                Section {
+                    SelectedMediaPosterPreview(
+                        title: title.isEmpty ? "Selected TV show" : title,
+                        subtitle: yearText.isEmpty ? "TV Show" : "TV Show • \(yearText)",
+                        posterURLString: selectedPosterURLString,
+                        systemImage: "tv.fill",
+                        style: .tvShows
+                    )
+                }
+            }
+
+            Section {
                 Picker("Rating", selection: $contentRating) {
                     ForEach(ContentRating.allCases) { r in
                         Text(r.rawValue).tag(r)
@@ -114,8 +131,12 @@ struct AddTVShowView: View {
                                 .padding(.leading, 5)
                         }
                     }
+            } header: {
+                SharedViews.AccentSectionHeader(title: "Details", systemImage: "slider.horizontal.3", style: .tvShows)
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(AppCategoryStyle.tvShows.gradient.opacity(0.18))
         .navigationTitle("Add TV Show")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: "\(title)|\(yearText)|\(focusedMediaField?.rawValue ?? "none")") {
@@ -197,6 +218,7 @@ struct AddTVShowView: View {
         selectedPosterURLString = result.normalizedPosterURLString
         selectedIMDbID = result.imdbID
         selectedMediaType = result.type
+        hasSelectedMediaResult = true
         hideMediaAutocomplete()
         focusedMediaField = nil
     }

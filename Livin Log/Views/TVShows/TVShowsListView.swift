@@ -94,10 +94,13 @@ struct TVShowsListView: View {
     var body: some View {
         List {
             if filteredShows.isEmpty {
-                ContentUnavailableView(
-                    searchText.isEmpty ? "No TV shows yet" : "No results",
-                    systemImage: "tv"
+                SharedViews.SoftEmptyState(
+                    title: searchText.isEmpty ? "No TV shows yet" : "No results",
+                    systemImage: "tv.fill",
+                    style: .tvShows,
+                    description: searchText.isEmpty ? "Add a show your household is watching." : "Try another title, year, season count, or rating."
                 )
+                .listRowBackground(Color.clear)
             } else {
                 showsSection
             }
@@ -108,6 +111,8 @@ struct TVShowsListView: View {
             leading: sortMenuButton,
             trailing: trailingButtons
         )
+        .scrollContentBackground(.hidden)
+        .background(AppCategoryStyle.tvShows.gradient.opacity(0.12))
         .searchable(text: $searchText, prompt: "Search title, year, seasons, rating, notes…")
         .sheet(isPresented: $showingAdd) {
             NavigationStack {
@@ -387,7 +392,9 @@ private struct TVShowRowView: View {
             }
             .padding(.vertical, 2)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 4)
+        .background(AppCategoryStyle.tvShows.gradient, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 
@@ -405,7 +412,7 @@ private struct TVPosterThumb: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 10)
-                .fill(Color(.secondarySystemBackground))
+                .fill(AppCategoryStyle.tvShows.gradient)
 
             if let url {
                 AsyncImage(url: url) { phase in
