@@ -104,8 +104,12 @@ struct AddTVShowView: View {
         }
 
         let tvShow = TVShow(context: context)
-        if let store = scopedHousehold.objectID.persistentStore {
-            context.assign(tvShow, to: store)
+        do {
+            try TVShowStoreSafety.assignInserted(tvShow, toSameStoreAs: scopedHousehold, context: context)
+        } catch {
+            context.rollback()
+            saveError = error.localizedDescription
+            return
         }
         tvShow.id = UUID()
         tvShow.createdAt = Date()
@@ -141,6 +145,7 @@ struct AddTVShowView: View {
             let objectsToValidate: [(String, NSManagedObject?)] = [("tvShow", tvShow), ("household", scopedHousehold)]
             context.debugLogStoreSafeSave(entityName: "TVShow", household: scopedHousehold, member: member, objects: objectsToValidate)
             try context.validateSamePersistentStore(objectsToValidate)
+            try TVShowStoreSafety.validateGraph(tvShow: tvShow, context: context, operation: "TVShow.add", assignedBeforeRelationships: true)
             try context.save()
             print("ℹ️ TVShow inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
