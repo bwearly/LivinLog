@@ -76,22 +76,27 @@ struct BooksListView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(book.title ?? "Untitled")
                                     .font(.headline)
-                            Text(book.author ?? "Unknown author")
-                                .foregroundStyle(.secondary)
-                            Text(String(format: "Rating %.2f/10", book.rating))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            if let finishedAt = book.finishedAt {
-                                Text("Finished \(finishedAt.formatted(date: .abbreviated, time: .omitted))")
-                                    .font(.caption)
+
+                                Text(book.author ?? "Unknown author")
                                     .foregroundStyle(.secondary)
-                            }
+
+                                SharedViews.AccentPill(
+                                    String(format: "Rating %.2f/10", book.rating),
+                                    systemImage: "star.fill",
+                                    style: .books
+                                )
+
+                                if let finishedAt = book.finishedAt {
+                                    Text("Finished \(finishedAt.formatted(date: .abbreviated, time: .omitted))")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 4)
-                        .background(AppCategoryStyle.books.gradient, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .subtleCategoryRowCard(style: .books, horizontalPadding: 12, verticalPadding: 10)
                     }
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 }
                 .onDelete { offsets in
                     deleteBooks(at: offsets)

@@ -32,10 +32,16 @@ struct EventListView: View {
     var body: some View {
         List {
             if grouped.isEmpty {
-                ContentUnavailableView("No Events Yet", systemImage: "calendar")
+                SharedViews.SoftEmptyState(
+                    title: "No Events Yet",
+                    systemImage: "calendar",
+                    style: .dates,
+                    description: "Add birthdays, anniversaries, and other moments worth remembering."
+                )
+                .listRowBackground(Color.clear)
             } else {
                 ForEach(grouped, id: \.month) { monthGroup in
-                    Section(monthName(monthGroup.month)) {
+                    Section {
                         ForEach(monthGroup.dayGroups, id: \.day) { dayGroup in
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("\(monthName(monthGroup.month, short: true)) \(dayGroup.day)")
@@ -56,12 +62,22 @@ struct EventListView: View {
                                     .buttonStyle(.plain)
                                 }
                             }
-                            .padding(.vertical, 4)
+                            .subtleCategoryRowCard(style: .dates, horizontalPadding: 12, verticalPadding: 10)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                         }
+                    } header: {
+                        SharedViews.AccentSectionHeader(
+                            title: monthName(monthGroup.month),
+                            systemImage: "calendar",
+                            style: .dates
+                        )
                     }
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(AppCategoryStyle.dates.gradient.opacity(0.10))
         .sheet(item: $editingEvent) { event in
             AddEditEventView(household: household, editingEvent: event)
         }

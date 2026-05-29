@@ -52,6 +52,20 @@ enum AppCategoryStyle {
     }
 }
 
+extension View {
+    func subtleCategoryRowCard(
+        style: AppCategoryStyle,
+        horizontalPadding: CGFloat = 10,
+        verticalPadding: CGFloat = 10
+    ) -> some View {
+        modifier(SharedViews.SubtleRowCardModifier(
+            style: style,
+            horizontalPadding: horizontalPadding,
+            verticalPadding: verticalPadding
+        ))
+    }
+}
+
 enum SharedViews {
 
     struct SectionCard<Destination: View>: View {
@@ -156,6 +170,78 @@ enum SharedViews {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 30)
+        }
+    }
+
+
+    struct AccentPill: View {
+        let text: String
+        let systemImage: String?
+        let style: AppCategoryStyle
+
+        init(_ text: String, systemImage: String? = nil, style: AppCategoryStyle) {
+            self.text = text
+            self.systemImage = systemImage
+            self.style = style
+        }
+
+        var body: some View {
+            HStack(spacing: 4) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.caption2.weight(.semibold))
+                }
+
+                Text(text)
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(style.accent)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(style.accent.opacity(0.12), in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(style.accent.opacity(0.2), lineWidth: 0.5)
+            )
+        }
+    }
+
+    struct AccentIconBadge: View {
+        let systemImage: String
+        let style: AppCategoryStyle
+
+        var body: some View {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(style.accent)
+                .frame(width: 22, height: 22)
+                .background(style.accent.opacity(0.12), in: Circle())
+        }
+    }
+
+    struct SubtleRowCardModifier: ViewModifier {
+        let style: AppCategoryStyle
+        var horizontalPadding: CGFloat = 10
+        var verticalPadding: CGFloat = 10
+
+        func body(content: Content) -> some View {
+            content
+                .padding(.vertical, verticalPadding)
+                .padding(.horizontal, horizontalPadding)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(.secondarySystemGroupedBackground).opacity(0.82))
+                )
+                .overlay(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(style.accent.opacity(0.72))
+                        .frame(width: 3)
+                        .padding(.vertical, 12)
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(style.accent.opacity(0.16), lineWidth: 0.75)
+                )
         }
     }
 

@@ -78,7 +78,7 @@ struct CalendarMainView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .tint(.accentColor)
+                    .tint(AppCategoryStyle.dates.accent)
                     .padding(4)
                     .background(.thinMaterial, in: Capsule())
                     .overlay(
@@ -110,6 +110,7 @@ struct CalendarMainView: View {
                     }
                 }
             }
+            .background(AppCategoryStyle.dates.gradient.opacity(0.10))
             .sheet(item: $activeSheet) { sheet in
                 switch sheet {
                 case let .add(month, day):

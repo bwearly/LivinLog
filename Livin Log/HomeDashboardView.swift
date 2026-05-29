@@ -26,9 +26,14 @@ struct HomeDashboardView: View {
                     puzzlesCard
                     quotesCard
                     datesCard
-                    analyticsCard
                 }
-                .padding(16)
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+
+                analyticsCard
+                    .padding(.horizontal, 16)
+                    .padding(.top, 2)
+                    .padding(.bottom, 16)
             }
             .navigationTitle("Livin Log")
             .toolbar {
@@ -205,7 +210,7 @@ struct HomeDashboardView: View {
         if let household {
             SharedViews.SectionCard(
                 title: "Analytics",
-                subtitle: "Trends & stats",
+                subtitle: "Featured trends & stats",
                 systemImage: "chart.bar",
                 style: .analytics,
                 destination: AnalyticsView(household: household, member: member)
