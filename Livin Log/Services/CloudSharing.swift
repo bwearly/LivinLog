@@ -170,6 +170,22 @@ enum CloudSharing {
         UserDefaults.standard.set(text, forKey: lastShareErrorDefaultsKey)
     }
 
+
+    static func technicalDetails(for error: Error) -> String {
+        let nsError = error as NSError
+        return "domain=\(nsError.domain) code=\(nsError.code) description=\(nsError.localizedDescription) userInfo=\(nsError.userInfo)"
+    }
+
+    static func friendlySharingErrorMessage(forTechnicalDetails technicalDetails: String) -> String {
+        if technicalDetails.localizedCaseInsensitiveContains("CD_moveReceipt")
+            || technicalDetails.localizedCaseInsensitiveContains("Cannot create or modify field")
+            || technicalDetails.localizedCaseInsensitiveContains("production schema") {
+            return "iCloud sharing could not finish because the app data schema is out of sync."
+        }
+
+        return "iCloud sharing could not finish. Show technical details for debugging information."
+    }
+
     static func stopSharing(
         share: CKShare,
         persistentContainer: NSPersistentCloudKitContainer
