@@ -58,7 +58,7 @@ enum OpenLibraryCoverService {
             return cached
         }
 
-        var components = URLComponents(string: "https://openlibrary.org/search.json")!
+        guard var components = URLComponents(string: "https://openlibrary.org/search.json") else { return [] }
         var queryItems: [URLQueryItem] = [
             URLQueryItem(name: "title", value: trimmedTitle),
             URLQueryItem(name: "limit", value: "8"),
@@ -142,7 +142,7 @@ enum OpenLibraryCoverService {
         let result = OpenLibraryBookResult(
             key: key,
             title: title,
-            author: (primaryAuthor?.isEmpty == false ? primaryAuthor! : "Unknown author"),
+            author: primaryAuthor.flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown author",
             firstPublishYear: doc.firstPublishYear,
             coverID: doc.coverID,
             isbn: isbn,

@@ -99,6 +99,11 @@ struct RootView: View {
             case .membershipChooser:
                 MembershipPickerSheet(
                     memberships: appState.candidateMemberships,
+                    currentMembership: appState.currentMembership,
+                    currentHousehold: appState.household,
+                    currentMember: appState.member,
+                    currentAppUser: appState.appUser,
+                    onCleanupCompleted: { await appState.start(callSite: "MembershipPickerSheet.cleanup") },
                     onPicked: { membership in
                         appState.selectMembership(membership)
                         activeSheet = nil
@@ -237,6 +242,11 @@ enum RootActiveSheet: Identifiable {
 
 struct MembershipPickerSheet: View {
     let memberships: [HouseholdMembership]
+    let currentMembership: HouseholdMembership?
+    let currentHousehold: Household?
+    let currentMember: HouseholdMember?
+    let currentAppUser: AppUser?
+    let onCleanupCompleted: (() async -> Void)?
     let onPicked: (HouseholdMembership) -> Void
 
     var body: some View {
@@ -244,7 +254,12 @@ struct MembershipPickerSheet: View {
             HouseholdProfileManagementView(
                 memberships: memberships,
                 showsPickerTitle: true,
-                onPicked: onPicked
+                currentMembership: currentMembership,
+                currentHousehold: currentHousehold,
+                currentMember: currentMember,
+                currentAppUser: currentAppUser,
+                onPicked: onPicked,
+                onCleanupCompleted: onCleanupCompleted
             )
         }
     }

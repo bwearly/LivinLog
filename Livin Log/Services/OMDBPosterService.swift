@@ -27,7 +27,7 @@ enum OMDbPosterService {
         let key = cacheKey(title: trimmed, year: year)
         if let cached = await PosterCache.shared.get(key) { return cached }
 
-        var components = URLComponents(string: "https://www.omdbapi.com/")!
+        guard var components = URLComponents(string: "https://www.omdbapi.com/") else { return nil }
         var items: [URLQueryItem] = [
             URLQueryItem(name: "apikey", value: OMDbAPIConfig.apiKey),
             URLQueryItem(name: "t", value: trimmed)

@@ -270,13 +270,7 @@ struct AddEditPuzzleView: View {
 
         do {
             try context.save()
-
-            includeInHouseholdShare(
-                persistentContainer: persistentContainer,
-                household: scopedHousehold,
-                objects: [puzzle],
-                label: "LLPuzzle"
-            )
+            print("ℹ️ LLPuzzle inherits household share via parent household relationship (no per-object share mutation)")
 
 #if DEBUG
             debugPrintHouseholdDiagnostics(household: scopedHousehold, context: context, reason: "save")
