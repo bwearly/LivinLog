@@ -77,7 +77,22 @@ struct AddTVShowView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+            }
 
+            if shouldShowMediaAutocomplete {
+                Section("TV Show Search Results") {
+                    ForEach(searchResults) { result in
+                        Button {
+                            applySearchResult(result)
+                        } label: {
+                            MediaSearchResultRow(result: result)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            Section("Details") {
                 Picker("Rating", selection: $contentRating) {
                     ForEach(ContentRating.allCases) { r in
                         Text(r.rawValue).tag(r)
@@ -99,19 +114,6 @@ struct AddTVShowView: View {
                                 .padding(.leading, 5)
                         }
                     }
-            }
-
-            if shouldShowMediaAutocomplete {
-                Section("TV Show Search Results") {
-                    ForEach(searchResults) { result in
-                        Button {
-                            applySearchResult(result)
-                        } label: {
-                            MediaSearchResultRow(result: result)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
             }
         }
         .navigationTitle("Add TV Show")
