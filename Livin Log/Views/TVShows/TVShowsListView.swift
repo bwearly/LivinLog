@@ -51,6 +51,10 @@ struct TVShowsListView: View {
         )
     }
 
+    private var fetchedShowObjectIDURIs: [String] {
+        tvShows.map { $0.objectID.uriRepresentation().absoluteString }
+    }
+
     private var filteredShows: [TVShow] {
         var list = Array(tvShows)
 
@@ -115,13 +119,19 @@ struct TVShowsListView: View {
             didBackfill = true
 
             if canWrite {
-                await backfillHouseholdIDIfNeeded()
+                await repairTVShowHouseholdLinksIfNeeded()
             }
 #if DEBUG
+            debugLogFetchedShows(reason: "listAppear")
             if let scopedHousehold = activeHouseholdInContext(household, context: context) {
                 TVShowStoreSafety.diagnoseTVShowGraphs(household: scopedHousehold, context: context, reason: "listAppear.household")
             }
             TVShowStoreSafety.diagnoseTVShowGraphs(household: nil, context: context, reason: "listAppear.allTVShows")
+#endif
+        }
+        .onChange(of: fetchedShowObjectIDURIs) { _, _ in
+#if DEBUG
+            debugLogFetchedShows(reason: "fetchChange")
 #endif
         }
         .task {
@@ -135,6 +145,17 @@ struct TVShowsListView: View {
             Text(operationError ?? "The TV show could not be updated.")
         }
     }
+
+#if DEBUG
+    private func debugLogFetchedShows(reason: String) {
+        let active = activeHouseholdInContext(household, context: context)
+        print("📺 [TVShowsList] reason=\(reason) activeHousehold name=\(active?.name ?? household.name ?? "<unnamed>") id=\(active?.id?.uuidString ?? household.id?.uuidString ?? "<nil>") objectID=\((active ?? household).objectID.uriRepresentation().absoluteString)")
+        print("📺 [TVShowsList] reason=\(reason) fetchedCount=\(tvShows.count) filteredCount=\(filteredShows.count)")
+        for show in tvShows {
+            print("📺 [TVShowsList] fetched title=\(show.title ?? "<untitled>") year=\(Int(show.year)) objectID=\(show.objectID.uriRepresentation().absoluteString) householdID=\(show.householdID?.uuidString ?? "<nil>") store=\(storeDebugDescription(show.objectID.persistentStore))")
+        }
+    }
+#endif
 
     @ViewBuilder
     private var showsSection: some View {
@@ -247,7 +268,7 @@ struct TVShowsListView: View {
 
     // MARK: - Backfill + delete
 
-    private func backfillHouseholdIDIfNeeded() async {
+    private func repairTVShowHouseholdLinksIfNeeded() async {
         await MainActor.run {
             guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
                 operationError = "Could not resolve the active household."
@@ -260,22 +281,38 @@ struct TVShowsListView: View {
 
             guard let hid = scopedHousehold.id else { return }
 
-            let req = NSFetchRequest<TVShow>(entityName: "TVShow")
-            req.predicate = NSPredicate(format: "household == %@ AND householdID == nil", scopedHousehold)
-            req.includesPendingChanges = true
+            let missingHouseholdIDRequest = NSFetchRequest<TVShow>(entityName: "TVShow")
+            missingHouseholdIDRequest.predicate = NSPredicate(format: "household == %@ AND householdID == nil", scopedHousehold)
+            missingHouseholdIDRequest.includesPendingChanges = true
+
+            let orphanedByOldToOneRequest = NSFetchRequest<TVShow>(entityName: "TVShow")
+            orphanedByOldToOneRequest.predicate = NSPredicate(format: "household == nil AND householdID == %@", hid as NSUUID)
+            orphanedByOldToOneRequest.includesPendingChanges = true
 
             do {
-                let legacy = try context.fetch(req)
-                guard !legacy.isEmpty || context.hasChanges else { return }
-                for show in legacy {
+                let missingHouseholdID = try context.fetch(missingHouseholdIDRequest)
+                let orphanedByOldToOne = try context.fetch(orphanedByOldToOneRequest)
+                guard !missingHouseholdID.isEmpty || !orphanedByOldToOne.isEmpty || context.hasChanges else { return }
+
+                for show in missingHouseholdID {
                     try TVShowStoreSafety.validateGraph(tvShow: show, context: context, operation: "TVShow.householdIDBackfill.preflight")
                     show.householdID = hid
                     try TVShowStoreSafety.validateGraph(tvShow: show, context: context, operation: "TVShow.householdIDBackfill")
                 }
+
+                for show in orphanedByOldToOne {
+                    try context.validateSamePersistentStore([("orphanedTVShow", show), ("household", scopedHousehold)])
+                    show.household = scopedHousehold
+                    try TVShowStoreSafety.validateGraph(tvShow: show, context: context, operation: "TVShow.householdRelink")
+#if DEBUG
+                    print("📺 [TVShowBackfill] relinked orphaned show title=\(show.title ?? "<untitled>") year=\(Int(show.year)) objectID=\(show.objectID.uriRepresentation().absoluteString) householdID=\(hid.uuidString)")
+#endif
+                }
+
                 try context.save()
             } catch {
                 context.rollback()
-                operationError = "Could not update TV show household IDs: \(error.localizedDescription)"
+                operationError = "Could not repair TV show household links: \(error.localizedDescription)"
                 print("❌ [TVShowBackfill] save blocked:", error)
             }
         }
