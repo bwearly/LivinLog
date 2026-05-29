@@ -15,6 +15,8 @@ struct CloudKitStoreDiagnosticsView: View {
     @State private var isScanning = false
     @State private var statusMessage: String?
     @State private var deleteError: String?
+    @State private var isInitializingCloudKitSchema = false
+    @State private var cloudKitSchemaInitializationMessage: String?
 
     private let scanner = CloudKitStoreDiagnosticScanner()
 
@@ -42,6 +44,26 @@ struct CloudKitStoreDiagnosticsView: View {
                     Text(deleteError)
                         .font(.footnote)
                         .foregroundStyle(.red)
+                }
+            }
+
+            Section("DEBUG CloudKit Schema") {
+                Text("Development-only schema generation for Core Data + CloudKit. Run this against the Development container only when intentionally preparing schema changes; it may create Core Data/CloudKit internal fields needed for sharing, such as record-move bookkeeping. After it succeeds, review CloudKit Dashboard and deploy schema changes to Production before archiving Release/TestFlight.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Button {
+                    initializeCloudKitSchema()
+                } label: {
+                    Label(isInitializingCloudKitSchema ? "Initializing Schema…" : "Initialize Development CloudKit Schema", systemImage: "icloud.and.arrow.up")
+                }
+                .disabled(isInitializingCloudKitSchema)
+
+                if let cloudKitSchemaInitializationMessage {
+                    Text(cloudKitSchemaInitializationMessage)
+                        .font(.footnote)
+                        .foregroundStyle(cloudKitSchemaInitializationMessage.hasPrefix("Failed") ? .red : .secondary)
+                        .textSelection(.enabled)
                 }
             }
 
@@ -78,6 +100,26 @@ struct CloudKitStoreDiagnosticsView: View {
         .navigationTitle("Developer Diagnostics")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: refreshDiagnostics)
+    }
+
+    private func initializeCloudKitSchema() {
+        isInitializingCloudKitSchema = true
+        cloudKitSchemaInitializationMessage = "CloudKit schema initialization started. Watch the Xcode console for detailed logs."
+
+        Task { @MainActor in
+            do {
+                try PersistenceController.shared.initializeDevelopmentCloudKitSchema()
+                cloudKitSchemaInitializationMessage = "Succeeded. Now open CloudKit Dashboard, confirm Development schema changes, and deploy them to Production before archiving Release/TestFlight."
+            } catch {
+                cloudKitSchemaInitializationMessage = Self.cloudKitSchemaInitializationFailureMessage(for: error)
+            }
+            isInitializingCloudKitSchema = false
+        }
+    }
+
+    private static func cloudKitSchemaInitializationFailureMessage(for error: Error) -> String {
+        let nsError = error as NSError
+        return "Failed: \(nsError.domain) code \(nsError.code). \(nsError.localizedDescription) userInfo=\(nsError.userInfo)"
     }
 
     private func refreshDiagnostics() {

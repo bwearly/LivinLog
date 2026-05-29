@@ -224,6 +224,27 @@ struct PersistenceController {
     }
 
     #if DEBUG
+    /// DEBUG-only manual CloudKit schema generation for the Development container.
+    ///
+    /// This intentionally does not run during normal app startup. Use it from the
+    /// DEBUG Developer Diagnostics screen when Core Data + CloudKit needs to emit
+    /// schema for framework-managed sharing internals. After it succeeds, open
+    /// CloudKit Dashboard, review the Development schema changes, and deploy them
+    /// to Production before archiving a new Release/TestFlight build.
+    func initializeDevelopmentCloudKitSchema() throws {
+        print("🧪 [CloudKitSchemaInit] CloudKit schema initialization started containerIdentifier=\(Self.containerId)")
+
+        do {
+            try container.initializeCloudKitSchema(options: [])
+            print("✅ [CloudKitSchemaInit] CloudKit schema initialization succeeded. Review CloudKit Dashboard Development schema changes and deploy them to Production before the next Release/TestFlight archive.")
+        } catch {
+            print("❌ [CloudKitSchemaInit] CloudKit schema initialization failed error=\(String(reflecting: error))")
+            let nsError = error as NSError
+            print("❌ [CloudKitSchemaInit] domain=\(nsError.domain) code=\(nsError.code) userInfo=\(nsError.userInfo)")
+            throw error
+        }
+    }
+
     static func resetDevelopmentStores() throws {
         let urls = storeURLs()
         let fileManager = FileManager.default

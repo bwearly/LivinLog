@@ -380,7 +380,7 @@ struct SettingsView: View {
                         .foregroundStyle(.blue)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Developer Diagnostics")
-                        Text("Find and clean local CloudKit/Core Data test record issues")
+                        Text("Run DEBUG CloudKit schema initialization and local diagnostics")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
