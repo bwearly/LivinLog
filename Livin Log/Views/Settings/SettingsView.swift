@@ -59,6 +59,10 @@ struct SettingsView: View {
                 sharingIssueSection
             }
 
+#if DEBUG
+            developerDiagnosticsSection
+#endif
+
             advancedSection
 
             if let errorText {
@@ -71,6 +75,9 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .onAppear {
+#if DEBUG
+            print("Developer Diagnostics row available")
+#endif
             if let hh = household { ensureDefaultMemberExists(in: hh) }
             reloadShareStatus()
             loadAccountStatus()
@@ -320,6 +327,27 @@ struct SettingsView: View {
         }
     }
 
+#if DEBUG
+    private var developerDiagnosticsSection: some View {
+        Section("DEBUG / Developer") {
+            NavigationLink {
+                CloudKitStoreDiagnosticsView()
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "stethoscope")
+                        .foregroundStyle(.blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Developer Diagnostics")
+                        Text("Find and clean local CloudKit/Core Data test record issues")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+#endif
+
     private var advancedSection: some View {
         Section {
             NavigationLink {
@@ -338,14 +366,6 @@ struct SettingsView: View {
             } label: {
                 Label("Advanced", systemImage: "gearshape.2")
             }
-
-            #if DEBUG
-            NavigationLink {
-                CloudKitStoreDiagnosticsView()
-            } label: {
-                Label("Developer Diagnostics", systemImage: "stethoscope")
-            }
-            #endif
 
             Button("Delete All Data & Restart", role: .destructive) {
                 showConfirmDeleteAll = true
