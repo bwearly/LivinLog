@@ -13,9 +13,9 @@ struct HouseholdProfileManagementView: View {
     let currentAppUser: AppUser?
     let onCleanupCompleted: (() async -> Void)?
 
-    @State private var pendingCleanup: CleanupCandidate?
-    @State private var cleanupError: String?
-    @State private var isCleaningUp = false
+    @State private var pendingDeletion: ProfileDeletionCandidate?
+    @State private var deletionError: String?
+    @State private var isDeleting = false
     @State private var hiddenMembershipIDs: Set<NSManagedObjectID> = []
 
     init(
@@ -38,18 +38,24 @@ struct HouseholdProfileManagementView: View {
         self.onCleanupCompleted = onCleanupCompleted
     }
 
+    private var visibleMemberships: [HouseholdMembership] {
+        memberships.filter { !hiddenMembershipIDs.contains($0.objectID) }
+    }
+
     var body: some View {
         List {
-            if showsPickerTitle {
-                Section {
-                    Text("Choose the household/profile you want to use. Metadata below helps distinguish duplicate-looking rows.")
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(showsPickerTitle ? "Choose your profile" : "Manage duplicate profiles")
+                        .font(.headline)
+                    Text("Swipe left on an extra profile to delete only that profile or membership. Household content stays in the household.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+                .padding(.vertical, 2)
             }
 
             Section("Profiles") {
-                let visibleMemberships = memberships.filter { !hiddenMembershipIDs.contains($0.objectID) }
                 if visibleMemberships.isEmpty {
                     ContentUnavailableView("No profiles found", systemImage: "person.crop.circle.badge.questionmark")
                 } else {
@@ -62,230 +68,269 @@ struct HouseholdProfileManagementView: View {
         .navigationTitle(showsPickerTitle ? "Choose Profile" : "Profiles & Households")
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog(
-            cleanupTitle,
-            isPresented: Binding(get: { pendingCleanup != nil }, set: { if !$0 { pendingCleanup = nil } }),
+            pendingDeletion?.title ?? "Delete Profile?",
+            isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }),
             titleVisibility: .visible
         ) {
-            if let pendingCleanup {
-                Button(pendingCleanup.buttonTitle, role: .destructive) {
-                    performCleanup(pendingCleanup)
+            if let pendingDeletion {
+                Button(pendingDeletion.buttonTitle, role: .destructive) {
+                    performProfileDeletion(pendingDeletion)
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(pendingCleanup?.message ?? "")
+            Text(pendingDeletion?.message ?? "")
         }
-        .alert("Profile Cleanup Failed", isPresented: Binding(get: { cleanupError != nil }, set: { if !$0 { cleanupError = nil } })) {
+        .alert("Profile Delete Failed", isPresented: Binding(get: { deletionError != nil }, set: { if !$0 { deletionError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(cleanupError ?? "The selected profile could not be cleaned up.")
+            Text(deletionError ?? "The selected profile could not be deleted.")
         }
     }
 
     @ViewBuilder
     private func profileRow(for membership: HouseholdMembership) -> some View {
         let summary = ProfileSummary(membership: membership, currentMembership: currentMembership, currentHousehold: currentHousehold, currentMember: currentMember)
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
-                onPicked?(membership)
-            } label: {
-                HStack(alignment: .top, spacing: 12) {
-                    ZStack {
-                        Circle()
-                            .fill(summary.isCurrent ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12))
-                        Image(systemName: summary.isCurrent ? "checkmark.circle.fill" : "person.crop.circle")
-                            .foregroundStyle(summary.isCurrent ? Color.accentColor : Color.secondary)
-                    }
-                    .frame(width: 38, height: 38)
+        let availability = deleteAvailability(for: membership, summary: summary)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(summary.householdName)
-                                .font(.headline)
-                            if summary.isCurrent {
-                                Text("Current")
-                                    .font(.caption2.weight(.semibold))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 3)
-                                    .background(Color.accentColor.opacity(0.14), in: Capsule())
-                            }
-                        }
+        Button {
+            onPicked?(membership)
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(summary.isCurrent ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12))
+                    Image(systemName: summary.isCurrent ? "checkmark.circle.fill" : "person.crop.circle")
+                        .foregroundStyle(summary.isCurrent ? Color.accentColor : Color.secondary)
+                }
+                .frame(width: 40, height: 40)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
                         Text(summary.memberName)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.primary)
-                        Text(summary.subtitle)
+                            .font(.headline)
+                        if summary.isCurrent {
+                            Text("Current")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Color.accentColor.opacity(0.14), in: Capsule())
+                        }
+                    }
+
+                    Label(summary.householdName, systemImage: "house")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 6) {
+                        Text(summary.roleText)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.secondary.opacity(0.12), in: Capsule())
+                        Text(summary.createdText)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-#if DEBUG
-                        Text(summary.debugScope)
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.tertiary)
-#endif
                     }
-                    Spacer(minLength: 8)
-                }
-            }
-            .buttonStyle(.plain)
-            .disabled(onPicked == nil || isCleaningUp)
 
-            if let cleanup = cleanupCandidate(for: membership, summary: summary) {
+                    if let lastSeenText = summary.lastSeenText {
+                        Text(lastSeenText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if case .blocked(let reason) = availability {
+                        Text(reason)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+#if DEBUG
+                    Text(summary.debugScope)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+#endif
+                }
+                Spacer(minLength: 8)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isDeleting)
+        .padding(.vertical, 6)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            switch availability {
+            case .allowed(let candidate):
                 Button(role: .destructive) {
-                    pendingCleanup = cleanup
+                    pendingDeletion = candidate
                 } label: {
-                    Label(cleanup.buttonTitle, systemImage: cleanup.systemImage)
-                        .font(.caption.weight(.semibold))
+                    Label("Delete", systemImage: "trash")
                 }
-                .disabled(isCleaningUp)
-            } else if summary.isCurrent {
-                Text("Switch to another profile before deleting or leaving this one.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if cleanupBlockedReason(for: membership) != nil {
-                Text(cleanupBlockedReason(for: membership) ?? "Cleanup unavailable.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .disabled(isDeleting)
+            case .blocked:
+                Button(role: .destructive) {} label: {
+                    Label("Can't Delete", systemImage: "trash.slash")
+                }
+                .disabled(true)
             }
         }
-        .padding(.vertical, 4)
     }
 
-    private var cleanupTitle: String {
-        pendingCleanup?.title ?? "Clean Up Profile?"
-    }
-
-    private func cleanupCandidate(for membership: HouseholdMembership, summary: ProfileSummary) -> CleanupCandidate? {
-        guard !summary.isCurrent else { return nil }
-        guard let household = membership.household else { return nil }
-        guard let store = household.objectID.persistentStore else { return nil }
-
-        if store == PersistenceController.shared.privateStore {
-            guard isProvenOwner(of: household, via: membership) else { return nil }
-            return CleanupCandidate(
-                membership: membership,
-                kind: .deletePrivateHousehold,
-                title: "Delete \(summary.householdName)?",
-                message: "This deletes this private duplicate household and its local app data from your account. This cannot be undone.",
-                buttonTitle: "Delete Household",
-                systemImage: "trash"
-            )
+    private func deleteAvailability(for membership: HouseholdMembership, summary: ProfileSummary) -> ProfileDeleteAvailability {
+        guard !summary.isCurrent else {
+            return .blocked("Switch to another profile before deleting this current profile.")
         }
 
-        if store == PersistenceController.shared.sharedStore {
-            return CleanupCandidate(
-                membership: membership,
-                kind: .leaveSharedHousehold,
-                title: "Leave \(summary.householdName)?",
-                message: "This removes your local membership/selection for this shared household. It does not delete the owner's household data.",
-                buttonTitle: "Leave Household",
-                systemImage: "rectangle.portrait.and.arrow.right"
-            )
+        guard visibleMemberships.count > 1 else {
+            return .blocked("At least one usable profile must remain.")
         }
 
-        return nil
-    }
-
-    private func cleanupBlockedReason(for membership: HouseholdMembership) -> String? {
-        guard let household = membership.household else { return "Cleanup unavailable: household could not be resolved." }
-        guard let store = household.objectID.persistentStore else { return "Cleanup unavailable: store could not be resolved." }
-        if store == PersistenceController.shared.privateStore, !isProvenOwner(of: household, via: membership) {
-            return "Delete unavailable: ownership could not be proven for this private household."
+        guard currentAppUser != nil else {
+            return .blocked("Sign in is required before deleting profiles.")
         }
-        return nil
+
+        guard let household = membership.household else {
+            return .blocked("Delete unavailable: household could not be resolved.")
+        }
+
+        guard membership.memberProfile != nil else {
+            return .blocked("Delete unavailable: member profile could not be resolved.")
+        }
+
+        guard let store = household.objectID.persistentStore else {
+            return .blocked("Delete unavailable: store could not be resolved.")
+        }
+
+        guard store == PersistenceController.shared.privateStore else {
+            return .blocked("Shared household profiles are managed by the household owner. Leaving a shared household is separate from deleting a profile.")
+        }
+
+        return .allowed(ProfileDeletionCandidate(
+            membership: membership,
+            title: "Delete \(summary.memberName)?",
+            message: "This removes the selected profile from \(summary.householdName). Household data such as movies, books, TV shows, puzzles, quotes, and dates will stay in the household. This cannot be undone.",
+            buttonTitle: "Delete Profile"
+        ))
     }
 
-    private func isProvenOwner(of household: Household, via membership: HouseholdMembership) -> Bool {
-        guard let appUser = currentAppUser,
-              let durableId = IdentityStore.durableUserId(for: appUser) else { return false }
-        let role = (membership.role ?? "").lowercased()
-        let createdBy = household.value(forKey: "createdByAppUserId") as? String
-        return (role == "leader" || role == "owner") && createdBy == durableId
-    }
-
-    private func performCleanup(_ candidate: CleanupCandidate) {
-        cleanupError = nil
-        isCleaningUp = true
+    private func performProfileDeletion(_ candidate: ProfileDeletionCandidate) {
+        deletionError = nil
+        isDeleting = true
 
         do {
-            switch candidate.kind {
-            case .deletePrivateHousehold:
-                try deletePrivateHousehold(candidate.membership)
-            case .leaveSharedHousehold:
-                try leaveSharedHousehold(candidate.membership)
-            }
-
+            try deleteProfile(candidate.membership)
             hiddenMembershipIDs.insert(candidate.membership.objectID)
-            pendingCleanup = nil
-            SelectionStore.clearAll()
-            debugCleanup("cleared cached selection after \(candidate.kind.logLabel)")
+            pendingDeletion = nil
+            debugProfileDeletion("deleted profile membership id=\(candidate.membership.objectID.uriRepresentation().absoluteString)")
+
             if let onCleanupCompleted {
                 Task { @MainActor in
                     await onCleanupCompleted()
-                    isCleaningUp = false
+                    isDeleting = false
                 }
             } else {
-                isCleaningUp = false
+                isDeleting = false
             }
         } catch {
             context.rollback()
-            isCleaningUp = false
-            cleanupError = error.localizedDescription
-            debugCleanup("cleanup failed: \(error)")
+            isDeleting = false
+            deletionError = error.localizedDescription
+            debugProfileDeletion("delete failed: \(error)")
         }
     }
 
-    private func deletePrivateHousehold(_ membership: HouseholdMembership) throws {
-        guard let householdID = membership.household?.objectID else {
-            throw cleanupError("Household could not be resolved.")
-        }
-        guard let scopedHousehold = try context.existingObject(with: householdID) as? Household else {
-            throw cleanupError("Household no longer exists.")
-        }
-        guard scopedHousehold.objectID.persistentStore == PersistenceController.shared.privateStore else {
-            throw cleanupError("Only private owner households can be deleted here.")
-        }
-        guard let scopedMembership = try context.existingObject(with: membership.objectID) as? HouseholdMembership,
-              isProvenOwner(of: scopedHousehold, via: scopedMembership) else {
-            throw cleanupError("Livin Log could not prove that you own this household, so it was not deleted.")
+    private func deleteProfile(_ membership: HouseholdMembership) throws {
+        guard let currentAppUser else {
+            throw profileDeletionError("Sign in is required before deleting profiles.")
         }
 
-        debugCleanup("deleting private household id=\(scopedHousehold.objectID.uriRepresentation().absoluteString)")
-        context.delete(scopedHousehold)
+        let activeMemberships = IdentityStore.memberships(for: currentAppUser, context: context)
+            .filter { !hiddenMembershipIDs.contains($0.objectID) }
+        guard activeMemberships.count > 1 else {
+            throw profileDeletionError("At least one usable profile must remain.")
+        }
+
+        guard membership.objectID != currentMembership?.objectID else {
+            throw profileDeletionError("Switch to another profile before deleting the current profile.")
+        }
+
+        guard let scopedMembership = try context.existingObject(with: membership.objectID) as? HouseholdMembership else {
+            throw profileDeletionError("Profile no longer exists.")
+        }
+
+        guard scopedMembership.objectID != currentMembership?.objectID else {
+            throw profileDeletionError("Switch to another profile before deleting the current profile.")
+        }
+
+        guard let household = scopedMembership.household else {
+            throw profileDeletionError("Household could not be resolved.")
+        }
+
+        guard household.objectID.persistentStore == PersistenceController.shared.privateStore else {
+            throw profileDeletionError("Shared household profiles are managed by the household owner.")
+        }
+
+        let member = scopedMembership.memberProfile
+        let shouldDeleteMember = try member.map { try canSafelyDeleteMember($0, excluding: scopedMembership) } ?? false
+
+        scopedMembership.status = "deleted"
+        scopedMembership.memberProfile = nil
+        scopedMembership.household = nil
+        scopedMembership.appUser = nil
+        context.delete(scopedMembership)
+
+        if let member, shouldDeleteMember {
+            debugProfileDeletion("deleting unused member profile id=\(member.objectID.uriRepresentation().absoluteString)")
+            context.delete(member)
+        } else if let member, let durableId = IdentityStore.durableUserId(for: currentAppUser) {
+            let claimedBy = member.value(forKey: "claimedByAppUserId") as? String
+            if claimedBy == durableId {
+                member.setValue(nil, forKey: "claimedByAppUserId")
+            }
+        }
+
         try context.save()
     }
 
-    private func leaveSharedHousehold(_ membership: HouseholdMembership) throws {
-        guard let scopedMembership = try context.existingObject(with: membership.objectID) as? HouseholdMembership else {
-            throw cleanupError("Membership no longer exists.")
-        }
-        guard let household = scopedMembership.household else {
-            throw cleanupError("Shared household could not be resolved.")
-        }
-        guard household.objectID.persistentStore == PersistenceController.shared.sharedStore else {
-            throw cleanupError("Only shared households can be left here.")
-        }
+    private func canSafelyDeleteMember(_ member: HouseholdMember, excluding membership: HouseholdMembership) throws -> Bool {
+        guard let household = member.household else { return false }
 
-        // Safety: do not delete or mutate shared Core Data records here. Deleting
-        // objects in the shared store could propagate through CloudKit. Leaving is
-        // implemented as local selection/auto-pick suppression only.
-        SharedHouseholdLeaveStore.markLeft(household)
-        debugCleanup("locally left shared membership id=\(scopedMembership.objectID.uriRepresentation().absoluteString)")
+        let memberCountRequest = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
+        memberCountRequest.predicate = NSPredicate(format: "household == %@", household)
+        let householdMemberCount = try context.count(for: memberCountRequest)
+        guard householdMemberCount > 1 else { return false }
+
+        let memberMemberships = (member.value(forKey: "memberships") as? NSSet)?.compactMap { $0 as? HouseholdMembership } ?? []
+        let hasOtherActiveMembership = memberMemberships.contains { candidate in
+            candidate.objectID != membership.objectID && candidate.status == "active"
+        }
+        guard !hasOtherActiveMembership else { return false }
+
+        let feedbacks = (member.value(forKey: "feedbacks") as? NSSet)?.count ?? 0
+        let bookEntries = (member.value(forKey: "bookEntries") as? NSSet)?.count ?? 0
+        return feedbacks == 0 && bookEntries == 0
     }
 
-    private func cleanupError(_ message: String) -> NSError {
-        NSError(domain: "HouseholdProfileCleanup", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    private func profileDeletionError(_ message: String) -> NSError {
+        NSError(domain: "HouseholdProfileDeletion", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
-    private func debugCleanup(_ message: String) {
-#if DEBUG
-        print("🧹 [ProfileCleanup] \(message)")
-#endif
+    private func debugProfileDeletion(_ message: String) {
+        print("🧹 [ProfileDeletion] \(message)")
     }
+}
+
+private enum ProfileDeleteAvailability {
+    case allowed(ProfileDeletionCandidate)
+    case blocked(String)
 }
 
 private struct ProfileSummary {
     let householdName: String
     let memberName: String
-    let subtitle: String
+    let roleText: String
+    let createdText: String
+    let lastSeenText: String?
     let debugScope: String
     let isCurrent: Bool
 
@@ -299,12 +344,11 @@ private struct ProfileSummary {
             member?.objectID == currentMember?.objectID
         )
 
-        let roleText = Self.displayRole(membership.role)
+        roleText = Self.displayRole(membership.role)
         let created = membership.joinedAt ?? membership.createdAt ?? member?.createdAt ?? household?.createdAt
-        let createdText = created.map { "Created \($0.formatted(date: .abbreviated, time: .omitted))" } ?? "Created date unknown"
+        createdText = created.map { "Created \($0.formatted(date: .abbreviated, time: .omitted))" } ?? "Created date unknown"
         let lastSeen = membership.appUser?.value(forKey: "lastSeenAt") as? Date
-        let lastSeenText = lastSeen.map { "Last active \($0.formatted(date: .abbreviated, time: .omitted))" }
-        subtitle = ([createdText, roleText] + [lastSeenText].compactMap { $0 }).joined(separator: " • ")
+        lastSeenText = lastSeen.map { "Last active \($0.formatted(date: .abbreviated, time: .omitted))" }
 
         let scope: String
         if household?.objectID.persistentStore == PersistenceController.shared.privateStore {
@@ -326,24 +370,10 @@ private struct ProfileSummary {
     }
 }
 
-private struct CleanupCandidate: Identifiable {
-    enum Kind {
-        case deletePrivateHousehold
-        case leaveSharedHousehold
-
-        var logLabel: String {
-            switch self {
-            case .deletePrivateHousehold: return "delete private household"
-            case .leaveSharedHousehold: return "leave shared household"
-            }
-        }
-    }
-
+private struct ProfileDeletionCandidate: Identifiable {
     let id = UUID()
     let membership: HouseholdMembership
-    let kind: Kind
     let title: String
     let message: String
     let buttonTitle: String
-    let systemImage: String
 }

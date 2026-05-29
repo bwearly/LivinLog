@@ -58,6 +58,8 @@ struct SettingsView: View {
 
             if hasSharingIssue {
                 sharingIssueSection
+            } else if hasSharingSuccess {
+                sharingSuccessSection
             }
 
 #if DEBUG
@@ -97,13 +99,11 @@ struct SettingsView: View {
                 CloudKitHouseholdSharingSheet(
                     household: household,
                     onDone: { showingInviteShareSheet = false },
+                    onShareReady: { readyShare in
+                        handleShareAttemptSucceeded(readyShare)
+                    },
                     onError: { error in
-                        let technicalMessage = CloudSharing.technicalDetails(for: error)
-                        let friendlyMessage = CloudSharing.friendlySharingErrorMessage(forTechnicalDetails: technicalMessage)
-                        shareErrorText = friendlyMessage
-                        lastCloudKitError = technicalMessage
-                        persistedLastShareError = technicalMessage
-                        CloudSharing.saveLastShareError(technicalMessage)
+                        handleShareAttemptFailed(error)
                         showingInviteShareSheet = false
                         isSharing = false
                     }
@@ -309,7 +309,7 @@ struct SettingsView: View {
             } label: {
                 Label("Manage Duplicate Profiles", systemImage: "person.2.badge.gearshape")
             }
-            Text("Review duplicate-looking households/profiles with creation dates, roles, and safe cleanup actions.")
+            Text("Review duplicate-looking profiles with household names, creation dates, roles, and safe swipe-to-delete actions.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -319,6 +319,18 @@ struct SettingsView: View {
         if let shareErrorText, !shareErrorText.isEmpty { return true }
         if !persistedLastShareError.isEmpty { return true }
         return false
+    }
+
+    private var hasSharingSuccess: Bool {
+        persistedLastShareStatus == shareAttemptSucceededStatus
+    }
+
+    private var sharingSuccessSection: some View {
+        Section("Household Sharing") {
+            Label("Invite link ready. The iOS share sheet opened with your iCloud household link.", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .font(.footnote)
+        }
     }
 
     private var sharingIssueSection: some View {
@@ -427,6 +439,10 @@ struct SettingsView: View {
         return "iCloud is temporarily unavailable on this device. Please wait a moment and tap Reload share status."
     }
 
+    private var shareAttemptSucceededStatus: String {
+        "Invite link ready. Share sheet opened."
+    }
+
 
     private func resolveSharedMemberPromptNeed() {
         let (selectedHousehold, selectedMember) = SelectionStore.load(context: context)
@@ -485,6 +501,26 @@ struct SettingsView: View {
         CloudSharing.saveLastShareError(nil)
     }
 
+    private func handleShareAttemptSucceeded(_ readyShare: CKShare) {
+        clearSharingIssue()
+        share = readyShare
+        persistedLastShareStatus = shareAttemptSucceededStatus
+        CloudSharing.saveLastShareStatus(shareAttemptSucceededStatus)
+    }
+
+    private func handleShareAttemptFailed(_ error: Error) {
+        let technicalMessage = CloudSharing.technicalDetails(for: error)
+        let friendlyMessage = CloudSharing.friendlySharingErrorMessage(forTechnicalDetails: technicalMessage)
+        print("❌ [CloudSharing] Share attempt failed: \(technicalMessage)")
+        shareErrorText = friendlyMessage
+        showShareTechnicalDetails = false
+        lastCloudKitError = technicalMessage
+        persistedLastShareError = technicalMessage
+        persistedLastShareStatus = "Share attempt failed"
+        CloudSharing.saveLastShareError(technicalMessage)
+        CloudSharing.saveLastShareStatus("Share attempt failed")
+    }
+
     private func inviteMember() {
         guard household != nil else { return }
         guard appState.appUser != nil, appState.isCurrentMemberAuthorized() else {
@@ -503,7 +539,7 @@ struct SettingsView: View {
 
         isSharing = true
         showingInviteShareSheet = true
-        print("ℹ️ Presenting iOS share sheet (Messages) for household invite")
+        print("ℹ️ [CloudSharing] Share attempt started for household invite")
     }
 
     private func reloadShareStatus() {
@@ -808,6 +844,7 @@ private struct AdvancedSharingView: View {
                         .font(.footnote)
                 }
 
+#if DEBUG
                 if household != nil {
                     Button("Reset Household Share", role: .destructive) {
                         onResetShare()
@@ -828,6 +865,7 @@ private struct AdvancedSharingView: View {
                         persistentContainer: persistentContainer
                     )
                 }
+#endif
             }
         }
         .navigationTitle("Advanced")
