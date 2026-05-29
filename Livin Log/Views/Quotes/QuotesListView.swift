@@ -114,17 +114,27 @@ struct QuotesListView: View {
         List {
             if filteredQuotes.isEmpty {
                 if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    ContentUnavailableView {
-                        Label("No quotes yet", systemImage: "quote.bubble")
-                    } description: {
-                        Text("Capture your household sayings and memories.")
-                    } actions: {
-                        Button("Add Quote") {
-                            showingAddQuote = true
-                        }
+                    SharedViews.SoftEmptyState(
+                        title: "No quotes yet",
+                        systemImage: "quote.bubble.fill",
+                        style: .quotes,
+                        description: "Capture your household sayings and memories."
+                    )
+                    .listRowBackground(Color.clear)
+
+                    Button("Add Quote") {
+                        showingAddQuote = true
                     }
+                    .foregroundStyle(AppCategoryStyle.quotes.accent)
+                    .listRowBackground(Color.clear)
                 } else {
-                    ContentUnavailableView("No results", systemImage: "magnifyingglass")
+                    SharedViews.SoftEmptyState(
+                        title: "No results",
+                        systemImage: "magnifyingglass",
+                        style: .quotes,
+                        description: "Try a different speaker, quote, or context."
+                    )
+                    .listRowBackground(Color.clear)
                 }
             } else {
                 ForEach(filteredQuotes, id: \.objectID) { quote in
@@ -133,6 +143,8 @@ struct QuotesListView: View {
                     } label: {
                         QuoteRowView(quote: quote)
                     }
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button("Edit") {
                             editingQuote = quote
@@ -141,6 +153,8 @@ struct QuotesListView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(AppCategoryStyle.quotes.gradient.opacity(0.10))
         .navigationTitle("Quotes")
         .searchable(text: $searchText, prompt: "Search text, speaker, context")
         .toolbar {
@@ -208,9 +222,13 @@ private struct QuoteRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("\(quote.textValue)")
-                .font(.body)
-                .lineLimit(3)
+            HStack(alignment: .top, spacing: 8) {
+                SharedViews.AccentIconBadge(systemImage: "quote.bubble.fill", style: .quotes)
+
+                Text("\(quote.textValue)")
+                    .font(.body)
+                    .lineLimit(3)
+            }
 
             HStack(spacing: 8) {
                 Text("— \(quote.speakerNameValue)")
@@ -218,11 +236,7 @@ private struct QuoteRowView: View {
                     .foregroundStyle(.secondary)
 
                 if let ageText = quote.childAgeLabel {
-                    Text(ageText)
-                        .font(.caption)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(.thinMaterial))
+                    SharedViews.AccentPill(ageText, systemImage: "clock", style: .quotes)
                 }
             }
 
@@ -230,7 +244,7 @@ private struct QuoteRowView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 4)
+        .subtleCategoryRowCard(style: .quotes, horizontalPadding: 12, verticalPadding: 10)
     }
 }
 

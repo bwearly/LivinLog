@@ -39,8 +39,20 @@ struct MonthSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(monthDate.formatted(.dateTime.month(.wide)))
-                .font(.title3.weight(.semibold))
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(AppCategoryStyle.dates.accent)
+                    .frame(width: 8, height: 8)
+
+                Text(monthDate.formatted(.dateTime.month(.wide)))
+                    .font(.title3.weight(.semibold))
+
+                Spacer(minLength: 0)
+
+                if eventDaysCount > 0 {
+                    SharedViews.AccentPill("\(eventDaysCount) days", systemImage: "calendar", style: .dates)
+                }
+            }
 
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: 6) {
                 // Weekday headers
@@ -67,14 +79,14 @@ struct MonthSectionView: View {
                                 VStack {
                                     Spacer(minLength: 0)
                                     Circle()
-                                        .fill(hasEventsForDay(day) ? Color.accentColor : .clear)
+                                        .fill(hasEventsForDay(day) ? AppCategoryStyle.dates.accent : .clear)
                                         .frame(width: 5, height: 5)
                                         .padding(.bottom, 4)
                                 }
                             }
                             .frame(maxWidth: .infinity)
                             .frame(height: 36)
-                            .background(isToday(day: day) ? Color.accentColor.opacity(0.18) : Color.clear)
+                            .background(isToday(day: day) ? AppCategoryStyle.dates.accent.opacity(0.16) : Color.clear)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                         }
                         .buttonStyle(.plain)
@@ -87,7 +99,15 @@ struct MonthSectionView: View {
             }
         }
         .padding()
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(AppCategoryStyle.dates.accent.opacity(0.16), lineWidth: 0.75)
+        )
+    }
+
+    private var eventDaysCount: Int {
+        (1...daysInMonth).filter { hasEventsForDay($0) }.count
     }
 
     private func dayCells() -> [Int?] {

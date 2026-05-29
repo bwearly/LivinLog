@@ -185,6 +185,8 @@ struct TVShowsListView: View {
                 ratingText: ratingDisplay(show.ratingText)
             )
         }
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 
     private var trailingButtons: some View {
@@ -392,9 +394,7 @@ private struct TVShowRowView: View {
             }
             .padding(.vertical, 2)
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 4)
-        .background(AppCategoryStyle.tvShows.gradient, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .subtleCategoryRowCard(style: .tvShows, horizontalPadding: 12, verticalPadding: 10)
     }
 }
 
