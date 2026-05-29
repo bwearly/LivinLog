@@ -20,6 +20,55 @@ enum MovieStoreSafety {
         return didAssign
     }
 
+
+    static func resolveMember(_ candidate: HouseholdMember?, in household: Household, context: NSManagedObjectContext) throws -> HouseholdMember? {
+        guard let candidate else { return nil }
+        guard let store = household.objectID.persistentStore else {
+            throw StoreValidationError.unresolvedObjectStore("household")
+        }
+
+        if candidate.managedObjectContext == context,
+           candidate.objectID.persistentStore === store,
+           candidate.household?.objectID == household.objectID {
+            return candidate
+        }
+
+        if let candidateInContext = try? context.existingObject(with: candidate.objectID) as? HouseholdMember,
+           candidateInContext.objectID.persistentStore === store,
+           candidateInContext.household?.objectID == household.objectID {
+            return candidateInContext
+        }
+
+        guard let memberID = candidate.id else {
+            throw StoreValidationError.unresolvedObjectStore("selected member id")
+        }
+
+        let request = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
+        request.fetchLimit = 1
+        request.affectedStores = [store]
+        request.predicate = NSPredicate(format: "id == %@ AND household == %@", argumentArray: [memberID, household])
+
+        guard let resolved = try context.fetch(request).first else {
+            throw StoreValidationError.crossStoreRelationship("selectedMember=\(storeDebugDescription(candidate.objectID.persistentStore)), householdStore=\(storeDebugDescription(store)); no store-scoped member match")
+        }
+
+        return resolved
+    }
+
+    static func validateViewingGraph(viewing: Viewing, movie: Movie?, household: Household?, member: HouseholdMember?, context: NSManagedObjectContext, operation: String, assignedBeforeRelationships: Bool) throws {
+        let objects: [(String, NSManagedObject?)] = [
+            ("viewing", viewing),
+            ("movie", movie),
+            ("household", household),
+            ("member", member)
+        ]
+        context.debugLogViewingSave(operation: operation, viewing: viewing, movie: movie, household: household, member: member, assignedBeforeRelationships: assignedBeforeRelationships)
+        try context.validateSamePersistentStore(objects)
+        if let movie {
+            try validateMovieGraph(movie: movie, household: household, context: context, operation: operation)
+        }
+    }
+
     static func fetchViewings(for movie: Movie, context: NSManagedObjectContext) throws -> [Viewing] {
         let request = NSFetchRequest<Viewing>(entityName: "Viewing")
         request.predicate = NSPredicate(format: "movie == %@", movie)

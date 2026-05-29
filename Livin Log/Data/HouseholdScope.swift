@@ -73,6 +73,27 @@ extension NSManagedObjectContext {
         }
     }
 
+
+
+    func debugLogViewingSave(operation: String, viewing: Viewing, movie: Movie?, household: Household?, member: HouseholdMember?, assignedBeforeRelationships: Bool) {
+        #if DEBUG
+        print("🧩 [ViewingStoreSafeSave] operation=\(operation) assignedBeforeRelationships=\(assignedBeforeRelationships)")
+        let objects: [(String, NSManagedObject?)] = [
+            ("viewing", viewing),
+            ("movie", movie),
+            ("household", household),
+            ("member", member)
+        ]
+        for (label, object) in objects {
+            guard let object else {
+                print("🧩 [ViewingStoreSafeSave] \(label)=nil")
+                continue
+            }
+            print("🧩 [ViewingStoreSafeSave] \(label) entity=\(object.entity.name ?? "Unknown") objectID=\(object.objectID.uriRepresentation().absoluteString) store=\(storeDebugDescription(object.objectID.persistentStore)) isInserted=\(object.isInserted)")
+        }
+        #endif
+    }
+
     func debugLogStoreSafeSave(entityName: String, household: Household?, member: HouseholdMember?, objects: [(String, NSManagedObject?)]) {
         #if DEBUG
         let householdName = household?.name ?? "<nil>"
