@@ -24,6 +24,28 @@ struct TVShowDetailView: View {
     @State private var editSeasonsText: String = ""
     @State private var editNotes: String = ""
     @State private var editRewatch: Bool = false
+    @State private var editSelectedPosterURLString: String = ""
+    @State private var editSelectedIMDbID: String?
+    @State private var editSelectedMediaType: String?
+
+    @State private var editSearchResults: [OMDbSearchResult] = []
+    @State private var isSearchingEditMedia = false
+    @State private var editSearchMessage: String?
+    @State private var editSearchError: String?
+    @FocusState private var focusedEditMediaField: EditMediaAutocompleteField?
+
+    private enum EditMediaAutocompleteField: String {
+        case title
+        case year
+    }
+
+    private var isEditMediaAutocompleteFocused: Bool {
+        focusedEditMediaField == .title || focusedEditMediaField == .year
+    }
+
+    private var shouldShowEditMediaAutocomplete: Bool {
+        isEditing && isEditMediaAutocompleteFocused && !editSearchResults.isEmpty
+    }
 
     // Poster
     @State private var posterURL: URL?
@@ -55,6 +77,14 @@ struct TVShowDetailView: View {
             }
             .disabled(!canWrite)
         )
+        .task(id: "\(isEditing)|\(editTitle)|\(editYearText)|\(focusedEditMediaField?.rawValue ?? "none")") {
+            await searchEditTVShowsDebounced()
+        }
+        .onChange(of: focusedEditMediaField) { _, newFocus in
+            if newFocus == nil {
+                hideEditMediaAutocomplete()
+            }
+        }
         .onAppear {
             seedEditorFieldsFromShow()
             seedPosterFromStoredURL()
@@ -67,6 +97,73 @@ struct TVShowDetailView: View {
         } message: {
             Text(saveError ?? "The TV show could not be saved.")
         }
+    }
+
+
+    private func searchEditTVShowsDebounced() async {
+        guard isEditing, isEditMediaAutocompleteFocused else {
+            hideEditMediaAutocomplete()
+            return
+        }
+
+        let trimmedTitle = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard OMDbSearchService.meaningfulCharacterCount(in: trimmedTitle) >= 3 else {
+            editSearchResults = []
+            editSearchError = nil
+            editSearchMessage = trimmedTitle.isEmpty ? nil : "Type at least 3 characters to search OMDb."
+            isSearchingEditMedia = false
+            return
+        }
+
+        do {
+            try await Task.sleep(nanoseconds: 500_000_000)
+        } catch {
+            return
+        }
+        guard !Task.isCancelled, isEditing, isEditMediaAutocompleteFocused else { return }
+
+        isSearchingEditMedia = true
+        editSearchMessage = nil
+        editSearchError = nil
+
+        do {
+            let results = try await OMDbSearchService.search(title: trimmedTitle, year: editYearText, preferredType: .series)
+            guard !Task.isCancelled, isEditing, isEditMediaAutocompleteFocused else { return }
+            editSearchResults = results
+            editSearchMessage = results.isEmpty ? "No OMDb matches yet. You can still save manually." : nil
+        } catch let error as URLError where error.code == .cancelled {
+            return
+        } catch {
+            guard !Task.isCancelled else { return }
+            editSearchResults = []
+            editSearchMessage = nil
+            editSearchError = "TV show search is temporarily unavailable. You can still enter details manually."
+#if DEBUG
+            print("📺 [TVShowEditSearch] active search failed: \(error)")
+#endif
+        }
+
+        isSearchingEditMedia = false
+    }
+
+    private func applyEditSearchResult(_ result: OMDbSearchResult) {
+        editTitle = result.title
+        if let year = result.yearInt16 {
+            editYearText = String(Int(year))
+        }
+        editSelectedPosterURLString = result.normalizedPosterURLString
+        editSelectedIMDbID = result.imdbID
+        editSelectedMediaType = result.type
+        posterURL = result.posterURL
+        hideEditMediaAutocomplete()
+        focusedEditMediaField = nil
+    }
+
+    private func hideEditMediaAutocomplete() {
+        editSearchResults = []
+        editSearchMessage = nil
+        editSearchError = nil
+        isSearchingEditMedia = false
     }
 
     private var headerSection: some View {
@@ -98,9 +195,37 @@ struct TVShowDetailView: View {
         Section("Details") {
             if isEditing {
                 TextField("Title", text: $editTitle)
+                    .focused($focusedEditMediaField, equals: .title)
 
                 TextField("Year", text: $editYearText)
                     .keyboardType(.numberPad)
+                    .focused($focusedEditMediaField, equals: .year)
+
+                if isEditMediaAutocompleteFocused {
+                    if isSearchingEditMedia {
+                        ProgressView("Searching OMDb…")
+                            .font(.caption)
+                    } else if let editSearchError {
+                        Text(editSearchError)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    } else if let editSearchMessage {
+                        Text(editSearchMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if shouldShowEditMediaAutocomplete {
+                    ForEach(editSearchResults) { result in
+                        Button {
+                            applyEditSearchResult(result)
+                        } label: {
+                            MediaSearchResultRow(result: result)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
 
                 Picker("Rating", selection: $editRating) {
                     ForEach(ContentRating.allCases) { r in
@@ -146,6 +271,9 @@ struct TVShowDetailView: View {
         editSeasonsText = tvShow.seasons == 0 ? "" : String(Int(tvShow.seasons))
         editNotes = tvShow.notes ?? ""
         editRewatch = tvShow.rewatch
+        editSelectedPosterURLString = tvShow.posterURL ?? ""
+        editSelectedIMDbID = tvShow.value(forKey: "imdbID") as? String
+        editSelectedMediaType = tvShow.value(forKey: "mediaType") as? String
 
         // ratingText is stored as String on TVShow
         if let stored = tvShow.ratingText,
@@ -202,6 +330,13 @@ struct TVShowDetailView: View {
         }
 
         tvShowInContext.rewatch = editRewatch
+        let selectedPoster = editSelectedPosterURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !selectedPoster.isEmpty {
+            tvShowInContext.posterURL = selectedPoster
+            posterURL = URL(string: selectedPoster)
+        }
+        tvShowInContext.setValue(editSelectedIMDbID, forKey: "imdbID")
+        tvShowInContext.setValue(editSelectedMediaType, forKey: "mediaType")
         tvShowInContext.ratingText = editRating.rawValue
         if scopedHousehold.id == nil {
             scopedHousehold.id = UUID()

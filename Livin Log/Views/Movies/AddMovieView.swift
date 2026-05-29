@@ -22,6 +22,28 @@ struct AddMovieView: View {
     @State private var mpaaRating: String = "—"
     @State private var notes: String = ""
     @State private var watchedOn: Date = Date()
+    @State private var selectedPosterURLString: String = ""
+    @State private var selectedIMDbID: String?
+    @State private var selectedMediaType: String?
+
+    @State private var searchResults: [OMDbSearchResult] = []
+    @State private var isSearchingMedia = false
+    @State private var searchMessage: String?
+    @State private var searchError: String?
+    @FocusState private var focusedMediaField: MediaAutocompleteField?
+
+    private enum MediaAutocompleteField: String {
+        case title
+        case year
+    }
+
+    private var isMediaAutocompleteFocused: Bool {
+        focusedMediaField == .title || focusedMediaField == .year
+    }
+
+    private var shouldShowMediaAutocomplete: Bool {
+        isMediaAutocompleteFocused && !searchResults.isEmpty
+    }
 
     // Genres
     @State private var selectedGenres: Set<String> = []
@@ -43,9 +65,26 @@ struct AddMovieView: View {
         Form {
             Section("Movie") {
                 TextField("Title", text: $title)
+                    .focused($focusedMediaField, equals: .title)
 
                 TextField("Year", text: $yearText)
                     .keyboardType(.numberPad)
+                    .focused($focusedMediaField, equals: .year)
+
+                if isMediaAutocompleteFocused {
+                    if isSearchingMedia {
+                        ProgressView("Searching OMDb…")
+                            .font(.caption)
+                    } else if let searchError {
+                        Text(searchError)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    } else if let searchMessage {
+                        Text(searchMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
                 DatePicker(
                     "Watch date",
@@ -80,6 +119,19 @@ struct AddMovieView: View {
                                 .padding(.leading, 5)
                         }
                     }
+            }
+
+            if shouldShowMediaAutocomplete {
+                Section("Movie Search Results") {
+                    ForEach(searchResults) { result in
+                        Button {
+                            applySearchResult(result)
+                        } label: {
+                            MediaSearchResultRow(result: result)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
 
             Section("Feedback") {
@@ -162,6 +214,14 @@ struct AddMovieView: View {
                     .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || actingMember == nil)
             }
         }
+        .task(id: "\(title)|\(yearText)|\(focusedMediaField?.rawValue ?? "none")") {
+            await searchMoviesDebounced()
+        }
+        .onChange(of: focusedMediaField) { _, newFocus in
+            if newFocus == nil {
+                hideMediaAutocomplete()
+            }
+        }
         .navigationDestination(isPresented: $showGenrePicker) {
             GenrePickerView(title: "Select Genres", allGenres: allGenres, selected: $selectedGenres)
         }
@@ -173,6 +233,72 @@ struct AddMovieView: View {
         .onAppear {
             seedFeedbackDraftsIfNeeded()
         }
+    }
+
+
+    private func searchMoviesDebounced() async {
+        guard isMediaAutocompleteFocused else {
+            hideMediaAutocomplete()
+            return
+        }
+
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard OMDbSearchService.meaningfulCharacterCount(in: trimmedTitle) >= 3 else {
+            searchResults = []
+            searchError = nil
+            searchMessage = trimmedTitle.isEmpty ? nil : "Type at least 3 characters to search OMDb."
+            isSearchingMedia = false
+            return
+        }
+
+        do {
+            try await Task.sleep(nanoseconds: 500_000_000)
+        } catch {
+            return
+        }
+        guard !Task.isCancelled, isMediaAutocompleteFocused else { return }
+
+        isSearchingMedia = true
+        searchMessage = nil
+        searchError = nil
+
+        do {
+            let results = try await OMDbSearchService.search(title: trimmedTitle, year: yearText, preferredType: .movie)
+            guard !Task.isCancelled, isMediaAutocompleteFocused else { return }
+            searchResults = results
+            searchMessage = results.isEmpty ? "No OMDb matches yet. You can still save manually." : nil
+        } catch let error as URLError where error.code == .cancelled {
+            return
+        } catch {
+            guard !Task.isCancelled else { return }
+            searchResults = []
+            searchMessage = nil
+            searchError = "Movie search is temporarily unavailable. You can still enter details manually."
+#if DEBUG
+            print("🎬 [MovieSearch] active search failed: \(error)")
+#endif
+        }
+
+        isSearchingMedia = false
+    }
+
+    private func applySearchResult(_ result: OMDbSearchResult) {
+        title = result.title
+        if let year = result.yearInt16 {
+            yearText = String(Int(year))
+        }
+        selectedPosterURLString = result.normalizedPosterURLString
+        selectedIMDbID = result.imdbID
+        selectedMediaType = result.type
+        hideMediaAutocomplete()
+        focusedMediaField = nil
+    }
+
+    private func hideMediaAutocomplete() {
+        searchResults = []
+        searchMessage = nil
+        searchError = nil
+        isSearchingMedia = false
     }
 
     // MARK: - Formatting
@@ -281,6 +407,9 @@ struct AddMovieView: View {
 
         movie.mpaaRating = (mpaaRating == "—") ? nil : mpaaRating
         movie.genre = selectedGenres.isEmpty ? nil : selectedGenres.sorted().joined(separator: ", ")
+        movie.posterURL = selectedPosterURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : selectedPosterURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        movie.setValue(selectedIMDbID, forKey: "imdbID")
+        movie.setValue(selectedMediaType, forKey: "mediaType")
 
         let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         movie.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
@@ -372,7 +501,9 @@ struct AddMovieView: View {
 
                 await MainActor.run {
                     guard let movieInContext = (try? context.existingObject(with: movieObjectID)) as? Movie else { return }
-                    movieInContext.posterURL = httpsURL?.absoluteString
+                    if (movieInContext.posterURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        movieInContext.posterURL = httpsURL?.absoluteString
+                    }
                     do {
                         try MovieStoreSafety.validateMovieGraph(movie: movieInContext, household: movieInContext.household, context: context, operation: "Movie.poster.add")
                         try context.save()

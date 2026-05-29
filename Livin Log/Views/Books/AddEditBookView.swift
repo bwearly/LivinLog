@@ -26,6 +26,20 @@ struct AddEditBookView: View {
     @State private var searchMessage: String?
     @State private var selectedResultKey: String?
     @State private var errorMessage: String?
+    @FocusState private var focusedBookField: BookAutocompleteField?
+
+    private enum BookAutocompleteField: String {
+        case title
+        case author
+    }
+
+    private var isBookAutocompleteFocused: Bool {
+        focusedBookField == .title || focusedBookField == .author
+    }
+
+    private var shouldShowBookAutocomplete: Bool {
+        isBookAutocompleteFocused && !searchResults.isEmpty
+    }
 
     init(household: Household, selectedMember: HouseholdMember?, editingBook: BookEntry? = nil) {
         self.household = household
@@ -55,7 +69,9 @@ struct AddEditBookView: View {
 
                     VStack(spacing: 10) {
                         TextField("Title", text: $title)
+                            .focused($focusedBookField, equals: .title)
                         TextField("Author", text: $author)
+                            .focused($focusedBookField, equals: .author)
                     }
                 }
 
@@ -66,17 +82,19 @@ struct AddEditBookView: View {
                     LabeledContent("ISBN", value: isbn)
                 }
 
-                if isSearchingBooks {
-                    ProgressView("Searching books…")
-                        .font(.caption)
-                } else if let searchMessage {
-                    Text(searchMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if isBookAutocompleteFocused {
+                    if isSearchingBooks {
+                        ProgressView("Searching books…")
+                            .font(.caption)
+                    } else if let searchMessage {
+                        Text(searchMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
-            if !searchResults.isEmpty {
+            if shouldShowBookAutocomplete {
                 Section("Book Search Results") {
                     ForEach(searchResults) { result in
                         Button {
@@ -126,8 +144,15 @@ struct AddEditBookView: View {
                 .disabled(!canEdit || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || parsedRating == nil)
             }
         }
-        .task(id: "\(title)|\(author)") {
+        .task(id: "\(title)|\(author)|\(focusedBookField?.rawValue ?? "none")") {
             await searchBooksDebounced()
+        }
+        .onChange(of: focusedBookField) { _, newFocus in
+            if newFocus == nil {
+                searchResults = []
+                searchMessage = nil
+                isSearchingBooks = false
+            }
         }
         .onAppear {
             if let editingBook {
@@ -150,6 +175,13 @@ struct AddEditBookView: View {
 
 
     private func searchBooksDebounced() async {
+        guard isBookAutocompleteFocused else {
+            searchResults = []
+            searchMessage = nil
+            isSearchingBooks = false
+            return
+        }
+
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedAuthor = author.trimmingCharacters(in: .whitespacesAndNewlines)
         let meaningfulTitleCount = trimmedTitle.unicodeScalars.filter { !CharacterSet.whitespacesAndNewlines.contains($0) && !CharacterSet.punctuationCharacters.contains($0) }.count
@@ -166,14 +198,14 @@ struct AddEditBookView: View {
         } catch {
             return
         }
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, isBookAutocompleteFocused else { return }
 
         isSearchingBooks = true
         searchMessage = nil
 
         do {
             let results = try await OpenLibraryCoverService.search(title: trimmedTitle, author: trimmedAuthor)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, isBookAutocompleteFocused else { return }
             searchResults = results
             if results.isEmpty {
                 searchMessage = "No Open Library matches yet. You can still save manually."
@@ -209,6 +241,9 @@ struct AddEditBookView: View {
         isbn = result.isbn ?? ""
         coverURLString = result.coverURL?.absoluteString ?? ""
         searchMessage = nil
+        searchResults = []
+        isSearchingBooks = false
+        focusedBookField = nil
     }
 
     private func saveBook() {

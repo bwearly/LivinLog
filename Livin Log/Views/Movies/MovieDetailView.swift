@@ -31,6 +31,28 @@ struct MovieDetailView: View {
     @State private var editYearText: String = ""
     @State private var editMPAA: String = "—"
     @State private var editMovieNotes: String = ""
+    @State private var editSelectedPosterURLString: String = ""
+    @State private var editSelectedIMDbID: String?
+    @State private var editSelectedMediaType: String?
+
+    @State private var editSearchResults: [OMDbSearchResult] = []
+    @State private var isSearchingEditMedia = false
+    @State private var editSearchMessage: String?
+    @State private var editSearchError: String?
+    @FocusState private var focusedEditMediaField: EditMediaAutocompleteField?
+
+    private enum EditMediaAutocompleteField: String {
+        case title
+        case year
+    }
+
+    private var isEditMediaAutocompleteFocused: Bool {
+        focusedEditMediaField == .title || focusedEditMediaField == .year
+    }
+
+    private var shouldShowEditMediaAutocomplete: Bool {
+        isEditing && isEditMediaAutocompleteFocused && !editSearchResults.isEmpty
+    }
 
     // Genres picker
     @State private var selectedGenres: Set<String> = []
@@ -106,6 +128,14 @@ struct MovieDetailView: View {
             }
             .disabled(!canEdit)
         )
+        .task(id: "\(isEditing)|\(editTitle)|\(editYearText)|\(focusedEditMediaField?.rawValue ?? "none")") {
+            await searchEditMoviesDebounced()
+        }
+        .onChange(of: focusedEditMediaField) { _, newFocus in
+            if newFocus == nil {
+                hideEditMediaAutocomplete()
+            }
+        }
         .navigationDestination(isPresented: $showGenrePicker) {
             GenrePickerView(title: "Select Genres", allGenres: allGenres, selected: $selectedGenres)
         }
@@ -142,6 +172,73 @@ struct MovieDetailView: View {
         }
     }
 
+
+
+    private func searchEditMoviesDebounced() async {
+        guard isEditing, isEditMediaAutocompleteFocused else {
+            hideEditMediaAutocomplete()
+            return
+        }
+
+        let trimmedTitle = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard OMDbSearchService.meaningfulCharacterCount(in: trimmedTitle) >= 3 else {
+            editSearchResults = []
+            editSearchError = nil
+            editSearchMessage = trimmedTitle.isEmpty ? nil : "Type at least 3 characters to search OMDb."
+            isSearchingEditMedia = false
+            return
+        }
+
+        do {
+            try await Task.sleep(nanoseconds: 500_000_000)
+        } catch {
+            return
+        }
+        guard !Task.isCancelled, isEditing, isEditMediaAutocompleteFocused else { return }
+
+        isSearchingEditMedia = true
+        editSearchMessage = nil
+        editSearchError = nil
+
+        do {
+            let results = try await OMDbSearchService.search(title: trimmedTitle, year: editYearText, preferredType: .movie)
+            guard !Task.isCancelled, isEditing, isEditMediaAutocompleteFocused else { return }
+            editSearchResults = results
+            editSearchMessage = results.isEmpty ? "No OMDb matches yet. You can still save manually." : nil
+        } catch let error as URLError where error.code == .cancelled {
+            return
+        } catch {
+            guard !Task.isCancelled else { return }
+            editSearchResults = []
+            editSearchMessage = nil
+            editSearchError = "Movie search is temporarily unavailable. You can still enter details manually."
+#if DEBUG
+            print("🎬 [MovieEditSearch] active search failed: \(error)")
+#endif
+        }
+
+        isSearchingEditMedia = false
+    }
+
+    private func applyEditSearchResult(_ result: OMDbSearchResult) {
+        editTitle = result.title
+        if let year = result.yearInt16 {
+            editYearText = String(Int(year))
+        }
+        editSelectedPosterURLString = result.normalizedPosterURLString
+        editSelectedIMDbID = result.imdbID
+        editSelectedMediaType = result.type
+        posterURL = result.posterURL
+        hideEditMediaAutocomplete()
+        focusedEditMediaField = nil
+    }
+
+    private func hideEditMediaAutocomplete() {
+        editSearchResults = []
+        editSearchMessage = nil
+        editSearchError = nil
+        isSearchingEditMedia = false
+    }
 
     private var authorizedActingMember: HouseholdMember? {
         guard let member else { return nil }
@@ -181,9 +278,37 @@ struct MovieDetailView: View {
         Section("Details") {
             if isEditing {
                 TextField("Title", text: $editTitle)
+                    .focused($focusedEditMediaField, equals: .title)
 
                 TextField("Year", text: $editYearText)
                     .keyboardType(.numberPad)
+                    .focused($focusedEditMediaField, equals: .year)
+
+                if isEditMediaAutocompleteFocused {
+                    if isSearchingEditMedia {
+                        ProgressView("Searching OMDb…")
+                            .font(.caption)
+                    } else if let editSearchError {
+                        Text(editSearchError)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    } else if let editSearchMessage {
+                        Text(editSearchMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if shouldShowEditMediaAutocomplete {
+                    ForEach(editSearchResults) { result in
+                        Button {
+                            applyEditSearchResult(result)
+                        } label: {
+                            MediaSearchResultRow(result: result)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
 
                 Picker("MPAA Rating", selection: $editMPAA) {
                     ForEach(["—","G","PG","PG-13","R","NC-17","Not Rated"], id: \.self) { r in
@@ -469,6 +594,9 @@ struct MovieDetailView: View {
         editYearText = movie.year == 0 ? "" : String(movie.year)
         editMPAA = (movie.mpaaRating ?? "").isEmpty ? "—" : (movie.mpaaRating ?? "—")
         editMovieNotes = movie.notes ?? ""
+        editSelectedPosterURLString = movie.posterURL ?? ""
+        editSelectedIMDbID = movie.value(forKey: "imdbID") as? String
+        editSelectedMediaType = movie.value(forKey: "mediaType") as? String
 
         selectedGenres = Set((movie.genre ?? "")
             .split(separator: ",")
@@ -496,6 +624,13 @@ struct MovieDetailView: View {
         }
 
         movieInContext.mpaaRating = (editMPAA == "—") ? nil : editMPAA
+        let selectedPoster = editSelectedPosterURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !selectedPoster.isEmpty {
+            movieInContext.posterURL = selectedPoster
+            posterURL = URL(string: selectedPoster)
+        }
+        movieInContext.setValue(editSelectedIMDbID, forKey: "imdbID")
+        movieInContext.setValue(editSelectedMediaType, forKey: "mediaType")
         assignIfInserted(movieInContext, to: store, in: context)
 
         if movieInContext.isInserted {
