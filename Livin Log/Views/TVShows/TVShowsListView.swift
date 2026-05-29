@@ -20,6 +20,7 @@ struct TVShowsListView: View {
     @State private var showingAdd = false
     @State private var didBackfill = false
     @State private var searchText = ""
+    @State private var operationError: String?
 
     private enum SortOption: String, CaseIterable, Identifiable {
         case newest = "Newest"
@@ -116,11 +117,22 @@ struct TVShowsListView: View {
             if canWrite {
                 await backfillHouseholdIDIfNeeded()
             }
+#if DEBUG
+            if let scopedHousehold = activeHouseholdInContext(household, context: context) {
+                TVShowStoreSafety.diagnoseTVShowGraphs(household: scopedHousehold, context: context, reason: "listAppear.household")
+            }
+            TVShowStoreSafety.diagnoseTVShowGraphs(household: nil, context: context, reason: "listAppear.allTVShows")
+#endif
         }
         .task {
             if canWrite {
                 await fetchMissingPostersIfNeeded()
             }
+        }
+        .alert("TV Show Update Failed", isPresented: Binding(get: { operationError != nil }, set: { if !$0 { operationError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(operationError ?? "The TV show could not be updated.")
         }
     }
 
@@ -207,20 +219,28 @@ struct TVShowsListView: View {
     // MARK: - Posters
 
     private func fetchMissingPostersIfNeeded() async {
-        let needsPoster = filteredShows.filter {
-            let s = ($0.posterURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return s.isEmpty
+        let needsPoster = filteredShows.compactMap { show -> (NSManagedObjectID, String?, Int16)? in
+            let s = (show.posterURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return s.isEmpty ? (show.objectID, show.title, show.year) : nil
         }
 
         guard !needsPoster.isEmpty else { return }
 
-        for show in needsPoster.prefix(20) {
-            let fetched = await OMDbPosterService.posterURL(title: show.title, year: show.year)
+        for snapshot in needsPoster.prefix(20) {
+            let fetched = await OMDbPosterService.posterURL(title: snapshot.1, year: snapshot.2)
             guard let fetched else { continue }
 
             await MainActor.run {
-                show.posterURL = fetched.absoluteString
-                try? context.save()
+                guard let showInContext = (try? context.existingObject(with: snapshot.0)) as? TVShow else { return }
+                showInContext.posterURL = fetched.absoluteString
+                do {
+                    try TVShowStoreSafety.validateGraph(tvShow: showInContext, context: context, operation: "TVShow.poster.listBackfill")
+                    try context.save()
+                } catch {
+                    context.rollback()
+                    operationError = "Could not save a TV show poster: \(error.localizedDescription)"
+                    print("❌ [TVShowPosterBackfill] save blocked:", error)
+                }
             }
         }
     }
@@ -228,24 +248,35 @@ struct TVShowsListView: View {
     // MARK: - Backfill + delete
 
     private func backfillHouseholdIDIfNeeded() async {
-        if household.id == nil {
-            await MainActor.run {
-                household.id = UUID()
-                try? context.save()
-            }
-        }
-
-        guard let hid = household.id else { return }
-
         await MainActor.run {
-            let req = NSFetchRequest<TVShow>(entityName: "TVShow")
-            req.predicate = NSPredicate(format: "household == %@ AND householdID == nil", household)
+            guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
+                operationError = "Could not resolve the active household."
+                return
+            }
 
-            if let legacy = try? context.fetch(req), !legacy.isEmpty {
+            if scopedHousehold.id == nil {
+                scopedHousehold.id = UUID()
+            }
+
+            guard let hid = scopedHousehold.id else { return }
+
+            let req = NSFetchRequest<TVShow>(entityName: "TVShow")
+            req.predicate = NSPredicate(format: "household == %@ AND householdID == nil", scopedHousehold)
+            req.includesPendingChanges = true
+
+            do {
+                let legacy = try context.fetch(req)
+                guard !legacy.isEmpty || context.hasChanges else { return }
                 for show in legacy {
+                    try TVShowStoreSafety.validateGraph(tvShow: show, context: context, operation: "TVShow.householdIDBackfill.preflight")
                     show.householdID = hid
+                    try TVShowStoreSafety.validateGraph(tvShow: show, context: context, operation: "TVShow.householdIDBackfill")
                 }
-                try? context.save()
+                try context.save()
+            } catch {
+                context.rollback()
+                operationError = "Could not update TV show household IDs: \(error.localizedDescription)"
+                print("❌ [TVShowBackfill] save blocked:", error)
             }
         }
     }
@@ -260,12 +291,14 @@ struct TVShowsListView: View {
 
         do {
             for show in toDelete {
-                try context.validateSamePersistentStore([("tvShow", show), ("household", show.household)])
-                context.delete(show)
+                guard let showInContext = (try? context.existingObject(with: show.objectID)) as? TVShow else { continue }
+                try TVShowStoreSafety.validateDelete(tvShow: showInContext, context: context)
+                context.delete(showInContext)
             }
             try context.save()
         } catch {
             context.rollback()
+            operationError = "Could not delete TV show: \(error.localizedDescription)"
             print("Delete TV show failed:", error)
         }
     }

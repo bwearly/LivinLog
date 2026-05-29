@@ -27,6 +27,7 @@ struct TVShowDetailView: View {
 
     // Poster
     @State private var posterURL: URL?
+    @State private var saveError: String?
 
     private let persistentContainer = PersistenceController.shared.container
     private var canWrite: Bool {
@@ -44,8 +45,9 @@ struct TVShowDetailView: View {
             Button(isEditing ? "Save" : "Edit") {
                 guard canWrite else { return }
                 if isEditing {
-                    saveDetails()
-                    isEditing = false
+                    if saveDetails() {
+                        isEditing = false
+                    }
                 } else {
                     seedEditorFieldsFromShow()
                     isEditing = true
@@ -59,6 +61,11 @@ struct TVShowDetailView: View {
         }
         .task {
             await ensurePosterLoaded()
+        }
+        .alert("Could Not Save TV Show", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(saveError ?? "The TV show could not be saved.")
         }
     }
 
@@ -149,16 +156,34 @@ struct TVShowDetailView: View {
         }
     }
 
-    private func saveDetails() {
-        guard canWrite else { return }
+    private func saveDetails() -> Bool {
+        guard canWrite else { return false }
+        saveError = nil
         let newTitle = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return }
-        guard let tvShowInContext = (try? context.existingObject(with: tvShow.objectID)) as? TVShow else { return }
+        guard let tvShowInContext = (try? context.existingObject(with: tvShow.objectID)) as? TVShow else {
+            saveError = "Could not resolve this TV show in the current context."
+            return false
+        }
+        guard let scopedHousehold = tvShowInContext.household else {
+            saveError = "This TV show is not linked to a household. Nothing was saved."
+            return false
+        }
+
+        do {
+            try TVShowStoreSafety.validateActiveHouseholdIfPresent(activeHouseholdInContext(household, context: context), matchesDerivedHousehold: scopedHousehold, context: context)
+            try TVShowStoreSafety.validateGraph(tvShow: tvShowInContext, context: context, operation: "TVShow.edit.preflight")
+        } catch {
+            context.rollback()
+            saveError = error.localizedDescription
+            print("❌ [TVShowEdit] preflight blocked:", error)
+            return false
+        }
+
         let oldTitle = tvShowInContext.title ?? ""
         let oldYear = tvShowInContext.year
-        let store = storeForParent(tvShowInContext)
 #if DEBUG
+        let store = storeForParent(tvShowInContext)
         print("🧩 [EditSave] entity=TVShow store=\(store?.url?.lastPathComponent ?? "nil-store") objectID=\(tvShowInContext.objectID.uriRepresentation().absoluteString)")
 #endif
 
@@ -178,8 +203,9 @@ struct TVShowDetailView: View {
 
         tvShowInContext.rewatch = editRewatch
         tvShowInContext.ratingText = editRating.rawValue
-        assignIfInserted(tvShowInContext, to: store, in: context)
-        tvShowInContext.household = scopedHousehold
+        if scopedHousehold.id == nil {
+            scopedHousehold.id = UUID()
+        }
         tvShowInContext.householdID = scopedHousehold.id
 
         let trimmedNotes = editNotes.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -189,6 +215,7 @@ struct TVShowDetailView: View {
             let objectsToValidate: [(String, NSManagedObject?)] = [("tvShow", tvShowInContext), ("household", scopedHousehold)]
             context.debugLogStoreSafeSave(entityName: "TVShow", household: scopedHousehold, member: member, objects: objectsToValidate)
             try context.validateSamePersistentStore(objectsToValidate)
+            try TVShowStoreSafety.validateGraph(tvShow: tvShowInContext, context: context, operation: "TVShow.edit")
             try context.save()
             print("ℹ️ TVShow inherits household share via parent household relationship (no per-object share mutation)")
 #if DEBUG
@@ -196,16 +223,19 @@ struct TVShowDetailView: View {
 #endif
         } catch {
             context.rollback()
+            saveError = "Could not save TV show: \(error.localizedDescription)"
             print("Save TV show failed:", error)
-            return
+            return false
         }
 
         // If title/year changed, refresh poster (same behavior as MovieDetailView)
         let titleChanged = newTitle != oldTitle
         let yearChanged = tvShowInContext.year != oldYear
         if titleChanged || yearChanged {
-            Task { await refreshPoster() }
+            let objectID = tvShowInContext.objectID
+            Task { await refreshPoster(for: objectID) }
         }
+        return true
     }
 
     // MARK: - Poster helpers
@@ -220,43 +250,47 @@ struct TVShowDetailView: View {
     }
 
     private func ensurePosterLoaded() async {
-        // Use stored first
-        let stored = (tvShow.posterURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let snapshot: (NSManagedObjectID, String?, Int16, String?)? = await MainActor.run {
+            guard let tvShowInContext = (try? context.existingObject(with: tvShow.objectID)) as? TVShow else { return nil }
+            return (tvShowInContext.objectID, tvShowInContext.title, tvShowInContext.year, tvShowInContext.posterURL)
+        }
+        guard let snapshot else { return }
+
+        let stored = (snapshot.3 ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !stored.isEmpty, let url = URL(string: stored) {
             await MainActor.run { posterURL = url }
             return
         }
 
-        // Fetch + persist
-        let fetched = await OMDbPosterService.posterURL(title: tvShow.title, year: tvShow.year)
+        let fetched = await OMDbPosterService.posterURL(title: snapshot.1, year: snapshot.2)
         guard let fetched else { return }
 
-        await MainActor.run {
-            tvShow.posterURL = fetched.absoluteString
-            posterURL = fetched
-            do {
-                try context.validateSamePersistentStore([("tvShow", tvShow), ("household", tvShow.household)])
-                try context.save()
-            } catch {
-                context.rollback()
-                print("❌ [TVShowPoster] save blocked:", error)
-            }
-        }
+        await savePoster(fetched, for: snapshot.0, operation: "TVShow.poster.ensure")
     }
 
-    private func refreshPoster() async {
-        let fetched = await OMDbPosterService.posterURL(title: tvShow.title, year: tvShow.year)
+    private func refreshPoster(for objectID: NSManagedObjectID) async {
+        let snapshot: (String?, Int16)? = await MainActor.run {
+            guard let tvShowInContext = (try? context.existingObject(with: objectID)) as? TVShow else { return nil }
+            return (tvShowInContext.title, tvShowInContext.year)
+        }
+        guard let snapshot else { return }
 
-        await MainActor.run {
-            tvShow.posterURL = fetched?.absoluteString
-            posterURL = fetched
-            do {
-                try context.validateSamePersistentStore([("tvShow", tvShow), ("household", tvShow.household)])
-                try context.save()
-            } catch {
-                context.rollback()
-                print("❌ [TVShowPoster] save blocked:", error)
-            }
+        let fetched = await OMDbPosterService.posterURL(title: snapshot.0, year: snapshot.1)
+        await savePoster(fetched, for: objectID, operation: "TVShow.poster.refresh")
+    }
+
+    @MainActor
+    private func savePoster(_ fetched: URL?, for objectID: NSManagedObjectID, operation: String) {
+        guard let tvShowInContext = (try? context.existingObject(with: objectID)) as? TVShow else { return }
+        tvShowInContext.posterURL = fetched?.absoluteString
+        posterURL = fetched
+        do {
+            try TVShowStoreSafety.validateGraph(tvShow: tvShowInContext, context: context, operation: operation)
+            try context.save()
+        } catch {
+            context.rollback()
+            saveError = "Could not save the TV show poster: \(error.localizedDescription)"
+            print("❌ [TVShowPoster] save blocked:", error)
         }
     }
 }
