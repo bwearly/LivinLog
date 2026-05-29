@@ -25,6 +25,7 @@ struct AddMovieView: View {
     @State private var selectedPosterURLString: String = ""
     @State private var selectedIMDbID: String?
     @State private var selectedMediaType: String?
+    @State private var hasSelectedMediaResult = false
 
     @State private var searchResults: [OMDbSearchResult] = []
     @State private var isSearchingMedia = false
@@ -63,7 +64,7 @@ struct AddMovieView: View {
 
     var body: some View {
         Form {
-            Section("Movie") {
+            Section {
                 TextField("Title", text: $title)
                     .focused($focusedMediaField, equals: .title)
 
@@ -85,7 +86,38 @@ struct AddMovieView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+            } header: {
+                SharedViews.AccentSectionHeader(title: "Movie", systemImage: "film.fill", style: .movies)
+            }
 
+            if shouldShowMediaAutocomplete {
+                Section {
+                    ForEach(searchResults) { result in
+                        Button {
+                            applySearchResult(result)
+                        } label: {
+                            MediaSearchResultRow(result: result)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } header: {
+                    SharedViews.AccentSectionHeader(title: "Movie Search Results", systemImage: "magnifyingglass", style: .movies)
+                }
+            }
+
+            if hasSelectedMediaResult {
+                Section {
+                    SelectedMediaPosterPreview(
+                        title: title.isEmpty ? "Selected movie" : title,
+                        subtitle: yearText.isEmpty ? "Movie" : "Movie • \(yearText)",
+                        posterURLString: selectedPosterURLString,
+                        systemImage: "film.fill",
+                        style: .movies
+                    )
+                }
+            }
+
+            Section {
                 DatePicker(
                     "Watch date",
                     selection: $watchedOn,
@@ -119,22 +151,11 @@ struct AddMovieView: View {
                                 .padding(.leading, 5)
                         }
                     }
+            } header: {
+                SharedViews.AccentSectionHeader(title: "Details", systemImage: "slider.horizontal.3", style: .movies)
             }
 
-            if shouldShowMediaAutocomplete {
-                Section("Movie Search Results") {
-                    ForEach(searchResults) { result in
-                        Button {
-                            applySearchResult(result)
-                        } label: {
-                            MediaSearchResultRow(result: result)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-
-            Section("Feedback") {
+            Section {
                 if let actingMember {
                     ForEach([actingMember]) { m in
                         let draft = bindingForMember(m)
@@ -203,8 +224,12 @@ struct AddMovieView: View {
                     Text("Claim your member profile before adding a movie.")
                         .foregroundStyle(.secondary)
                 }
+            } header: {
+                SharedViews.AccentSectionHeader(title: "Feedback", systemImage: "star.bubble.fill", style: .movies)
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(AppCategoryStyle.movies.gradient.opacity(0.18))
         .navigationTitle("Add Movie")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -290,6 +315,7 @@ struct AddMovieView: View {
         selectedPosterURLString = result.normalizedPosterURLString
         selectedIMDbID = result.imdbID
         selectedMediaType = result.type
+        hasSelectedMediaResult = true
         hideMediaAutocomplete()
         focusedMediaField = nil
     }

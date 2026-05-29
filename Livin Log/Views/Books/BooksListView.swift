@@ -51,11 +51,21 @@ struct BooksListView: View {
             }
 
             if selectedMember == nil {
-                Text("Choose a profile to view books.")
-                    .foregroundStyle(.secondary)
+                SharedViews.SoftEmptyState(
+                    title: "Choose a profile",
+                    systemImage: "person.crop.circle",
+                    style: .books,
+                    description: "Pick a reader to view their books."
+                )
+                .listRowBackground(Color.clear)
             } else if books.isEmpty {
-                Text("No books added yet.")
-                    .foregroundStyle(.secondary)
+                SharedViews.SoftEmptyState(
+                    title: "No books added yet",
+                    systemImage: "book.closed.fill",
+                    style: .books,
+                    description: "Save a finished book to build your reading log."
+                )
+                .listRowBackground(Color.clear)
             } else {
                 ForEach(books) { book in
                     NavigationLink {
@@ -78,6 +88,9 @@ struct BooksListView: View {
                             }
                             }
                         }
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 4)
+                        .background(AppCategoryStyle.books.gradient, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
                 }
                 .onDelete { offsets in
@@ -85,6 +98,8 @@ struct BooksListView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(AppCategoryStyle.books.gradient.opacity(0.12))
         .navigationTitle("Books Read")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
