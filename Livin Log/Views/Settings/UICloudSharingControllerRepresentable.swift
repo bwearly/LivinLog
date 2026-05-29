@@ -16,12 +16,13 @@ import UIKit
 struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
     let household: Household
     let onDone: () -> Void
+    let onShareReady: (CKShare) -> Void
     let onError: (Error) -> Void
 
     private let persistentContainer = PersistenceController.shared.container
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onDone: onDone, onError: onError)
+        Coordinator(onDone: onDone, onShareReady: onShareReady, onError: onError)
     }
 
     func makeUIViewController(context: Context) -> UIViewController {
@@ -57,6 +58,9 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
                         return
                     }
 
+                    print("✅ [CloudSharing] Share URL available; presenting share sheet")
+                    context.coordinator.shareReady(share)
+
                     // ✅ Standard iOS share sheet (Messages shows up here)
                     let activity = UIActivityViewController(activityItems: [shareURL], applicationActivities: nil)
 
@@ -73,7 +77,9 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
                         context.coordinator.finish()
                     }
 
-                    host.present(activity, animated: true)
+                    host.present(activity, animated: true) {
+                        print("ℹ️ [CloudSharing] Share sheet presented")
+                    }
                 }
             }
         }
@@ -131,12 +137,25 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
 
     final class Coordinator: NSObject {
         private let onDone: () -> Void
+        private let onShareReady: (CKShare) -> Void
         let onError: (Error) -> Void
         private var finished = false
+        private var reportedShareReady = false
 
-        init(onDone: @escaping () -> Void, onError: @escaping (Error) -> Void) {
+        init(
+            onDone: @escaping () -> Void,
+            onShareReady: @escaping (CKShare) -> Void,
+            onError: @escaping (Error) -> Void
+        ) {
             self.onDone = onDone
+            self.onShareReady = onShareReady
             self.onError = onError
+        }
+
+        func shareReady(_ share: CKShare) {
+            guard !reportedShareReady else { return }
+            reportedShareReady = true
+            DispatchQueue.main.async { self.onShareReady(share) }
         }
 
         func finish() {
