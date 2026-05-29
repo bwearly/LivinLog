@@ -207,6 +207,8 @@ struct MoviesListView: View {
                 isSleptThrough: sleptOnly && sleptMovieIDs.contains(movie.objectID)
             )
         }
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 
     private var trailingButtons: some View {
@@ -524,9 +526,7 @@ private struct MovieRowView: View {
                 }
             }
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 4)
-        .background(AppCategoryStyle.movies.gradient, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .subtleCategoryRowCard(style: .movies, horizontalPadding: 12, verticalPadding: 10)
     }
 }
 

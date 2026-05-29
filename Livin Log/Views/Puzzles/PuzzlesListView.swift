@@ -44,18 +44,28 @@ struct PuzzlesListView: View {
         List {
             if filteredPuzzles.isEmpty {
                 if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    ContentUnavailableView {
-                        Label("No puzzles yet", systemImage: "puzzlepiece")
-                    } description: {
-                        Text("Add your first puzzle")
-                    } actions: {
-                        Button("Add Puzzle") {
-                            showingAddPuzzle = true
-                        }
-                        .disabled(!canWrite)
+                    SharedViews.SoftEmptyState(
+                        title: "No puzzles yet",
+                        systemImage: "puzzlepiece.fill",
+                        style: .puzzles,
+                        description: "Add your first puzzle and celebrate every completed solve."
+                    )
+                    .listRowBackground(Color.clear)
+
+                    Button("Add Puzzle") {
+                        showingAddPuzzle = true
                     }
+                    .foregroundStyle(AppCategoryStyle.puzzles.accent)
+                    .disabled(!canWrite)
+                    .listRowBackground(Color.clear)
                 } else {
-                    ContentUnavailableView("No results", systemImage: "magnifyingglass")
+                    SharedViews.SoftEmptyState(
+                        title: "No results",
+                        systemImage: "magnifyingglass",
+                        style: .puzzles,
+                        description: "Try another puzzle name or brand."
+                    )
+                    .listRowBackground(Color.clear)
                 }
             } else {
                 ForEach(filteredPuzzles, id: \.objectID) { puzzle in
@@ -64,9 +74,13 @@ struct PuzzlesListView: View {
                     } label: {
                         PuzzleRow(puzzle: puzzle)
                     }
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(AppCategoryStyle.puzzles.gradient.opacity(0.10))
         .navigationTitle("Puzzles")
         .searchable(text: $searchText, prompt: "Search by name or brand")
         .toolbar {
@@ -103,6 +117,10 @@ private struct PuzzleRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             PuzzleThumbnail(photoData: puzzle.photoData)
+                .overlay(alignment: .bottomTrailing) {
+                    SharedViews.AccentIconBadge(systemImage: "checkmark", style: .puzzles)
+                        .offset(x: 5, y: 5)
+                }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(puzzle.name ?? "Untitled")
@@ -120,13 +138,11 @@ private struct PuzzleRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
-                Text(pieceCountText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                SharedViews.AccentPill(pieceCountText, systemImage: "puzzlepiece", style: .puzzles)
             }
             .padding(.vertical, 2)
         }
-        .padding(.vertical, 4)
+        .subtleCategoryRowCard(style: .puzzles, horizontalPadding: 12, verticalPadding: 10)
     }
 }
 
@@ -136,7 +152,7 @@ private struct PuzzleThumbnail: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 10)
-                .fill(Color(.secondarySystemBackground))
+                .fill(AppCategoryStyle.puzzles.gradient.opacity(0.45))
 
             if let photoData,
                let image = UIImage(data: photoData) {
@@ -153,7 +169,7 @@ private struct PuzzleThumbnail: View {
         .frame(width: 58, height: 58)
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(.quaternary, lineWidth: 0.5)
+                .stroke(AppCategoryStyle.puzzles.accent.opacity(0.22), lineWidth: 0.75)
         )
         .clipped()
     }
