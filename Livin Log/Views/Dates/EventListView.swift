@@ -43,7 +43,7 @@ struct EventListView: View {
                 ForEach(grouped, id: \.month) { monthGroup in
                     Section {
                         ForEach(monthGroup.dayGroups, id: \.day) { dayGroup in
-                            VStack(alignment: .leading, spacing: 6) {
+                            VStack(alignment: .leading, spacing: 5) {
                                 Text("\(monthName(monthGroup.month, short: true)) \(dayGroup.day)")
                                     .font(.headline)
 
@@ -51,18 +51,29 @@ struct EventListView: View {
                                     Button {
                                         editingEvent = event
                                     } label: {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(event.nameText)
-                                                .foregroundStyle(.primary)
-                                            Text(event.secondaryInfo)
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
+                                        HStack(spacing: 10) {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(event.nameText)
+                                                    .foregroundStyle(.primary)
+                                                Text(event.secondaryInfo)
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            }
+
+                                            Spacer(minLength: 0)
+
+                                            Image(systemName: "chevron.right")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.tertiary)
                                         }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
                                     }
                                     .buttonStyle(.plain)
                                 }
                             }
-                            .subtleCategoryRowCard(style: .dates, horizontalPadding: 12, verticalPadding: 10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .subtleCategoryRowCard(style: .dates, horizontalPadding: 9, verticalPadding: 6)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                         }

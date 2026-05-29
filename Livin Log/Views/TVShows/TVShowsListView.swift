@@ -93,6 +93,8 @@ struct TVShowsListView: View {
 
     var body: some View {
         List {
+            pageTitleSection
+
             if filteredShows.isEmpty {
                 SharedViews.SoftEmptyState(
                     title: searchText.isEmpty ? "No TV shows yet" : "No results",
@@ -162,6 +164,32 @@ struct TVShowsListView: View {
     }
 #endif
 
+
+    private var pageTitleSection: some View {
+        Section {
+            HStack(spacing: 12) {
+                SharedViews.AccentIconBadge(systemImage: "tv.fill", style: .tvShows)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("TV Shows")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(.primary)
+
+                    Text("Track shows your household is watching, rating, and rewatching.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 2)
+        }
+        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+    }
+
     @ViewBuilder
     private var showsSection: some View {
         if canWrite {
@@ -185,6 +213,7 @@ struct TVShowsListView: View {
                 ratingText: ratingDisplay(show.ratingText)
             )
         }
+        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
     }
@@ -361,10 +390,10 @@ private struct TVShowRowView: View {
     let ratingText: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 10) {
             TVPosterThumb(tvShow: show)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(show.title ?? "Untitled")
                         .font(.headline)
@@ -392,9 +421,12 @@ private struct TVShowRowView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .padding(.vertical, 2)
+            .padding(.vertical, 1)
+
+            Spacer(minLength: 0)
         }
-        .subtleCategoryRowCard(style: .tvShows, horizontalPadding: 12, verticalPadding: 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .subtleCategoryRowCard(style: .tvShows, horizontalPadding: 9, verticalPadding: 6)
     }
 }
 
@@ -438,7 +470,7 @@ private struct TVPosterThumb: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(width: 50, height: 70)
+        .frame(width: 44, height: 66)
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(Color(.separator), lineWidth: 0.5)

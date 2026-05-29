@@ -51,12 +51,43 @@ struct BooksListView: View {
             }
 
             if selectedMember == nil {
-                SharedViews.SoftEmptyState(
-                    title: "Choose a profile",
-                    systemImage: "person.crop.circle",
-                    style: .books,
-                    description: "Pick a reader to view their books."
-                )
+                Section {
+                    ForEach(members, id: \.objectID) { member in
+                        Button {
+                            selectedMemberID = member.objectID
+                        } label: {
+                            HStack(spacing: 10) {
+                                SharedViews.AccentIconBadge(systemImage: "person.crop.circle.fill", style: .books)
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(member.displayName ?? "Member")
+                                        .font(.headline)
+                                        .foregroundStyle(.primary)
+
+                                    Text("View this reader’s books")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Spacer(minLength: 0)
+
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .subtleCategoryRowCard(style: .books, horizontalPadding: 9, verticalPadding: 6)
+                        }
+                        .buttonStyle(.plain)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                    }
+                } header: {
+                    SharedViews.AccentSectionHeader(title: "Select Profile", systemImage: "person.2.fill", style: .books)
+                } footer: {
+                    Text("Choose a household member to open their reading tab.")
+                }
                 .listRowBackground(Color.clear)
             } else if books.isEmpty {
                 SharedViews.SoftEmptyState(
@@ -71,9 +102,9 @@ struct BooksListView: View {
                     NavigationLink {
                         BookDetailView(book: book, household: household)
                     } label: {
-                        HStack(spacing: 12) {
-                            BookCoverArtwork(urlString: book.value(forKey: "coverURL") as? String ?? "", size: CGSize(width: 42, height: 62))
-                            VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 10) {
+                            BookCoverArtwork(urlString: book.value(forKey: "coverURL") as? String ?? "", size: CGSize(width: 38, height: 56))
+                            VStack(alignment: .leading, spacing: 3) {
                                 Text(book.title ?? "Untitled")
                                     .font(.headline)
 
@@ -92,9 +123,12 @@ struct BooksListView: View {
                                         .foregroundStyle(.secondary)
                                 }
                             }
+                            Spacer(minLength: 0)
                         }
-                        .subtleCategoryRowCard(style: .books, horizontalPadding: 12, verticalPadding: 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .subtleCategoryRowCard(style: .books, horizontalPadding: 9, verticalPadding: 6)
                     }
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                 }
@@ -134,11 +168,8 @@ struct BooksListView: View {
             Text(deleteErrorMessage ?? "The selected book could not be deleted.")
         }
         .onAppear {
-            if let appMemberID = appState.member?.objectID,
-               members.contains(where: { $0.objectID == appMemberID }) {
-                selectedMemberID = appMemberID
-            } else if selectedMemberID != nil,
-                      members.contains(where: { $0.objectID == selectedMemberID }) == false {
+            if selectedMemberID != nil,
+               members.contains(where: { $0.objectID == selectedMemberID }) == false {
                 selectedMemberID = nil
             }
         }

@@ -27,9 +27,18 @@ struct ChildrenManagerView: View {
 
     var body: some View {
         List {
+            heroSection
             emptyStateSection
             childrenSection
         }
+        .scrollContentBackground(.hidden)
+        .background(
+            LinearGradient(
+                colors: [Color.pink.opacity(0.10), Color.orange.opacity(0.06), Color.clear],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
         .navigationTitle("Children")
         .navigationBarItems(trailing: addButton)
         .sheet(isPresented: $showingAdd, content: addSheet)
@@ -38,25 +47,138 @@ struct ChildrenManagerView: View {
         }
     }
 
+    private var heroSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.pink.opacity(0.35), Color.orange.opacity(0.25)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 48, height: 48)
+
+                        Image(systemName: "figure.and.child.holdinghands")
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(.white)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Family Profiles")
+                            .font(.headline)
+
+                        Text("Add children so quotes, milestones, and memories can stay connected to the right person.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Label("\(children.count) \(children.count == 1 ? "child" : "children")", systemImage: "person.2.fill")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Color.pink.opacity(0.14)))
+                        .foregroundStyle(Color.pink.opacity(0.95))
+
+                    if canWrite {
+                        Label("Editable", systemImage: "pencil")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(Color.orange.opacity(0.14)))
+                            .foregroundStyle(Color.orange.opacity(0.95))
+                    }
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .listRowBackground(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.10))
+                )
+        )
+    }
+
     @ViewBuilder
     private var emptyStateSection: some View {
         if children.isEmpty {
-            ContentUnavailableView(
-                "No children yet",
-                systemImage: "figure.and.child.holdinghands"
+            Section {
+                VStack(spacing: 14) {
+                    ZStack {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.pink.opacity(0.28), Color.orange.opacity(0.20)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 58, height: 58)
+
+                        Image(systemName: "figure.and.child.holdinghands")
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(.white)
+                    }
+
+                    VStack(spacing: 6) {
+                        Text("No children yet")
+                            .font(.headline)
+
+                        Text("Add a child profile to make quotes and family memories feel more personal.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+
+                    if canWrite {
+                        Button {
+                            showingAdd = true
+                        } label: {
+                            Label("Add Child", systemImage: "plus")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+            }
+            .listRowBackground(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(.thinMaterial)
             )
         }
     }
 
     private var childrenSection: some View {
-        ForEach(children, id: \.objectID) { child in
-            ChildRowButton(child: child) {
-                editingChild = child
+        Section {
+            ForEach(children, id: \.objectID) { child in
+                ChildRowButton(child: child) {
+                    editingChild = child
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+            .onDelete(perform: canWrite ? { offsets in
+                deleteChildren(at: offsets)
+            } : nil)
+        } header: {
+            if children.isEmpty == false {
+                Label("Household Members", systemImage: "person.2.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.pink.opacity(0.9))
             }
         }
-        .onDelete(perform: canWrite ? { offsets in
-            deleteChildren(at: offsets)
-        } : nil)
     }
 
     private var addButton: some View {
@@ -101,23 +223,60 @@ private struct ChildRowButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.pink.opacity(0.30), Color.orange.opacity(0.22)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 44, height: 44)
+
+                    Text(initials)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.white)
+                }
+
+                VStack(alignment: .leading, spacing: 5) {
                     Text(child.nameValue)
                         .font(.headline)
+                        .foregroundStyle(.primary)
 
-                    Text(child.birthdayValue.formatted(date: .abbreviated, time: .omitted))
+                    Label(child.birthdayValue.formatted(date: .abbreviated, time: .omitted), systemImage: "gift.fill")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
-                Spacer()
+                Spacer(minLength: 0)
 
                 Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.thinMaterial)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(Color.pink.opacity(0.16), lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
+    }
+
+    private var initials: String {
+        let parts = child.nameValue
+            .split(separator: " ")
+            .prefix(2)
+            .compactMap { $0.first }
+        let value = String(parts).uppercased()
+        return value.isEmpty ? "?" : value
     }
 }
 
@@ -154,6 +313,28 @@ private struct AddEditChildView: View {
 
     var body: some View {
         Form {
+            Section {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label(isEditing ? "Update this profile" : "Create a child profile", systemImage: "figure.and.child.holdinghands")
+                        .font(.headline)
+
+                    Text("Child profiles help keep quotes, birthdays, and memories organized by person.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+            .listRowBackground(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.pink.opacity(0.16), Color.orange.opacity(0.10)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            )
+
             Section("Child") {
                 TextField("Name", text: $name)
                 DatePicker("Birthday", selection: $birthday, displayedComponents: .date)
@@ -168,6 +349,14 @@ private struct AddEditChildView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(
+            LinearGradient(
+                colors: [Color.pink.opacity(0.10), Color.orange.opacity(0.05), Color.clear],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
         .navigationTitle(isEditing ? "Edit Child" : "Add Child")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarItems(

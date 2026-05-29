@@ -143,6 +143,7 @@ struct QuotesListView: View {
                     } label: {
                         QuoteRowView(quote: quote)
                     }
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -221,16 +222,18 @@ private struct QuoteRowView: View {
     let quote: LLQuote
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 8) {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .top, spacing: 7) {
                 SharedViews.AccentIconBadge(systemImage: "quote.bubble.fill", style: .quotes)
 
                 Text("\(quote.textValue)")
                     .font(.body)
                     .lineLimit(3)
+
+                Spacer(minLength: 0)
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 Text("— \(quote.speakerNameValue)")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -238,13 +241,16 @@ private struct QuoteRowView: View {
                 if let ageText = quote.childAgeLabel {
                     SharedViews.AccentPill(ageText, systemImage: "clock", style: .quotes)
                 }
+
+                Spacer(minLength: 0)
             }
 
             Text((quote.saidAt ?? .now).formatted(date: .abbreviated, time: .shortened))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .subtleCategoryRowCard(style: .quotes, horizontalPadding: 12, verticalPadding: 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .subtleCategoryRowCard(style: .quotes, horizontalPadding: 9, verticalPadding: 6)
     }
 }
 

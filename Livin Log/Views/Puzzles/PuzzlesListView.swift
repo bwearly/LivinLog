@@ -74,6 +74,7 @@ struct PuzzlesListView: View {
                     } label: {
                         PuzzleRow(puzzle: puzzle)
                     }
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                 }
@@ -115,14 +116,14 @@ private struct PuzzleRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 10) {
             PuzzleThumbnail(photoData: puzzle.photoData)
                 .overlay(alignment: .bottomTrailing) {
                     SharedViews.AccentIconBadge(systemImage: "checkmark", style: .puzzles)
                         .offset(x: 5, y: 5)
                 }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(puzzle.name ?? "Untitled")
                     .font(.headline)
                     .lineLimit(1)
@@ -140,9 +141,12 @@ private struct PuzzleRow: View {
 
                 SharedViews.AccentPill(pieceCountText, systemImage: "puzzlepiece", style: .puzzles)
             }
-            .padding(.vertical, 2)
+            .padding(.vertical, 1)
+
+            Spacer(minLength: 0)
         }
-        .subtleCategoryRowCard(style: .puzzles, horizontalPadding: 12, verticalPadding: 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .subtleCategoryRowCard(style: .puzzles, horizontalPadding: 9, verticalPadding: 6)
     }
 }
 
@@ -166,7 +170,7 @@ private struct PuzzleThumbnail: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(width: 58, height: 58)
+        .frame(width: 50, height: 50)
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(AppCategoryStyle.puzzles.accent.opacity(0.22), lineWidth: 0.75)

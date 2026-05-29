@@ -35,14 +35,30 @@ struct QuoteOfDayCard: View {
                 NavigationLink {
                     QuotesListView(household: household)
                 } label: {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(alignment: .top) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Label("Quote of the Day", systemImage: "quote.bubble.fill")
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .top, spacing: 12) {
+                            ZStack {
+                                Circle()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [Color.pink.opacity(0.35), Color.orange.opacity(0.25)],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                                    .frame(width: 44, height: 44)
+
+                                Image(systemName: "quote.bubble.fill")
+                                    .font(.title3.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Quote of the Day")
                                     .font(.headline)
 
                                 Text("\(quote.textValue)")
-                                    .font(.body)
+                                    .font(.body.weight(.semibold))
                                     .lineLimit(3)
 
                                 Text("— \(quote.speakerNameValue)")
@@ -51,10 +67,14 @@ struct QuoteOfDayCard: View {
 
                                 if let childAgeLabel = quote.childAgeLabel {
                                     Text(childAgeLabel)
-                                        .font(.caption)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 3)
-                                        .background(Capsule().fill(.thinMaterial))
+                                        .font(.caption.weight(.semibold))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 4)
+                                        .background(
+                                            Capsule()
+                                                .fill(Color.pink.opacity(0.16))
+                                        )
+                                        .foregroundStyle(Color.pink.opacity(0.9))
                                 }
                             }
 
@@ -62,47 +82,92 @@ struct QuoteOfDayCard: View {
 
                             ShareLink(item: quote.shareText) {
                                 Image(systemName: "square.and.arrow.up")
-                                    .padding(8)
-                                    .background(Circle().fill(.thinMaterial))
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle(Color.primary)
+                                    .padding(10)
+                                    .background(
+                                        Circle()
+                                            .fill(Color.primary.opacity(0.10))
+                                    )
+                                    .overlay(
+                                        Circle()
+                                            .strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
+                                    )
                             }
                             .buttonStyle(.plain)
                         }
                     }
-                    .padding(14)
+                    .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(.thinMaterial)
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.pink.opacity(0.22), Color.orange.opacity(0.14), Color.purple.opacity(0.12)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(.quaternary)
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.12))
                     )
                 }
                 .buttonStyle(.plain)
             } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("Quote of the Day", systemImage: "quote.bubble.fill")
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color.pink.opacity(0.35), Color.orange.opacity(0.25)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .frame(width: 44, height: 44)
 
-                    Text("No quotes yet")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                            Image(systemName: "quote.bubble.fill")
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(.white)
+                        }
 
-                    Button("Add Quote") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Quote of the Day")
+                                .font(.headline)
+
+                            Text("Save the funny little things your family says.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Button {
                         showingAddQuote = true
+                    } label: {
+                        Label("Add Quote", systemImage: "plus")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                 }
-                .padding(14)
+                .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(.thinMaterial)
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.pink.opacity(0.18), Color.orange.opacity(0.12), Color.purple.opacity(0.10)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .strokeBorder(.quaternary)
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.12))
                 )
             }
         }

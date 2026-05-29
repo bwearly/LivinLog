@@ -121,6 +121,8 @@ struct MoviesListView: View {
 
     var body: some View {
         List {
+            pageTitleSection
+
             if filteredMovies.isEmpty {
                 SharedViews.SoftEmptyState(
                     title: searchText.isEmpty ? "No movies yet" : "No results",
@@ -183,6 +185,31 @@ struct MoviesListView: View {
         }
     }
 
+    private var pageTitleSection: some View {
+        Section {
+            HStack(spacing: 12) {
+                SharedViews.AccentIconBadge(systemImage: "film.fill", style: .movies)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Movies")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(.primary)
+
+                    Text("Track family movie nights, ratings, and rewatches.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 2)
+        }
+        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+    }
+
     @ViewBuilder
     private var moviesSection: some View {
         if canWrite {
@@ -207,6 +234,7 @@ struct MoviesListView: View {
                 isSleptThrough: sleptOnly && sleptMovieIDs.contains(movie.objectID)
             )
         }
+        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
     }
@@ -488,10 +516,10 @@ private struct MovieRowView: View {
     let isSleptThrough: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 10) {
             PosterThumb(movie: movie)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(movie.title ?? "Untitled")
                         .font(.headline)
@@ -525,8 +553,11 @@ private struct MovieRowView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            Spacer(minLength: 0)
         }
-        .subtleCategoryRowCard(style: .movies, horizontalPadding: 12, verticalPadding: 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .subtleCategoryRowCard(style: .movies, horizontalPadding: 9, verticalPadding: 6)
     }
 }
 
@@ -560,7 +591,7 @@ private struct PosterThumb: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(width: 54, height: 80)
+        .frame(width: 44, height: 66)
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(Color(.separator), lineWidth: 0.5)

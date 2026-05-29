@@ -20,12 +20,12 @@ struct HomeDashboardView: View {
                 }
 
                 LazyVGrid(columns: gridColumns, spacing: 16) {
-                    moviesCard
                     booksCard
-                    tvShowsCard
+                    datesCard
+                    moviesCard
                     puzzlesCard
                     quotesCard
-                    datesCard
+                    tvShowsCard
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 16)
