@@ -19,6 +19,7 @@ struct SettingsView: View {
 
     @State private var errorText: String?
     @State private var shareErrorText: String?
+    @State private var showShareTechnicalDetails = false
 
     @State private var householdName = ""
     @State private var myName = ""
@@ -97,11 +98,12 @@ struct SettingsView: View {
                     household: household,
                     onDone: { showingInviteShareSheet = false },
                     onError: { error in
-                        let message = error.localizedDescription
-                        shareErrorText = message
-                        lastCloudKitError = message
-                        persistedLastShareError = message
-                        CloudSharing.saveLastShareError(message)
+                        let technicalMessage = CloudSharing.technicalDetails(for: error)
+                        let friendlyMessage = CloudSharing.friendlySharingErrorMessage(forTechnicalDetails: technicalMessage)
+                        shareErrorText = friendlyMessage
+                        lastCloudKitError = technicalMessage
+                        persistedLastShareError = technicalMessage
+                        CloudSharing.saveLastShareError(technicalMessage)
                         showingInviteShareSheet = false
                         isSharing = false
                     }
@@ -120,7 +122,7 @@ struct SettingsView: View {
                     }
                 },
                 onInviteDeferred: { _ in
-                    shareErrorText = "Sign in with Apple to finish joining this household invite."
+                    setUserFacingShareError("Sign in with Apple to finish joining this household invite.")
                 }
             )
         }
@@ -321,9 +323,25 @@ struct SettingsView: View {
 
     private var sharingIssueSection: some View {
         Section("Sharing Issue") {
-            Text(shareErrorText ?? persistedLastShareError)
+            Text(sharingIssueDisplayMessage)
                 .foregroundStyle(.red)
                 .font(.footnote)
+
+            if let technicalDetails = sharingIssueTechnicalDetails {
+                DisclosureGroup("Show Technical Details", isExpanded: $showShareTechnicalDetails) {
+                    Text(technicalDetails)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+
+                    Button {
+                        UIPasteboard.general.string = technicalDetails
+                    } label: {
+                        Label("Copy Technical Details", systemImage: "doc.on.doc")
+                    }
+                }
+                .font(.footnote)
+            }
 
             if !persistedLastShareStatus.isEmpty {
                 Text("Last status: \(persistedLastShareStatus)")
@@ -331,6 +349,24 @@ struct SettingsView: View {
                     .font(.footnote)
             }
         }
+    }
+
+    private var sharingIssueDisplayMessage: String {
+        if let shareErrorText, !shareErrorText.isEmpty {
+            return shareErrorText
+        }
+        if !persistedLastShareError.isEmpty {
+            return CloudSharing.friendlySharingErrorMessage(forTechnicalDetails: persistedLastShareError)
+        }
+        return "iCloud sharing could not finish. Please try again."
+    }
+
+    private var sharingIssueTechnicalDetails: String? {
+        let rawDetails = lastCloudKitError ?? (persistedLastShareError.isEmpty ? nil : persistedLastShareError)
+        guard let rawDetails, !rawDetails.isEmpty, rawDetails != sharingIssueDisplayMessage else {
+            return nil
+        }
+        return rawDetails
     }
 
 #if DEBUG
@@ -433,20 +469,34 @@ struct SettingsView: View {
 
     // MARK: - Actions
 
+    private func setUserFacingShareError(_ message: String) {
+        shareErrorText = message
+        showShareTechnicalDetails = false
+        lastCloudKitError = nil
+        persistedLastShareError = ""
+        CloudSharing.saveLastShareError(nil)
+    }
+
+    private func clearSharingIssue() {
+        shareErrorText = nil
+        showShareTechnicalDetails = false
+        lastCloudKitError = nil
+        persistedLastShareError = ""
+        CloudSharing.saveLastShareError(nil)
+    }
+
     private func inviteMember() {
         guard household != nil else { return }
         guard appState.appUser != nil, appState.isCurrentMemberAuthorized() else {
-            shareErrorText = "Select or create your claimed member profile before sharing this household."
+            setUserFacingShareError("Select or create your claimed member profile before sharing this household.")
             return
         }
         guard !shareActionsDisabled else {
-            shareErrorText = accountUnavailableFriendlyMessage
+            setUserFacingShareError(accountUnavailableFriendlyMessage)
             return
         }
 
-        shareErrorText = nil
-        lastCloudKitError = nil
-        persistedLastShareError = ""
+        clearSharingIssue()
         persistedLastShareStatus = "Preparing invite link…"
         CloudSharing.saveLastShareStatus("Preparing invite link…")
         CloudSharing.saveLastShareError(nil)
@@ -627,13 +677,11 @@ struct SettingsView: View {
     private func resetHouseholdShare() {
         guard let household else { return }
         guard !shareActionsDisabled else {
-            shareErrorText = accountUnavailableFriendlyMessage
+            setUserFacingShareError(accountUnavailableFriendlyMessage)
             return
         }
 
-        shareErrorText = nil
-        lastCloudKitError = nil
-        persistedLastShareError = ""
+        clearSharingIssue()
         persistedLastShareStatus = "Resetting share"
         CloudSharing.saveLastShareStatus("Resetting share")
         CloudSharing.saveLastShareError(nil)
@@ -665,11 +713,12 @@ struct SettingsView: View {
                 CloudSharing.saveLastShareStatus("Created fresh share")
                 reloadShareStatus()
             } catch {
-                let message = "Reset failed: \(error.localizedDescription)"
-                shareErrorText = message
-                lastCloudKitError = error.localizedDescription
-                persistedLastShareError = message
-                CloudSharing.saveLastShareError(message)
+                let technicalMessage = CloudSharing.technicalDetails(for: error)
+                let friendlyMessage = CloudSharing.friendlySharingErrorMessage(forTechnicalDetails: technicalMessage)
+                shareErrorText = "Reset failed: \(friendlyMessage)"
+                lastCloudKitError = technicalMessage
+                persistedLastShareError = technicalMessage
+                CloudSharing.saveLastShareError(technicalMessage)
             }
         }
     }

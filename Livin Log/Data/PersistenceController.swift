@@ -108,6 +108,8 @@ struct PersistenceController {
 
         container.persistentStoreDescriptions = [privateDesc, sharedDesc]
 
+        Self.logLoadedModelDiagnostics(container: container, reason: "before loadPersistentStores")
+
         var capturedLoadError: PersistenceLoadError?
         container.loadPersistentStores { description, error in
             if let error = error as NSError? {
@@ -163,8 +165,42 @@ struct PersistenceController {
         self.sharedStore = s
         self.loadError = nil
 
+        Self.logLoadedModelDiagnostics(container: container, reason: "after loadPersistentStores")
+
         container.viewContext.automaticallyMergesChangesFromParent = true
         container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+    }
+
+
+    private static func logLoadedModelDiagnostics(container: NSPersistentCloudKitContainer, reason: String) {
+        let model = container.managedObjectModel
+        let entityNames = model.entities.compactMap(\.name).sorted()
+        let versionIdentifiers = model.versionIdentifiers.map { String(describing: $0) }.sorted()
+        let modelConfigurationNames = Array(model.configurations).sorted()
+        let storeURLs = container.persistentStoreCoordinator.persistentStores
+            .compactMap { store -> String? in
+                guard let url = store.url else { return nil }
+                return "\(store.type):\(url.absoluteString)"
+            }
+            .sorted()
+
+        let bookEntryAttributes = model.entitiesByName["BookEntry"]?
+            .attributesByName
+            .keys
+            .sorted() ?? []
+        let hasMoveReceipt = bookEntryAttributes.contains("moveReceipt")
+
+        print("ℹ️ [CoreDataModelDiagnostics] reason=\(reason)")
+        print("ℹ️ [CoreDataModelDiagnostics] modelVersionIdentifiers=\(versionIdentifiers.isEmpty ? ["<none>"] : versionIdentifiers)")
+        print("ℹ️ [CoreDataModelDiagnostics] modelConfigurations=\(modelConfigurationNames.isEmpty ? ["<default>"] : modelConfigurationNames)")
+        print("ℹ️ [CoreDataModelDiagnostics] loadedPersistentStoreURLs=\(storeURLs.isEmpty ? ["<none loaded>"] : storeURLs)")
+        print("ℹ️ [CoreDataModelDiagnostics] entities=\(entityNames)")
+        print("ℹ️ [CoreDataModelDiagnostics] BookEntry.attributes=\(bookEntryAttributes)")
+        print("ℹ️ [CoreDataModelDiagnostics] BookEntry.hasMoveReceipt=\(hasMoveReceipt)")
+
+        if hasMoveReceipt {
+            print("⚠️ [CoreDataModelDiagnostics] Loaded BookEntry still contains moveReceipt; this build can try to export CD_moveReceipt to CloudKit.")
+        }
     }
 
     private static func logPersistentStoreFailure(_ error: NSError, description: NSPersistentStoreDescription) {
