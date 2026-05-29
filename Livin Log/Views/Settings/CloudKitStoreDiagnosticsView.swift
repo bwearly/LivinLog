@@ -430,18 +430,18 @@ struct CloudKitStoreDiagnosticScanner {
     private func issue(for object: NSManagedObject, plan: EntityPlan) -> CloudKitStoreDiagnosticIssue? {
         let primaryStore = object.objectID.persistentStore
         let primaryStoreLabel = storeLabel(for: primaryStore)
-        var relatedObjects = relatedObjects(for: object, plan: plan)
+        var relatedObjectList = relatedObjects(for: object, plan: plan)
 
         if plan.entityName == "Viewing", let movie = object.value(forUsableRelationship: "movie") as? NSManagedObject {
-            relatedObjects.append(contentsOf: relatedObjects(for: movie, relationshipNames: ["household"], prefix: "movie"))
+            relatedObjectList.append(contentsOf: relatedObjects(for: movie, relationshipNames: ["household"], prefix: "movie"))
         }
 
-        let mismatches = relatedObjects.filter { $0.store !== primaryStore }
+        let mismatches = relatedObjectList.filter { $0.store !== primaryStore }
         guard !mismatches.isEmpty else { return nil }
 
         let entityName = object.entity.name ?? plan.entityName
         let displayName = Self.displayName(for: object)
-        let issueRelatedObjects = [diagnosticObject(for: object, relationshipPath: entityName.lowercased())] + relatedObjects.map(diagnosticObject)
+        let issueRelatedObjects = [diagnosticObject(for: object, relationshipPath: entityName.lowercased())] + relatedObjectList.map(diagnosticObject)
         let viewingDetails = viewingDetails(for: object, entityName: entityName)
         let canDelete = Self.isDeletionAllowed(for: entityName)
 
