@@ -11,6 +11,7 @@ struct CloudKitStoreDiagnosticsView: View {
     @Environment(\.managedObjectContext) private var context
 
     @State private var issues: [CloudKitStoreDiagnosticIssue] = []
+    @State private var rawTVShowRecords: [CloudKitStoreDiagnosticTVShowRecord] = []
     @State private var isScanning = false
     @State private var statusMessage: String?
     @State private var deleteError: String?
@@ -57,6 +58,22 @@ struct CloudKitStoreDiagnosticsView: View {
                     }
                 }
             }
+
+            Section("Raw TVShow Records") {
+                Text("DEBUG-only list of every TVShow fetched from the private and shared stores, including records that do not currently appear as graph mismatches. Use the objectID URI to find a specific row such as TVShow/p16 before deleting only that TVShow.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                if rawTVShowRecords.isEmpty {
+                    ContentUnavailableView("No TVShow records found", systemImage: "tv")
+                } else {
+                    ForEach(rawTVShowRecords) { record in
+                        CloudKitStoreDiagnosticTVShowRecordRow(record: record) {
+                            delete(record)
+                        }
+                    }
+                }
+            }
         }
         .navigationTitle("Developer Diagnostics")
         .navigationBarTitleDisplayMode(.inline)
@@ -66,13 +83,25 @@ struct CloudKitStoreDiagnosticsView: View {
     private func refreshDiagnostics() {
         isScanning = true
         deleteError = nil
+        var statusParts: [String] = []
+
         do {
             issues = try scanner.scan(in: context)
-            statusMessage = issues.isEmpty ? "No cross-store graph issues found." : "Found \(issues.count) possible corrupted graph issue(s)."
+            statusParts.append(issues.isEmpty ? "No cross-store graph issues found." : "Found \(issues.count) possible corrupted graph issue(s).")
         } catch {
-            statusMessage = "Scan failed: \(error.localizedDescription)"
             issues = []
+            statusParts.append("Issue scan failed: \(error.localizedDescription)")
         }
+
+        do {
+            rawTVShowRecords = try scanner.rawTVShowRecords(in: context)
+            statusParts.append("Raw TVShow records: \(rawTVShowRecords.count).")
+        } catch {
+            rawTVShowRecords = []
+            statusParts.append("Raw TVShow scan failed: \(error.localizedDescription)")
+        }
+
+        statusMessage = statusParts.joined(separator: " ")
         isScanning = false
     }
 
@@ -121,6 +150,93 @@ struct CloudKitStoreDiagnosticsView: View {
             deleteError = "Delete failed: \(error.localizedDescription)"
             print("🧪 [CloudKitStoreDiagnostics] Delete failed entity=\(issue.entityName) title=\(issue.displayName) objectID=\(issue.objectIDURI) error=\(error.localizedDescription)")
         }
+    }
+
+    private func delete(_ record: CloudKitStoreDiagnosticTVShowRecord) {
+        deleteError = nil
+        print("🧪 [CloudKitStoreDiagnostics] About to delete raw TVShow title=\(record.title) objectID=\(record.objectIDURI) store=\(record.tvShowStoreLabel)")
+
+        guard let uri = URL(string: record.objectIDURI),
+              let objectID = context.persistentStoreCoordinator?.managedObjectID(forURIRepresentation: uri) else {
+            deleteError = "Could not resolve TVShow objectID for \(record.objectIDURI). Refresh diagnostics and try again."
+            print("🧪 [CloudKitStoreDiagnostics] Could not resolve raw TVShow URI=\(record.objectIDURI)")
+            return
+        }
+
+        do {
+            let object = try context.existingObject(with: objectID)
+            let entityName = object.entity.name ?? "<unknown>"
+            guard entityName == "TVShow" else {
+                throw NSError(
+                    domain: "CloudKitStoreDiagnostics",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "Resolved object entity \(entityName) did not match expected TVShow."]
+                )
+            }
+
+            context.delete(object)
+            try context.save()
+            print("🧪 [CloudKitStoreDiagnostics] Deleted raw TVShow title=\(record.title) objectID=\(record.objectIDURI)")
+            refreshDiagnostics()
+            statusMessage = "Deleted TVShow: \(record.title). Diagnostics refreshed."
+        } catch {
+            context.rollback()
+            deleteError = "Delete TVShow failed: \(error.localizedDescription)"
+            print("🧪 [CloudKitStoreDiagnostics] Delete raw TVShow failed title=\(record.title) objectID=\(record.objectIDURI) error=\(error.localizedDescription)")
+        }
+    }
+}
+
+private struct CloudKitStoreDiagnosticTVShowRecordRow: View {
+    let record: CloudKitStoreDiagnosticTVShowRecord
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(record.title)
+                        .font(.headline)
+                    Text("Year: \(record.yearText)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(record.sameStoreText)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(record.isTVShowInSameStoreAsHousehold ? Color.green : Color.orange)
+            }
+
+            LabeledContent("Object ID") {
+                Text(record.objectIDURI)
+                    .font(.caption2.monospaced())
+                    .textSelection(.enabled)
+            }
+
+            LabeledContent("Household") {
+                Text(record.householdName)
+                    .font(.caption)
+            }
+
+            LabeledContent("Household ID") {
+                Text(record.householdIDText)
+                    .font(.caption2.monospaced())
+                    .textSelection(.enabled)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("TVShow store/scope: \(record.tvShowStoreLabel)")
+                Text("Household store/scope: \(record.householdStoreLabel)")
+                Text("TVShow.store == household.store: \(record.sameStoreText)")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            Button(role: .destructive, action: onDelete) {
+                Label("Delete This TVShow Only", systemImage: "trash")
+            }
+        }
+        .padding(.vertical, 6)
     }
 }
 
@@ -210,6 +326,22 @@ struct CloudKitStoreDiagnosticRelatedObject: Identifiable {
     let storeLabel: String
 }
 
+struct CloudKitStoreDiagnosticTVShowRecord: Identifiable {
+    let id: String
+    let title: String
+    let yearText: String
+    let objectIDURI: String
+    let householdName: String
+    let householdIDText: String
+    let tvShowStoreLabel: String
+    let householdStoreLabel: String
+    let isTVShowInSameStoreAsHousehold: Bool
+
+    var sameStoreText: String {
+        isTVShowInSameStoreAsHousehold ? "true" : "false"
+    }
+}
+
 struct CloudKitStoreDiagnosticScanner {
     private struct EntityPlan {
         let entityName: String
@@ -251,6 +383,47 @@ struct CloudKitStoreDiagnosticScanner {
         return issues.sorted { lhs, rhs in
             if lhs.entityName == rhs.entityName { return lhs.displayName < rhs.displayName }
             return lhs.entityName < rhs.entityName
+        }
+    }
+
+    func rawTVShowRecords(in context: NSManagedObjectContext) throws -> [CloudKitStoreDiagnosticTVShowRecord] {
+        guard context.persistentStoreCoordinator?.managedObjectModel.entitiesByName["TVShow"] != nil else { return [] }
+
+        let request = NSFetchRequest<NSManagedObject>(entityName: "TVShow")
+        request.includesPendingChanges = false
+        request.returnsObjectsAsFaults = false
+        let tvShows = try context.fetch(request)
+
+        return tvShows.map { tvShow in
+            let household = tvShow.value(forUsableRelationship: "household") as? NSManagedObject
+            let tvShowStore = tvShow.objectID.persistentStore
+            let householdStore = household?.objectID.persistentStore
+            let storesMatch = tvShowStore != nil && tvShowStore === householdStore
+            let title = Self.displayName(for: tvShow)
+            let yearNumber = tvShow.value(forKeyIfPresent: "year") as? NSNumber
+            let year = yearNumber?.intValue ?? 0
+            let householdID = tvShow.value(forKeyIfPresent: "householdID") as? UUID
+
+            let record = CloudKitStoreDiagnosticTVShowRecord(
+                id: tvShow.objectID.uriRepresentation().absoluteString,
+                title: title,
+                yearText: year > 0 ? String(year) : "<none>",
+                objectIDURI: tvShow.objectID.uriRepresentation().absoluteString,
+                householdName: household.map(Self.displayName(for:)) ?? "<nil>",
+                householdIDText: householdID?.uuidString ?? "<nil>",
+                tvShowStoreLabel: storeLabel(for: tvShowStore),
+                householdStoreLabel: storeLabel(for: householdStore),
+                isTVShowInSameStoreAsHousehold: storesMatch
+            )
+
+            print("🧪 [CloudKitStoreDiagnostics] Raw TVShow title=\(record.title) year=\(record.yearText) objectID=\(record.objectIDURI) household=\(record.householdName) householdID=\(record.householdIDText) tvShowStore=\(record.tvShowStoreLabel) householdStore=\(record.householdStoreLabel) sameStore=\(record.sameStoreText)")
+            return record
+        }
+        .sorted { lhs, rhs in
+            if lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedSame {
+                return lhs.objectIDURI < rhs.objectIDURI
+            }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
         }
     }
 
