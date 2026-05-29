@@ -121,8 +121,6 @@ struct MoviesListView: View {
 
     var body: some View {
         List {
-            pageTitleSection
-
             if filteredMovies.isEmpty {
                 SharedViews.SoftEmptyState(
                     title: searchText.isEmpty ? "No movies yet" : "No results",
@@ -136,7 +134,6 @@ struct MoviesListView: View {
             }
         }
         .navigationTitle("Movies")
-        .navigationBarTitleDisplayMode(.inline)
         .navigationBarItems(
             leading: filtersMenuButton,
             trailing: trailingButtons
@@ -185,30 +182,6 @@ struct MoviesListView: View {
         }
     }
 
-    private var pageTitleSection: some View {
-        Section {
-            HStack(spacing: 12) {
-                SharedViews.AccentIconBadge(systemImage: "film.fill", style: .movies)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Movies")
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(.primary)
-
-                    Text("Track family movie nights, ratings, and rewatches.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 2)
-        }
-        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
-        .listRowBackground(Color.clear)
-        .listRowSeparator(.hidden)
-    }
 
     @ViewBuilder
     private var moviesSection: some View {

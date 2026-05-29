@@ -93,8 +93,6 @@ struct TVShowsListView: View {
 
     var body: some View {
         List {
-            pageTitleSection
-
             if filteredShows.isEmpty {
                 SharedViews.SoftEmptyState(
                     title: searchText.isEmpty ? "No TV shows yet" : "No results",
@@ -108,7 +106,6 @@ struct TVShowsListView: View {
             }
         }
         .navigationTitle("TV Shows")
-        .navigationBarTitleDisplayMode(.inline)
         .navigationBarItems(
             leading: sortMenuButton,
             trailing: trailingButtons
@@ -165,30 +162,6 @@ struct TVShowsListView: View {
 #endif
 
 
-    private var pageTitleSection: some View {
-        Section {
-            HStack(spacing: 12) {
-                SharedViews.AccentIconBadge(systemImage: "tv.fill", style: .tvShows)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("TV Shows")
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(.primary)
-
-                    Text("Track shows your household is watching, rating, and rewatching.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 2)
-        }
-        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
-        .listRowBackground(Color.clear)
-        .listRowSeparator(.hidden)
-    }
 
     @ViewBuilder
     private var showsSection: some View {
