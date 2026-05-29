@@ -58,6 +58,19 @@ TestFlight and App Store builds use the **Production** CloudKit schema. Before u
 - Existing single-member private households can be auto-migrated to a membership only when the member is unclaimed or already claimed by the same durable user.
 - Shared households are never auto-claimed from `UserDefaults`; invitees must create or explicitly claim a profile.
 
+## CloudKit sharing production schema repair checklist
+
+Use this checklist when TestFlight sharing reports a production-schema error for a Core Data/CloudKit internal sharing field such as `CD_moveReceipt`. Do **not** add that field to the Core Data model and do **not** manually edit CloudKit records or shares.
+
+1. Run the DEBUG-only schema initializer against the Development CloudKit container from Settings → Developer Diagnostics → Initialize Development CloudKit Schema.
+2. Confirm CloudKit Dashboard shows the generated Development schema changes, including any Core Data/CloudKit internal sharing fields.
+3. Deploy schema changes from Development to Production in CloudKit Dashboard.
+4. Archive a fresh Release/TestFlight build after the Production schema deployment is complete.
+5. Delete the old TestFlight app from the test device so stale local stores do not mask the result.
+6. Install the fresh TestFlight build.
+7. Create and share a household.
+8. Confirm the `CD_moveReceipt` production-schema error is gone.
+
 ## Before TestFlight upload checklist
 
 1. Confirm the Release build configuration does not define `DEBUG`, and verify the DEBUG-only store reset UI is absent in an archive/Release build.
