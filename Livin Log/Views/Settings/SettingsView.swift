@@ -338,6 +338,14 @@ struct SettingsView: View {
                 Label("Advanced", systemImage: "gearshape.2")
             }
 
+            #if DEBUG
+            NavigationLink {
+                CloudKitStoreDiagnosticsView()
+            } label: {
+                Label("Developer Diagnostics", systemImage: "stethoscope")
+            }
+            #endif
+
             Button("Delete All Data & Restart", role: .destructive) {
                 showConfirmDeleteAll = true
             }
