@@ -238,8 +238,12 @@ struct AddMovieView: View {
         }
 
         let movie = Movie(context: context)
-        if let store = scopedHousehold.objectID.persistentStore {
-            context.assign(movie, to: store)
+        do {
+            try MovieStoreSafety.assignInserted(movie, toSameStoreAs: scopedHousehold, label: "Movie(new)", context: context)
+        } catch {
+            context.rollback()
+            saveError = error.localizedDescription
+            return
         }
         movie.id = UUID()
         movie.createdAt = Date()
@@ -280,8 +284,12 @@ struct AddMovieView: View {
             }
 
             let fb = MovieFeedback(context: context)
-            if let store = scopedHousehold.objectID.persistentStore {
-                context.assign(fb, to: store)
+            do {
+                try MovieStoreSafety.assignInserted(fb, toSameStoreAs: scopedHousehold, label: "MovieFeedback(new)", context: context)
+            } catch {
+                context.rollback()
+                saveError = error.localizedDescription
+                return
             }
             fb.id = UUID()
             fb.updatedAt = Date()
@@ -299,8 +307,12 @@ struct AddMovieView: View {
         
         // ✅ Add initial watch history record on create
         let v = Viewing(context: context)
-        if let store = scopedHousehold.objectID.persistentStore {
-            context.assign(v, to: store)
+        do {
+            try MovieStoreSafety.assignInserted(v, toSameStoreAs: scopedHousehold, label: "Viewing(new)", context: context)
+        } catch {
+            context.rollback()
+            saveError = error.localizedDescription
+            return
         }
         // awakeFromInsert already sets id + watchedOn
         v.isRewatch = false
@@ -321,6 +333,7 @@ struct AddMovieView: View {
             }
             context.debugLogStoreSafeSave(entityName: "Movie", household: scopedHousehold, member: actingMember, objects: objectsToValidate)
             try context.validateSamePersistentStore(objectsToValidate)
+            try MovieStoreSafety.validateMovieGraph(movie: movie, household: scopedHousehold, context: context, operation: "Movie.add")
             try context.save()
             print("ℹ️ Movie inherits household share via parent household relationship (no per-object share mutation)")
             if !createdFeedbacks.isEmpty {
@@ -337,16 +350,20 @@ struct AddMovieView: View {
 #endif
 
             // ✅ Fetch + persist poster AFTER the movie is saved
+            let movieObjectID = movie.objectID
+            let posterTitle = movie.title
+            let posterYear = movie.year
             Task {
-                let url = await OMDbPosterService.posterURL(title: movie.title, year: movie.year)
+                let url = await OMDbPosterService.posterURL(title: posterTitle, year: posterYear)
                 let httpsURL = url.flatMap {
                     URL(string: $0.absoluteString.replacingOccurrences(of: "http://", with: "https://"))
                 }
 
                 await MainActor.run {
-                    movie.posterURL = httpsURL?.absoluteString
+                    guard let movieInContext = (try? context.existingObject(with: movieObjectID)) as? Movie else { return }
+                    movieInContext.posterURL = httpsURL?.absoluteString
                     do {
-                        try context.validateSamePersistentStore([("movie", movie), ("household", movie.household)])
+                        try MovieStoreSafety.validateMovieGraph(movie: movieInContext, household: movieInContext.household, context: context, operation: "Movie.poster.add")
                         try context.save()
                     } catch {
                         context.rollback()
