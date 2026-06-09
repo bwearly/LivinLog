@@ -14,8 +14,13 @@ struct AnalyticsView: View {
 
     @State private var members: [HouseholdMember] = []
     @State private var movies: [Movie] = []
+    @State private var tvShows: [TVShow] = []
+    @State private var viewings: [Viewing] = []
     @State private var books: [BookEntry] = []
     @State private var feedbacks: [MovieFeedback] = []
+    @State private var calendarEvents: [LLCalendarEvent] = []
+    @State private var puzzles: [LLPuzzle] = []
+    @State private var quotes: [LLQuote] = []
     @State private var events: [DashboardActivity] = []
     @State private var selectedMemberID: NSManagedObjectID?
     @State private var timeFilter: AnalyticsTimeFilter = .allTime
@@ -35,7 +40,33 @@ struct AnalyticsView: View {
     }
 
     private var filteredMovies: [Movie] {
-        movies.filter { movie in dateMatches(movie.createdAt) }
+        guard selectedMemberID == nil else { return [] }
+        return movies.filter { movie in dateMatches(movie.createdAt) }
+    }
+
+    private var filteredTVShows: [TVShow] {
+        guard selectedMemberID == nil else { return [] }
+        return tvShows.filter { show in dateMatches(show.createdAt) }
+    }
+
+    private var filteredViewings: [Viewing] {
+        guard selectedMemberID == nil else { return [] }
+        return viewings.filter { viewing in dateMatches(viewing.watchedOn) }
+    }
+
+    private var filteredCalendarEvents: [LLCalendarEvent] {
+        guard selectedMemberID == nil else { return [] }
+        return calendarEvents.filter { event in dateMatches(event.updatedAt ?? event.createdAt) }
+    }
+
+    private var filteredPuzzles: [LLPuzzle] {
+        guard selectedMemberID == nil else { return [] }
+        return puzzles.filter { puzzle in dateMatches(puzzle.completedAt ?? puzzle.createdAt) }
+    }
+
+    private var filteredQuotes: [LLQuote] {
+        guard selectedMemberID == nil else { return [] }
+        return quotes.filter { quote in dateMatches(quote.saidAt ?? quote.createdAt) }
     }
 
     private var filteredEvents: [DashboardActivity] {
@@ -76,8 +107,21 @@ struct AnalyticsView: View {
         return events.filter { calendar.isDate($0.date, equalTo: now, toGranularity: .month) }.count
     }
 
-    private var balance: (books: Int, movies: Int) {
-        (filteredBooks.count, filteredMovies.count)
+    private var totalActivityCount: Int {
+        filteredEvents.count
+    }
+
+    private var contentMixRows: [(label: String, count: Int, icon: String, color: Color)] {
+        [
+            ("Movie watches", filteredViewings.count, "film.fill", .pink),
+            ("Movie ratings", filteredFeedbacks.filter { $0.rating > 0 }.count, "star.fill", .yellow),
+            ("TV shows", filteredTVShows.count, "tv.fill", .purple),
+            ("Books", filteredBooks.count, "book.closed.fill", .blue),
+            ("Puzzles", filteredPuzzles.count, "puzzlepiece.extension.fill", .orange),
+            ("Quotes", filteredQuotes.count, "quote.bubble.fill", .mint),
+            ("Calendar events", filteredCalendarEvents.count, "calendar", .cyan)
+        ]
+        .filter { $0.count > 0 }
     }
 
     var body: some View {
@@ -94,16 +138,25 @@ struct AnalyticsView: View {
                         .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
                 }
 
+                AnalyticsSectionLabel(title: "Overview", subtitle: "Household-wide logged activity")
                 statGrid
                 highlights
-                balanceCard
+                contentMixCard
+
+                AnalyticsSectionLabel(title: "Members", subtitle: "Only member-scoped books and movie ratings")
                 memberLeaderboard
+
+                AnalyticsSectionLabel(title: "Movies", subtitle: "Household movie ratings and genres")
                 ratingDistribution
                 genreCloud
+
+                AnalyticsSectionLabel(title: "Recent", subtitle: "Latest household and member activity")
                 recentActivity
                 emptyStateIfNeeded
             }
-            .padding()
+            .padding(.horizontal)
+            .padding(.top)
+            .padding(.bottom, 28)
         }
         .background(dashboardBackground.ignoresSafeArea())
         .navigationTitle("Analytics")
@@ -184,11 +237,13 @@ struct AnalyticsView: View {
     }
 
     private var statGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-            DashboardStatCard(title: "Movies", value: String(filteredMovies.count), icon: "film.fill", colors: [.pink, .orange])
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+            DashboardStatCard(title: "Logged Activity", value: String(totalActivityCount), icon: "sparkles", colors: [.purple, .cyan])
+            DashboardStatCard(title: "Household Watches", value: String(filteredViewings.count), icon: "film.fill", colors: [.pink, .orange])
+            DashboardStatCard(title: "Household TV", value: String(filteredTVShows.count), icon: "tv.fill", colors: [.purple, .indigo])
             DashboardStatCard(title: "Books", value: String(filteredBooks.count), icon: "books.vertical.fill", colors: [.indigo, .blue])
-            DashboardStatCard(title: "Avg Movie", value: ratingText(averageMovieRating), icon: "star.fill", colors: [.yellow, .orange])
-            DashboardStatCard(title: "Avg Book", value: ratingText(averageBookRating), icon: "bookmark.fill", colors: [.mint, .green])
+            DashboardStatCard(title: "Household Puzzles", value: String(filteredPuzzles.count), icon: "puzzlepiece.extension.fill", colors: [.orange, .yellow])
+            DashboardStatCard(title: "Avg Movie Rating", value: ratingText(averageMovieRating), icon: "star.fill", colors: [.yellow, .orange])
         }
     }
 
@@ -202,38 +257,44 @@ struct AnalyticsView: View {
         }
     }
 
-    private var balanceCard: some View {
-        let total = max(balance.books + balance.movies, 1)
-        let bookRatio = CGFloat(balance.books) / CGFloat(total)
-        return DashboardSectionCard(title: "Reading vs Watching", icon: "chart.pie.fill") {
-            VStack(alignment: .leading, spacing: 12) {
-                GeometryReader { proxy in
-                    HStack(spacing: 0) {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.blue.gradient)
-                            .frame(width: max(proxy.size.width * bookRatio, balance.books == 0 ? 0 : 8))
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.pink.gradient)
+    private var contentMixCard: some View {
+        DashboardSectionCard(title: "Activity Mix", icon: "chart.pie.fill") {
+            Text("Household-wide totals. Movie ratings and books can also be filtered by member.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            let rows = contentMixRows
+            if rows.isEmpty {
+                FriendlyEmptyLine(text: "Log a movie, show, book, puzzle, quote, or event to build your household mix.")
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(rows, id: \.label) { row in
+                        HStack(spacing: 10) {
+                            Image(systemName: row.icon)
+                                .foregroundStyle(row.color)
+                                .frame(width: 22)
+                            Text(row.label)
+                                .font(.subheadline.weight(.medium))
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            Text("\(row.count)")
+                                .font(.subheadline.bold())
+                                .monospacedDigit()
+                        }
                     }
                 }
-                .frame(height: 14)
-                HStack {
-                    Label("\(balance.books) books", systemImage: "book.closed.fill")
-                    Spacer()
-                    Label("\(balance.movies) movies", systemImage: "film.fill")
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
             }
         }
     }
 
     private var memberLeaderboard: some View {
         DashboardSectionCard(title: "Member Leaderboard", icon: "person.3.fill") {
+            Text("Counts only member-linked books and movie ratings.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             let rows = members.map { member in
                 let bookCount = filteredBooks.filter { $0.ownerMember?.objectID == member.objectID }.count
-                let movieCount = filteredFeedbacks.filter { $0.member?.objectID == member.objectID }.count
-                return (member, bookCount, movieCount, bookCount + movieCount)
+                let movieRatingCount = filteredFeedbacks.filter { $0.member?.objectID == member.objectID && $0.rating > 0 }.count
+                return (member, bookCount, movieRatingCount, bookCount + movieRatingCount)
             }
             .sorted { $0.3 > $1.3 }
 
@@ -266,25 +327,39 @@ struct AnalyticsView: View {
     }
 
     private var ratingDistribution: some View {
-        DashboardSectionCard(title: "Rating Distribution", icon: "chart.bar.fill") {
+        DashboardSectionCard(title: "Movie Rating Distribution", icon: "chart.bar.fill") {
             let buckets = ratingBuckets()
+            let maxCount = max(buckets.map(\.count).max() ?? 0, 1)
             if buckets.allSatisfy({ $0.count == 0 }) {
-                FriendlyEmptyLine(text: "Rate a few movies or books to see the vibe curve.")
+                FriendlyEmptyLine(text: "Rate a few movies to see the household rating curve.")
             } else {
-                HStack(alignment: .bottom, spacing: 8) {
-                    ForEach(buckets) { bucket in
-                        VStack(spacing: 6) {
-                            RoundedRectangle(cornerRadius: 7)
-                                .fill(bucket.color.gradient)
-                                .frame(height: CGFloat(max(bucket.count, 1)) * 16)
-                            Text(bucket.label)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .bottom, spacing: 10) {
+                        ForEach(buckets) { bucket in
+                            VStack(spacing: 6) {
+                                Spacer(minLength: 0)
+                                Text("\(bucket.count)")
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(bucket.color.gradient)
+                                    .frame(height: max(8, CGFloat(bucket.count) / CGFloat(maxCount) * 72))
+                                Text(bucket.label)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.75)
+                            }
+                            .frame(maxWidth: .infinity)
                         }
-                        .frame(maxWidth: .infinity)
                     }
+                    .frame(height: 112)
+                    .clipped()
+
+                    Text("Based on \(filteredFeedbacks.filter { $0.rating > 0 }.count) member movie rating\(filteredFeedbacks.filter { $0.rating > 0 }.count == 1 ? "" : "s").")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .frame(height: 120)
             }
         }
     }
@@ -317,18 +392,24 @@ struct AnalyticsView: View {
                             }
                             .frame(width: 42, height: 42)
 
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 3) {
                                 Text(activity.title)
                                     .font(.subheadline.weight(.semibold))
                                     .lineLimit(1)
+                                    .truncationMode(.tail)
                                 Text(activity.subtitle)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .truncationMode(.tail)
                             }
-                            Spacer()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
                             Text(activity.date.formatted(date: .abbreviated, time: .omitted))
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
                         }
                     }
                 }
@@ -338,11 +419,11 @@ struct AnalyticsView: View {
 
     @ViewBuilder
     private var emptyStateIfNeeded: some View {
-        if filteredBooks.isEmpty && filteredMovies.isEmpty && filteredFeedbacks.isEmpty {
+        if filteredEvents.isEmpty {
             ContentUnavailableView(
                 "Analytics are warming up",
                 systemImage: "chart.xyaxis.line",
-                description: Text("Add a book, movie, or rating and this dashboard will become your family's activity recap.")
+                description: Text("Add a movie, show, book, puzzle, quote, event, or rating and this dashboard will become your family's activity recap.")
             )
             .padding(.top, 10)
         }
@@ -361,8 +442,13 @@ struct AnalyticsView: View {
         do {
             members = try fetchMembers()
             movies = try fetchMovies()
+            tvShows = try fetchTVShows()
+            viewings = try fetchViewings()
             books = try fetchBooks()
             feedbacks = try fetchFeedbacks()
+            calendarEvents = try fetchCalendarEvents()
+            puzzles = try fetchPuzzles()
+            quotes = try fetchQuotes()
             if let selectedMemberID, !members.contains(where: { $0.objectID == selectedMemberID }) {
                 self.selectedMemberID = nil
             }
@@ -389,6 +475,20 @@ struct AnalyticsView: View {
         return try context.fetch(req)
     }
 
+    private func fetchTVShows() throws -> [TVShow] {
+        let req = NSFetchRequest<TVShow>(entityName: "TVShow")
+        req.predicate = householdScopedPredicate(household)
+        req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
+        return try context.fetch(req)
+    }
+
+    private func fetchViewings() throws -> [Viewing] {
+        let req = NSFetchRequest<Viewing>(entityName: "Viewing")
+        req.predicate = householdScopedPredicate(household)
+        req.sortDescriptors = [NSSortDescriptor(key: "watchedOn", ascending: false)]
+        return try context.fetch(req)
+    }
+
     private func fetchBooks() throws -> [BookEntry] {
         let req = NSFetchRequest<BookEntry>(entityName: "BookEntry")
         req.predicate = householdScopedPredicate(household)
@@ -403,26 +503,40 @@ struct AnalyticsView: View {
         return try context.fetch(req)
     }
 
+    private func fetchCalendarEvents() throws -> [LLCalendarEvent] {
+        let req = NSFetchRequest<LLCalendarEvent>(entityName: "LLCalendarEvent")
+        req.predicate = householdScopedPredicate(household)
+        req.sortDescriptors = [NSSortDescriptor(key: "updatedAt", ascending: false), NSSortDescriptor(key: "createdAt", ascending: false)]
+        return try context.fetch(req)
+    }
+
+    private func fetchPuzzles() throws -> [LLPuzzle] {
+        let req = NSFetchRequest<LLPuzzle>(entityName: "LLPuzzle")
+        req.predicate = householdScopedPredicate(household)
+        req.sortDescriptors = [NSSortDescriptor(key: "completedAt", ascending: false), NSSortDescriptor(key: "createdAt", ascending: false)]
+        return try context.fetch(req)
+    }
+
+    private func fetchQuotes() throws -> [LLQuote] {
+        let req = NSFetchRequest<LLQuote>(entityName: "LLQuote")
+        req.predicate = householdScopedPredicate(household)
+        req.sortDescriptors = [NSSortDescriptor(key: "saidAt", ascending: false), NSSortDescriptor(key: "createdAt", ascending: false)]
+        return try context.fetch(req)
+    }
+
     private func makeEvents() -> [DashboardActivity] {
         var activity: [DashboardActivity] = []
-        for book in books {
-            let date = book.finishedAt ?? book.createdAt ?? Date.distantPast
+        for viewing in viewings {
+            let title = viewing.movie?.title ?? "Untitled movie"
+            let year = viewing.movie?.year ?? 0
+            let yearSuffix = year == 0 ? "" : " • \(Int(year))"
+            let viewingSubtitle = (viewing.isRewatch ? "Movie rewatch" : "Movie watched") + yearSuffix
             activity.append(DashboardActivity(
-                title: book.title ?? "Untitled book",
-                subtitle: "Book • \(book.ownerMember?.displayName ?? "Household")",
-                date: date,
-                memberID: book.ownerMember?.objectID,
-                icon: "book.closed.fill",
-                tint: .blue
-            ))
-        }
-        for movie in movies {
-            activity.append(DashboardActivity(
-                title: movie.title ?? "Untitled movie",
-                subtitle: movie.year == 0 ? "Movie" : "Movie • \(Int(movie.year))",
-                date: movie.createdAt ?? Date.distantPast,
+                title: title,
+                subtitle: viewingSubtitle,
+                date: viewing.watchedOn ?? Date.distantPast,
                 memberID: nil,
-                icon: "film.fill",
+                icon: viewing.isRewatch ? "arrow.triangle.2.circlepath" : "film.fill",
                 tint: .pink
             ))
         }
@@ -434,6 +548,57 @@ struct AnalyticsView: View {
                 memberID: feedback.member?.objectID,
                 icon: "star.fill",
                 tint: .yellow
+            ))
+        }
+        for show in tvShows {
+            activity.append(DashboardActivity(
+                title: show.title ?? "Untitled TV show",
+                subtitle: show.year == 0 ? "TV show logged" : "TV show • \(Int(show.year))",
+                date: show.createdAt ?? Date.distantPast,
+                memberID: nil,
+                icon: "tv.fill",
+                tint: .purple
+            ))
+        }
+        for book in books {
+            let completed = book.finishedAt != nil
+            activity.append(DashboardActivity(
+                title: book.title ?? "Untitled book",
+                subtitle: completed ? "Book completed • \(book.ownerMember?.displayName ?? "Household")" : "Book logged • \(book.ownerMember?.displayName ?? "Household")",
+                date: book.finishedAt ?? book.createdAt ?? Date.distantPast,
+                memberID: book.ownerMember?.objectID,
+                icon: "book.closed.fill",
+                tint: .blue
+            ))
+        }
+        for puzzle in puzzles {
+            activity.append(DashboardActivity(
+                title: puzzle.name ?? "Untitled puzzle",
+                subtitle: puzzle.completedAt == nil ? "Puzzle logged" : "Puzzle completed",
+                date: puzzle.completedAt ?? puzzle.createdAt ?? Date.distantPast,
+                memberID: nil,
+                icon: "puzzlepiece.extension.fill",
+                tint: .orange
+            ))
+        }
+        for quote in quotes {
+            activity.append(DashboardActivity(
+                title: quote.text ?? "Quote",
+                subtitle: (quote.speakerName ?? "Quote") + " • Quote",
+                date: quote.saidAt ?? quote.createdAt ?? Date.distantPast,
+                memberID: nil,
+                icon: "quote.bubble.fill",
+                tint: .mint
+            ))
+        }
+        for calendarEvent in calendarEvents {
+            activity.append(DashboardActivity(
+                title: calendarEvent.name ?? "Calendar event",
+                subtitle: "Calendar • \((calendarEvent.value(forKey: "tag") as? String) ?? "Event")",
+                date: calendarEvent.updatedAt ?? calendarEvent.createdAt ?? Date.distantPast,
+                memberID: nil,
+                icon: "calendar",
+                tint: .cyan
             ))
         }
         return activity.sorted { $0.date > $1.date }
@@ -469,13 +634,13 @@ struct AnalyticsView: View {
     }
 
     private func ratingBuckets() -> [RatingBucket] {
-        let ratings = filteredBooks.map(\.rating).filter { $0 > 0 } + filteredFeedbacks.map(\.rating).filter { $0 > 0 }
+        let ratings = filteredFeedbacks.map(\.rating).filter { $0 > 0 && $0 <= 10 }
         let ranges: [(String, ClosedRange<Double>, Color)] = [
-            ("0-2", 0...2, .red),
-            ("3-4", 2.0001...4, .orange),
-            ("5-6", 4.0001...6, .yellow),
-            ("7-8", 6.0001...8, .blue),
-            ("9-10", 8.0001...10, .green)
+            ("0.1–2", 0.0001...2, .red),
+            ("2.1–4", 2.0001...4, .orange),
+            ("4.1–6", 4.0001...6, .yellow),
+            ("6.1–8", 6.0001...8, .blue),
+            ("8.1–10", 8.0001...10, .green)
         ]
         return ranges.map { label, range, color in
             RatingBucket(label: label, count: ratings.filter { range.contains($0) }.count, color: color)
@@ -520,6 +685,23 @@ private enum AnalyticsTimeFilter: String, CaseIterable, Identifiable {
     }
 }
 
+private struct AnalyticsSectionLabel: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.title3.bold())
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 6)
+    }
+}
+
 private struct DashboardActivity: Identifiable {
     let id = UUID()
     let title: String
@@ -558,6 +740,8 @@ private struct DashboardStatCard: View {
             Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -634,6 +818,8 @@ private struct FlowLayout: View {
             ForEach(items, id: \.self) { item in
                 Text(item)
                     .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
                     .frame(maxWidth: .infinity)
