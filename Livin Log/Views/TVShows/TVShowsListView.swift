@@ -192,18 +192,13 @@ struct TVShowsListView: View {
     }
 
     private var trailingButtons: some View {
-        HStack(spacing: 12) {
-            EditButton()
-                .disabled(!canWrite)
-
-            Button {
-                showingAdd = true
-            } label: {
-                Image(systemName: "plus")
-            }
-            .accessibilityLabel("Add TV Show")
-            .disabled(!canWrite)
+        Button {
+            showingAdd = true
+        } label: {
+            Image(systemName: "plus")
         }
+        .accessibilityLabel("Add TV Show")
+        .disabled(!canWrite)
     }
 
     private var sortMenuButton: some View {
