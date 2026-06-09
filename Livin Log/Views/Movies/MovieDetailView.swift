@@ -59,8 +59,9 @@ struct MovieDetailView: View {
     @State private var showGenrePicker = false
 
     private let allGenres: [String] = [
-        "Action","Adventure","Animation","Comedy","Crime","Documentary","Drama","Family",
-        "Fantasy","History","Horror","Music","Mystery","Romance","Sci-Fi","Thriller","War","Western"
+        "Action","Adventure","Animation","Biography","Comedy","Crime","Documentary","Drama","Family",
+        "Fantasy","Film-Noir","History","Horror","Music","Musical","Mystery","Romance","Sci-Fi",
+        "Short","Sport","Thriller","War","Western"
     ]
 
     private var genresDisplay: String {
@@ -220,7 +221,15 @@ struct MovieDetailView: View {
         isSearchingEditMedia = false
     }
 
-    private func applyEditSearchResult(_ result: OMDbSearchResult) {
+    @MainActor
+    private func applyEditSearchResult(_ result: OMDbSearchResult) async {
+        let detailedResult = (try? await OMDbSearchService.details(for: result)) ?? result
+        applyEditMetadata(from: detailedResult)
+        hideEditMediaAutocomplete()
+        focusedEditMediaField = nil
+    }
+
+    private func applyEditMetadata(from result: OMDbSearchResult) {
         editTitle = result.title
         if let year = result.yearInt16 {
             editYearText = String(Int(year))
@@ -228,9 +237,14 @@ struct MovieDetailView: View {
         editSelectedPosterURLString = result.normalizedPosterURLString
         editSelectedIMDbID = result.imdbID
         editSelectedMediaType = result.type
+        if !result.genres.isEmpty {
+            selectedGenres.formUnion(result.genres)
+        }
+        if let contentRating = result.contentRating,
+           ["—","G","PG","PG-13","R","NC-17","Not Rated"].contains(contentRating) {
+            editMPAA = contentRating
+        }
         posterURL = result.posterURL
-        hideEditMediaAutocomplete()
-        focusedEditMediaField = nil
     }
 
     private func hideEditMediaAutocomplete() {
@@ -302,7 +316,7 @@ struct MovieDetailView: View {
                 if shouldShowEditMediaAutocomplete {
                     ForEach(editSearchResults) { result in
                         Button {
-                            applyEditSearchResult(result)
+                            Task { await applyEditSearchResult(result) }
                         } label: {
                             MediaSearchResultRow(result: result)
                         }
@@ -343,25 +357,20 @@ struct MovieDetailView: View {
     }
 
     private var feedbackSummarySection: some View {
-        Section("Feedback Summary") {
+        Section("Household Feedback") {
             if members.isEmpty {
                 Text("No members found.")
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(members) { m in
                     if isEditing {
-                        if m.objectID == authorizedActingMember?.objectID {
-                            Button {
-                                selectedMember = m
-                                loadSelectedMemberFeedback()
-                            } label: {
-                                summaryRow(for: m)
-                            }
-                            .buttonStyle(.plain)
-                        } else {
+                        Button {
+                            selectedMember = m
+                            loadSelectedMemberFeedback()
+                        } label: {
                             summaryRow(for: m)
-                                .opacity(0.7)
                         }
+                        .buttonStyle(.plain)
                     } else {
                         summaryRow(for: m)
                     }
@@ -376,6 +385,18 @@ struct MovieDetailView: View {
                 Text("No members found.")
                     .foregroundStyle(.secondary)
             } else {
+                Picker("Member", selection: Binding(
+                    get: { selectedMember?.objectID },
+                    set: { newID in
+                        selectedMember = members.first { $0.objectID == newID }
+                        loadSelectedMemberFeedback()
+                    }
+                )) {
+                    ForEach(members) { member in
+                        Text(member.displayName ?? "Member").tag(Optional(member.objectID))
+                    }
+                }
+
                 if let selectedMember {
                     Text("Editing feedback for \(selectedMember.displayName ?? "Member")")
                         .foregroundStyle(.secondary)
@@ -579,12 +600,17 @@ struct MovieDetailView: View {
     private func reloadFeedbacks() {
         let req = NSFetchRequest<MovieFeedback>(entityName: "MovieFeedback")
         req.predicate = NSPredicate(format: "movie == %@", movie)
+        req.sortDescriptors = [NSSortDescriptor(key: "updatedAt", ascending: false)]
         let all = (try? context.fetch(req)) ?? []
 
-        feedbackByMemberID = Dictionary(uniqueKeysWithValues: all.compactMap { fb in
-            guard let memberID = fb.member?.objectID else { return nil }
-            return (memberID, fb)
-        })
+        var feedbackByMember: [NSManagedObjectID: MovieFeedback] = [:]
+        for fb in all {
+            guard let memberID = fb.member?.objectID else { continue }
+            if feedbackByMember[memberID] == nil {
+                feedbackByMember[memberID] = fb
+            }
+        }
+        feedbackByMemberID = feedbackByMember
     }
 
     // MARK: - Movie details
@@ -668,8 +694,10 @@ struct MovieDetailView: View {
             let fetched = await OMDbPosterService.posterURL(title: posterTitle, year: posterYear)
             await MainActor.run {
                 guard let movieForPoster = (try? context.existingObject(with: movieObjectID)) as? Movie else { return }
-                movieForPoster.posterURL = fetched?.absoluteString
-                posterURL = fetched
+                if editSelectedPosterURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    movieForPoster.posterURL = fetched?.absoluteString
+                    posterURL = fetched
+                }
                 do {
                     try MovieStoreSafety.validateMovieGraph(movie: movieForPoster, household: movieForPoster.household, context: context, operation: "Movie.poster.edit")
                     try context.save()
