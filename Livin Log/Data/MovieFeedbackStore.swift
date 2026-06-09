@@ -22,9 +22,10 @@ enum MovieFeedbackStore {
         try context.validateSamePersistentStore(relatedObjects)
 
         let req = NSFetchRequest<MovieFeedback>(entityName: "MovieFeedback")
-        req.fetchLimit = 1
         req.predicate = NSPredicate(format: "movie == %@ AND member == %@", movie, member)
-        if let existing = try context.fetch(req).first {
+        let matchingFeedback = try context.fetch(req)
+            .sorted(by: shouldKeepBefore)
+        if let existing = matchingFeedback.first {
             let existingObjects: [(String, NSManagedObject?)] = [
                 ("feedback", existing),
                 ("movie", movie),
@@ -33,6 +34,9 @@ enum MovieFeedbackStore {
             ]
             try context.validateSamePersistentStore(existingObjects)
             if existing.household == nil { existing.household = movie.household }
+            for duplicate in matchingFeedback.dropFirst() {
+                context.delete(duplicate)
+            }
             print("ℹ️ Reusing feedback for movie:", movie.objectID, "member:", member.objectID)
             return existing
         }
@@ -60,5 +64,14 @@ enum MovieFeedbackStore {
         #endif
         print("✅ Created feedback for movie:", movie.objectID, "member:", member.objectID)
         return fb
+    }
+
+    private static func shouldKeepBefore(_ lhs: MovieFeedback, _ rhs: MovieFeedback) -> Bool {
+        let lhsUpdatedAt = lhs.updatedAt ?? .distantPast
+        let rhsUpdatedAt = rhs.updatedAt ?? .distantPast
+        if lhsUpdatedAt != rhsUpdatedAt {
+            return lhsUpdatedAt > rhsUpdatedAt
+        }
+        return lhs.objectID.uriRepresentation().absoluteString < rhs.objectID.uriRepresentation().absoluteString
     }
 }
