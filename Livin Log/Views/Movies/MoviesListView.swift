@@ -213,18 +213,13 @@ struct MoviesListView: View {
     }
 
     private var trailingButtons: some View {
-        HStack(spacing: 12) {
-            EditButton()
-                .disabled(!canWrite)
-
-            Button {
-                showingAdd = true
-            } label: {
-                Image(systemName: "plus")
-            }
-            .accessibilityLabel("Add Movie")
-            .disabled(!canWrite)
+        Button {
+            showingAdd = true
+        } label: {
+            Image(systemName: "plus")
         }
+        .accessibilityLabel("Add Movie")
+        .disabled(!canWrite)
     }
 
     private var filtersMenuButton: some View {

@@ -31,6 +31,7 @@ struct MovieDetailView: View {
     @State private var editYearText: String = ""
     @State private var editMPAA: String = "—"
     @State private var editMovieNotes: String = ""
+    @State private var editWatchedOn: Date = Date()
     @State private var editSelectedPosterURLString: String = ""
     @State private var editSelectedIMDbID: String?
     @State private var editSelectedMediaType: String?
@@ -91,11 +92,7 @@ struct MovieDetailView: View {
     }
 
     private var firstWatchDate: Date? {
-        viewings
-            .filter { !$0.isRewatch }
-            .compactMap { $0.watchedOn }
-            .sorted()
-            .first
+        primaryFirstWatch(in: viewings)?.watchedOn
     }
 
     var body: some View {
@@ -114,8 +111,13 @@ struct MovieDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
 
         // Avoid `.toolbar` ambiguity
-        .navigationBarItems(trailing:
-            Button(isEditing ? "Save" : "Edit") {
+        .navigationBarItems(
+            leading: Group {
+                if isEditing {
+                    Button("Cancel") { cancelEditing() }
+                }
+            },
+            trailing: Button(isEditing ? "Save" : "Edit") {
                 guard canEdit else { return }
                 if isEditing {
                     if saveAll() {
@@ -324,6 +326,13 @@ struct MovieDetailView: View {
                     }
                 }
 
+                DatePicker(
+                    "Watched date",
+                    selection: $editWatchedOn,
+                    in: ...Date(),
+                    displayedComponents: .date
+                )
+
                 Picker("MPAA Rating", selection: $editMPAA) {
                     ForEach(["—","G","PG","PG-13","R","NC-17","Not Rated"], id: \.self) { r in
                         Text(r).tag(r)
@@ -343,6 +352,7 @@ struct MovieDetailView: View {
                 TextEditor(text: $editMovieNotes)
                     .frame(minHeight: 90)
             } else {
+                row("Watched", viewingDateText(firstWatchDate))
                 row("MPAA", movie.mpaaRating ?? "—")
                 row("Genres", (movie.genre ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "—" : (movie.genre ?? "—"))
 
@@ -560,9 +570,23 @@ struct MovieDetailView: View {
 
     private func beginEditing() {
         seedMovieEditorFieldsFromMovie()
+        viewingToEdit = nil
+        hideEditMediaAutocomplete()
 
         selectedMember = authorizedActingMember
         loadSelectedMemberFeedback()
+    }
+
+    private func cancelEditing() {
+        context.rollback()
+        seedMovieEditorFieldsFromMovie()
+        reloadAll()
+        viewingNotesDraft = ""
+        viewingDateDraft = Date()
+        viewingToEdit = nil
+        hideEditMediaAutocomplete()
+        focusedEditMediaField = nil
+        isEditing = false
     }
 
     @discardableResult
@@ -620,6 +644,7 @@ struct MovieDetailView: View {
         editYearText = movie.year == 0 ? "" : String(movie.year)
         editMPAA = (movie.mpaaRating ?? "").isEmpty ? "—" : (movie.mpaaRating ?? "—")
         editMovieNotes = movie.notes ?? ""
+        editWatchedOn = fetchFirstWatchDate() ?? Date()
         editSelectedPosterURLString = movie.posterURL ?? ""
         editSelectedIMDbID = movie.value(forKey: "imdbID") as? String
         editSelectedMediaType = movie.value(forKey: "mediaType") as? String
@@ -629,6 +654,61 @@ struct MovieDetailView: View {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         )
+    }
+
+
+    private func primaryFirstWatch(in viewings: [Viewing]) -> Viewing? {
+        viewings
+            .filter { !$0.isRewatch }
+            .sorted { lhs, rhs in
+                (lhs.watchedOn ?? .distantPast) < (rhs.watchedOn ?? .distantPast)
+            }
+            .first
+    }
+
+    private func fetchPrimaryFirstWatch(for movieInContext: Movie) throws -> Viewing? {
+        let req = NSFetchRequest<Viewing>(entityName: "Viewing")
+        req.predicate = NSPredicate(format: "movie == %@ AND isRewatch == NO", movieInContext)
+        let matches = try context.fetch(req)
+        return primaryFirstWatch(in: matches)
+    }
+
+    private func fetchFirstWatchDate() -> Date? {
+        guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return nil }
+        do {
+            return try fetchPrimaryFirstWatch(for: movieInContext)?.watchedOn
+        } catch {
+            return nil
+        }
+    }
+
+    private func updateFirstWatchDate(_ date: Date, movie movieInContext: Movie, household scopedHousehold: Household) throws {
+        let scopedMember = try MovieStoreSafety.resolveMember(authorizedActingMember, in: scopedHousehold, context: context)
+        let firstViewing: Viewing
+        let assignedBeforeRelationships: Bool
+
+        if let existingViewing = try fetchPrimaryFirstWatch(for: movieInContext) {
+            firstViewing = existingViewing
+            assignedBeforeRelationships = true
+        } else {
+            firstViewing = Viewing(context: context)
+            try MovieStoreSafety.assignInserted(firstViewing, toSameStoreAs: scopedHousehold, label: "Viewing(missingFirstWatch)", context: context)
+            firstViewing.id = firstViewing.id ?? UUID()
+            firstViewing.isRewatch = false
+            firstViewing.movie = movieInContext
+            assignedBeforeRelationships = true
+        }
+
+        firstViewing.watchedOn = date
+        firstViewing.household = scopedHousehold
+
+        try context.validateSamePersistentStore([
+            ("viewing", firstViewing),
+            ("movie", movieInContext),
+            ("household", scopedHousehold),
+            ("member", scopedMember)
+        ])
+        try MovieStoreSafety.validateViewingGraph(viewing: firstViewing, movie: movieInContext, household: scopedHousehold, member: scopedMember, context: context, operation: "Movie.edit.firstWatchDate", assignedBeforeRelationships: assignedBeforeRelationships)
     }
 
     @discardableResult
@@ -671,6 +751,7 @@ struct MovieDetailView: View {
         movieInContext.notes = trimmed.isEmpty ? nil : trimmed
 
         do {
+            try updateFirstWatchDate(editWatchedOn, movie: movieInContext, household: scopedHousehold)
             try MovieStoreSafety.validateMovieGraph(movie: movieInContext, household: scopedHousehold, context: context, operation: "Movie.edit")
             try context.save()
             seedMovieEditorFieldsFromMovie()

@@ -63,16 +63,20 @@ struct TVShowDetailView: View {
         }
         .navigationTitle("TV Show")
         .navigationBarTitleDisplayMode(.inline)
-        .navigationBarItems(trailing:
-            Button(isEditing ? "Save" : "Edit") {
+        .navigationBarItems(
+            leading: Group {
+                if isEditing {
+                    Button("Cancel") { cancelEditing() }
+                }
+            },
+            trailing: Button(isEditing ? "Save" : "Edit") {
                 guard canWrite else { return }
                 if isEditing {
                     if saveDetails() {
                         isEditing = false
                     }
                 } else {
-                    seedEditorFieldsFromShow()
-                    isEditing = true
+                    beginEditing()
                 }
             }
             .disabled(!canWrite)
@@ -263,6 +267,21 @@ struct TVShowDetailView: View {
             Text(value)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private func beginEditing() {
+        seedEditorFieldsFromShow()
+        hideEditMediaAutocomplete()
+        isEditing = true
+    }
+
+    private func cancelEditing() {
+        context.rollback()
+        seedEditorFieldsFromShow()
+        seedPosterFromStoredURL()
+        hideEditMediaAutocomplete()
+        focusedEditMediaField = nil
+        isEditing = false
     }
 
     private func seedEditorFieldsFromShow() {
