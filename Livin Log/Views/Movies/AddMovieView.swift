@@ -58,8 +58,9 @@ struct AddMovieView: View {
 
     private let mpaaOptions: [String] = ["—", "G", "PG", "PG-13", "R", "NC-17", "Not Rated"]
     private let allGenres: [String] = [
-        "Action","Adventure","Animation","Comedy","Crime","Documentary","Drama","Family",
-        "Fantasy","History","Horror","Music","Mystery","Romance","Sci-Fi","Thriller","War","Western"
+        "Action","Adventure","Animation","Biography","Comedy","Crime","Documentary","Drama","Family",
+        "Fantasy","Film-Noir","History","Horror","Music","Musical","Mystery","Romance","Sci-Fi",
+        "Short","Sport","Thriller","War","Western"
     ]
 
     var body: some View {
@@ -94,7 +95,7 @@ struct AddMovieView: View {
                 Section {
                     ForEach(searchResults) { result in
                         Button {
-                            applySearchResult(result)
+                            Task { await applySearchResult(result) }
                         } label: {
                             MediaSearchResultRow(result: result)
                         }
@@ -156,8 +157,8 @@ struct AddMovieView: View {
             }
 
             Section {
-                if let actingMember {
-                    ForEach([actingMember]) { m in
+                if actingMember != nil {
+                    ForEach(householdMembersForFeedback) { m in
                         let draft = bindingForMember(m)
 
                         DisclosureGroup {
@@ -225,7 +226,7 @@ struct AddMovieView: View {
                         .foregroundStyle(.secondary)
                 }
             } header: {
-                SharedViews.AccentSectionHeader(title: "Feedback", systemImage: "star.bubble.fill", style: .movies)
+                SharedViews.AccentSectionHeader(title: "Household Feedback", systemImage: "star.bubble.fill", style: .movies)
             }
         }
         .scrollContentBackground(.hidden)
@@ -307,7 +308,15 @@ struct AddMovieView: View {
         isSearchingMedia = false
     }
 
-    private func applySearchResult(_ result: OMDbSearchResult) {
+    @MainActor
+    private func applySearchResult(_ result: OMDbSearchResult) async {
+        let detailedResult = (try? await OMDbSearchService.details(for: result)) ?? result
+        applyMetadata(from: detailedResult)
+        hideMediaAutocomplete()
+        focusedMediaField = nil
+    }
+
+    private func applyMetadata(from result: OMDbSearchResult) {
         title = result.title
         if let year = result.yearInt16 {
             yearText = String(Int(year))
@@ -315,9 +324,13 @@ struct AddMovieView: View {
         selectedPosterURLString = result.normalizedPosterURLString
         selectedIMDbID = result.imdbID
         selectedMediaType = result.type
+        if !result.genres.isEmpty {
+            selectedGenres.formUnion(result.genres)
+        }
+        if let contentRating = result.contentRating, mpaaOptions.contains(contentRating) {
+            mpaaRating = contentRating
+        }
         hasSelectedMediaResult = true
-        hideMediaAutocomplete()
-        focusedMediaField = nil
     }
 
     private func hideMediaAutocomplete() {
@@ -340,6 +353,10 @@ struct AddMovieView: View {
 
     // MARK: - Members (fetch instead of relationship accessors)
 
+    private var householdMembersForFeedback: [HouseholdMember] {
+        fetchedMembers()
+    }
+
     private func fetchedMembers() -> [HouseholdMember] {
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return [] }
         let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
@@ -354,7 +371,7 @@ struct AddMovieView: View {
     }
 
     private func seedFeedbackDraftsIfNeeded() {
-        for m in [actingMember].compactMap({ $0 }) {
+        for m in householdMembersForFeedback {
             if feedbackByMemberID[m.objectID] == nil {
                 feedbackByMemberID[m.objectID] = MemberFeedbackDraft()
             }
@@ -442,31 +459,39 @@ struct AddMovieView: View {
 
         // Feedback rows
         var createdFeedbacks: [MovieFeedback] = []
-        for m in [scopedActingMember] {
-            let draft = feedbackByMemberID[actingMember.objectID] ?? feedbackByMemberID[m.objectID] ?? MemberFeedbackDraft()
-            if isDraftEmpty(draft) { continue }
+        for memberDraft in householdMembersForFeedback {
+            guard let draft = feedbackByMemberID[memberDraft.objectID], !isDraftEmpty(draft) else { continue }
 
-            let memberInContext = m
-
-            let fb = MovieFeedback(context: context)
+            let memberInContext: HouseholdMember
             do {
-                try MovieStoreSafety.assignInserted(fb, toSameStoreAs: scopedHousehold, label: "MovieFeedback(new)", context: context)
+                guard let resolvedMember = try MovieStoreSafety.resolveMember(memberDraft, in: scopedHousehold, context: context) else {
+                    saveError = "Could not resolve \(memberDraft.displayName ?? "the selected member") in this household."
+                    context.rollback()
+                    return
+                }
+                memberInContext = resolvedMember
+                try context.validateSamePersistentStore([("movie", movie), ("household", scopedHousehold), ("member", memberInContext)])
             } catch {
                 context.rollback()
                 saveError = error.localizedDescription
                 return
             }
-            fb.id = UUID()
+
+            let fb: MovieFeedback
+            do {
+                fb = try MovieFeedbackStore.getOrCreate(movie: movie, member: memberInContext, context: context)
+            } catch {
+                context.rollback()
+                saveError = error.localizedDescription
+                return
+            }
             fb.updatedAt = Date()
             fb.rating = draft.rating
             fb.slept = draft.slept
 
             let n = draft.notes.trimmingCharacters(in: .whitespacesAndNewlines)
             fb.notes = n.isEmpty ? nil : n
-
             fb.household = scopedHousehold
-            fb.movie = movie
-            fb.member = memberInContext
             createdFeedbacks.append(fb)
         }
         
