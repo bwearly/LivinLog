@@ -2,6 +2,9 @@ import SwiftUI
 import CoreData
 
 struct QuotesListView: View {
+    @Environment(\.managedObjectContext) private var context
+    @EnvironmentObject private var appState: AppState
+
     let household: Household
 
     @FetchRequest private var quotes: FetchedResults<LLQuote>
@@ -14,6 +17,12 @@ struct QuotesListView: View {
     @State private var editingQuote: LLQuote?
     @State private var showingFilters = false
     @State private var showingChildrenManager = false
+    @State private var didRepairHouseholdLinks = false
+    @State private var repairError: String?
+
+    private var canWrite: Bool {
+        appState.isCurrentMemberAuthorized()
+    }
 
     init(household: Household) {
         self.household = household
@@ -23,7 +32,7 @@ struct QuotesListView: View {
                 NSSortDescriptor(keyPath: \LLQuote.saidAt, ascending: false),
                 NSSortDescriptor(keyPath: \LLQuote.createdAt, ascending: false)
             ],
-            predicate: NSPredicate(format: "household == %@", household),
+            predicate: householdScopedPredicate(household, idKey: "householdId"),
             animation: .default
         )
 
@@ -215,6 +224,90 @@ struct QuotesListView: View {
                 ChildrenManagerView(household: household)
             }
         }
+        .task {
+            guard !didRepairHouseholdLinks else { return }
+            didRepairHouseholdLinks = true
+            logQuoteFetchDiagnostics(reason: "QuotesListView.task")
+            if canWrite {
+                repairQuoteHouseholdLinksIfNeeded()
+            }
+        }
+        .alert("Could Not Update Quotes", isPresented: Binding(get: { repairError != nil }, set: { if !$0 { repairError = nil } })) {
+            Button("OK", role: .cancel) { repairError = nil }
+        } message: {
+            Text(repairError ?? "Unknown error")
+        }
+    }
+
+    private func repairQuoteHouseholdLinksIfNeeded() {
+        guard canWrite else { return }
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
+            repairError = "Could not resolve the active household."
+            return
+        }
+
+        var didRepairHouseholdLinks = false
+
+        if scopedHousehold.id == nil {
+            scopedHousehold.id = UUID()
+            didRepairHouseholdLinks = true
+        }
+
+        guard let householdID = scopedHousehold.id else { return }
+
+        let missingHouseholdIDRequest = NSFetchRequest<LLQuote>(entityName: "LLQuote")
+        missingHouseholdIDRequest.predicate = NSPredicate(format: "household == %@ AND householdId == nil", scopedHousehold)
+        missingHouseholdIDRequest.includesPendingChanges = true
+
+        let orphanedByHouseholdIDRequest = NSFetchRequest<LLQuote>(entityName: "LLQuote")
+        orphanedByHouseholdIDRequest.predicate = NSPredicate(format: "household == nil AND householdId == %@", householdID as NSUUID)
+        orphanedByHouseholdIDRequest.includesPendingChanges = true
+
+        do {
+            let missingHouseholdID = try context.fetch(missingHouseholdIDRequest)
+            let orphanedByHouseholdID = try context.fetch(orphanedByHouseholdIDRequest)
+
+            for quote in missingHouseholdID {
+                quote.setValue(householdID, forKey: "householdId")
+                didRepairHouseholdLinks = true
+                try context.validateSamePersistentStore([("quote", quote), ("household", scopedHousehold), ("child", quote.child)])
+                print("💬 [QuoteRepair] backfilled householdId quote=\(quote.textValue.prefix(32)) householdID=\(householdID.uuidString)")
+            }
+
+            for quote in orphanedByHouseholdID {
+                guard quote.objectID.persistentStore === scopedHousehold.objectID.persistentStore else {
+                    print("⚠️ [QuoteRepair] skipped cross-store orphan quote=\(quote.textValue.prefix(32)) householdID=\(householdID.uuidString)")
+                    continue
+                }
+                quote.household = scopedHousehold
+                didRepairHouseholdLinks = true
+                try context.validateSamePersistentStore([("quote", quote), ("household", scopedHousehold), ("child", quote.child)])
+                print("💬 [QuoteRepair] relinked quote=\(quote.textValue.prefix(32)) householdID=\(householdID.uuidString)")
+            }
+
+            if didRepairHouseholdLinks {
+                context.debugLogStoreSafeSave(entityName: "LLQuote.householdRepair", household: scopedHousehold, member: appState.member, objects: [("household", scopedHousehold)])
+                try context.save()
+            }
+        } catch {
+            context.rollback()
+            repairError = error.localizedDescription
+            print("❌ [QuoteRepair] household link save blocked: \(error)")
+        }
+    }
+
+    private func logQuoteFetchDiagnostics(reason: String) {
+#if DEBUG
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
+            print("💬 [QuoteFetch] reason=\(reason) active household could not be resolved")
+            return
+        }
+        let request = NSFetchRequest<LLQuote>(entityName: "LLQuote")
+        request.predicate = householdScopedPredicate(scopedHousehold, idKey: "householdId")
+        request.includesPendingChanges = true
+        let fetched = (try? context.fetch(request)) ?? []
+        print("💬 [QuoteFetch] reason=\(reason) household=\(scopedHousehold.name ?? "<unnamed>") householdID=\(scopedHousehold.id?.uuidString ?? "<nil>") count=\(fetched.count)")
+#endif
     }
 }
 

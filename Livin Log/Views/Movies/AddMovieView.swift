@@ -526,6 +526,7 @@ struct AddMovieView: View {
             try context.validateSamePersistentStore(objectsToValidate)
             try MovieStoreSafety.validateViewingGraph(viewing: v, movie: movie, household: scopedHousehold, member: scopedActingMember, context: context, operation: "Movie.add.initialViewing", assignedBeforeRelationships: true)
             try context.save()
+            print("🎬 [MovieSave] movie=\(movie.title ?? "<untitled>") movieID=\(movie.id?.uuidString ?? "<nil>") household=\(scopedHousehold.name ?? "<unnamed>") householdID=\(movie.householdID?.uuidString ?? "<nil>") viewingID=\(v.id?.uuidString ?? "<nil>") watchedOn=\(v.watchedOn?.description ?? "<nil>") member=\(scopedActingMember.displayName ?? "<nil>")")
             print("ℹ️ Movie inherits household share via parent household relationship (no per-object share mutation)")
             if !createdFeedbacks.isEmpty {
                 print("ℹ️ MovieFeedback inherits household share via parent household relationship (no per-object share mutation)")

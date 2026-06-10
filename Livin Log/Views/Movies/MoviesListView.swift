@@ -60,7 +60,7 @@ struct MoviesListView: View {
 
         _movies = FetchRequest<Movie>(
             sortDescriptors: sort,
-            predicate: householdScopedPredicate(household),
+            predicate: householdScopedPredicate(household, idKey: "householdID"),
             animation: .default
         )
     }
@@ -155,11 +155,13 @@ struct MoviesListView: View {
             reloadMembers()
             await reloadAggregates()
 
+            logMovieFetchDiagnostics(reason: "MoviesListView.task")
+
             if canWrite {
 #if DEBUG
                 MovieStoreSafety.diagnoseMovieGraphs(household: household, context: context, reason: "MoviesListView.task")
 #endif
-                await backfillHouseholdIDAndPostersIfNeeded()
+                await repairMovieHouseholdLinksAndPostersIfNeeded()
             }
 
             if sleptMemberID == nil, let member {
@@ -281,42 +283,62 @@ struct MoviesListView: View {
         .accessibilityLabel("Filters")
     }
 
-    private func backfillHouseholdIDAndPostersIfNeeded() async {
+    private func repairMovieHouseholdLinksAndPostersIfNeeded() async {
         guard canWrite else { return }
 
-        if household.id == nil {
-            await MainActor.run {
-                household.id = UUID()
-                do {
-                    context.debugLogStoreSafeSave(entityName: "Movie.householdIDBackfill.household", household: household, member: member, objects: [("household", household)])
-                    try MovieStoreSafety.validateHouseholdMovieGraphs(household: household, context: context, operation: "Movie.householdIDBackfill.household")
-                    try context.save()
-                } catch {
-                    context.rollback()
-                    saveError = error.localizedDescription
-                    print("❌ [MovieBackfill] household save blocked:", error)
-                }
-            }
-        }
-
-        guard let householdID = household.id else { return }
-
         await MainActor.run {
-            let request = NSFetchRequest<Movie>(entityName: "Movie")
-            request.predicate = NSPredicate(format: "household == %@ AND householdID == nil", household)
+            guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
+                saveError = "Could not resolve the active household."
+                return
+            }
 
-            if let legacyMovies = try? context.fetch(request), !legacyMovies.isEmpty {
-                do {
-                    for movie in legacyMovies {
-                        movie.householdID = householdID
-                        try MovieStoreSafety.validateMovieGraph(movie: movie, household: household, context: context, operation: "Movie.householdIDBackfill")
-                    }
-                    try context.save()
-                } catch {
-                    context.rollback()
-                    saveError = error.localizedDescription
-                    print("❌ [MovieBackfill] householdID save blocked:", error)
+            var didRepairHouseholdLinks = false
+
+            if scopedHousehold.id == nil {
+                scopedHousehold.id = UUID()
+                didRepairHouseholdLinks = true
+            }
+
+            guard let householdID = scopedHousehold.id else { return }
+
+            let missingHouseholdIDRequest = NSFetchRequest<Movie>(entityName: "Movie")
+            missingHouseholdIDRequest.predicate = NSPredicate(format: "household == %@ AND householdID == nil", scopedHousehold)
+            missingHouseholdIDRequest.includesPendingChanges = true
+
+            let orphanedByHouseholdIDRequest = NSFetchRequest<Movie>(entityName: "Movie")
+            orphanedByHouseholdIDRequest.predicate = NSPredicate(format: "household == nil AND householdID == %@", householdID as NSUUID)
+            orphanedByHouseholdIDRequest.includesPendingChanges = true
+
+            do {
+                let missingHouseholdID = try context.fetch(missingHouseholdIDRequest)
+                let orphanedByHouseholdID = try context.fetch(orphanedByHouseholdIDRequest)
+
+                for movie in missingHouseholdID {
+                    movie.householdID = householdID
+                    didRepairHouseholdLinks = true
+                    try MovieStoreSafety.validateMovieGraph(movie: movie, household: scopedHousehold, context: context, operation: "Movie.householdIDBackfill")
+                    print("🎬 [MovieRepair] backfilled householdID title=\(movie.title ?? "<untitled>") householdID=\(householdID.uuidString)")
                 }
+
+                for movie in orphanedByHouseholdID {
+                    guard movie.objectID.persistentStore === scopedHousehold.objectID.persistentStore else {
+                        print("⚠️ [MovieRepair] skipped cross-store orphan title=\(movie.title ?? "<untitled>") householdID=\(householdID.uuidString)")
+                        continue
+                    }
+                    movie.household = scopedHousehold
+                    didRepairHouseholdLinks = true
+                    try MovieStoreSafety.validateMovieGraph(movie: movie, household: scopedHousehold, context: context, operation: "Movie.householdRelink")
+                    print("🎬 [MovieRepair] relinked movie title=\(movie.title ?? "<untitled>") householdID=\(householdID.uuidString)")
+                }
+
+                if didRepairHouseholdLinks {
+                    context.debugLogStoreSafeSave(entityName: "Movie.householdRepair", household: scopedHousehold, member: member, objects: [("household", scopedHousehold)])
+                    try context.save()
+                }
+            } catch {
+                context.rollback()
+                saveError = error.localizedDescription
+                print("❌ [MovieRepair] household link save blocked:", error)
             }
         }
 
@@ -360,6 +382,21 @@ struct MoviesListView: View {
                 print("❌ [MoviePosterBackfill] save failed:", error)
             }
         }
+    }
+
+
+    private func logMovieFetchDiagnostics(reason: String) {
+#if DEBUG
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else {
+            print("🎬 [MovieFetch] reason=\(reason) active household could not be resolved")
+            return
+        }
+        let request = NSFetchRequest<Movie>(entityName: "Movie")
+        request.predicate = householdScopedPredicate(scopedHousehold, idKey: "householdID")
+        request.includesPendingChanges = true
+        let fetched = (try? context.fetch(request)) ?? []
+        print("🎬 [MovieFetch] reason=\(reason) household=\(scopedHousehold.name ?? "<unnamed>") householdID=\(scopedHousehold.id?.uuidString ?? "<nil>") count=\(fetched.count)")
+#endif
     }
 
     private func reloadMembers() {

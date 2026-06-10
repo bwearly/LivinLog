@@ -66,6 +66,7 @@
         <attribute name="contextText" optional="YES" attributeType="String" />
         <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
         <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
+        <attribute name="householdId" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
         <attribute name="saidAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
         <attribute name="speakerName" optional="YES" attributeType="String" />
         <attribute name="text" optional="YES" attributeType="String" />
