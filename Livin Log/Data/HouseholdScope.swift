@@ -13,6 +13,17 @@ func householdScopedPredicate(_ household: Household) -> NSPredicate {
     return NSPredicate(format: "household == %@", household)
 }
 
+func householdScopedPredicate(_ household: Household, idKey: String) -> NSPredicate {
+    guard let householdID = household.id else {
+        return householdScopedPredicate(household)
+    }
+
+    return NSCompoundPredicate(orPredicateWithSubpredicates: [
+        NSPredicate(format: "household == %@", household),
+        NSPredicate(format: "%K == %@", idKey, householdID as NSUUID)
+    ])
+}
+
 func assignIfInserted(_ obj: NSManagedObject, to store: NSPersistentStore?, in context: NSManagedObjectContext) {
     #if DEBUG
     let storeName = store?.url?.lastPathComponent ?? "nil-store"
@@ -148,6 +159,10 @@ func debugLogHouseholdAssignment(entityName: String, object: NSManagedObject, ho
     if object.entity.attributesByName.keys.contains("householdID") {
         let objHouseholdID = object.value(forKey: "householdID") as? UUID
         print("🧩 [StoreDebug] \(entityName) householdID object=\(objHouseholdID?.uuidString ?? "nil") active=\(household.id?.uuidString ?? "nil")")
+    }
+    if object.entity.attributesByName.keys.contains("householdId") {
+        let objHouseholdID = object.value(forKey: "householdId") as? UUID
+        print("🧩 [StoreDebug] \(entityName) householdId object=\(objHouseholdID?.uuidString ?? "nil") active=\(household.id?.uuidString ?? "nil")")
     }
 }
 

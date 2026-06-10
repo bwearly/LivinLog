@@ -169,8 +169,10 @@ struct AddEditQuoteView: View {
 
         if quote.id == nil { quote.id = UUID() }
         if quote.createdAt == nil { quote.createdAt = now }
+        if scopedHousehold.id == nil { scopedHousehold.id = UUID() }
 
         quote.household = scopedHousehold
+        quote.setValue(scopedHousehold.id, forKey: "householdId")
         quote.updatedAt = now
         quote.textValue = quoteText.trimmingCharacters(in: .whitespacesAndNewlines)
         quote.speakerNameValue = speakerName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -191,6 +193,8 @@ struct AddEditQuoteView: View {
 
         do {
             let objectsToValidate: [(String, NSManagedObject?)] = [("quote", quote), ("household", scopedHousehold), ("child", quote.child)]
+            let preview = String(quote.textValue.prefix(48))
+            print("💬 [QuoteSave] quote=\(preview) household=\(scopedHousehold.name ?? "<unnamed>") householdID=\(scopedHousehold.id?.uuidString ?? "<nil>") member=\(appState.member?.displayName ?? "<nil>")")
             context.debugLogStoreSafeSave(entityName: "LLQuote", household: scopedHousehold, member: appState.member, objects: objectsToValidate)
             try context.validateSamePersistentStore(objectsToValidate)
             try context.save()
