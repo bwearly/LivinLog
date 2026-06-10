@@ -104,6 +104,43 @@ enum SelectionStore {
         return member
     }
 
+    struct DiagnosticSnapshot {
+        let selectedHouseholdURI: String?
+        let selectedMemberURI: String?
+        let selectedHouseholdResolves: Bool
+        let selectedMemberResolves: Bool
+        let selectedHouseholdObjectURI: String?
+        let selectedMemberObjectURI: String?
+    }
+
+    static func diagnosticSnapshot(context: NSManagedObjectContext) -> DiagnosticSnapshot {
+        let defaults = UserDefaults.standard
+        let householdURI = defaults.string(forKey: householdKey)
+        let memberURI = defaults.string(forKey: memberKey)
+
+        func resolve(_ rawURI: String?) -> NSManagedObject? {
+            guard let rawURI,
+                  let url = URL(string: rawURI),
+                  let psc = context.persistentStoreCoordinator,
+                  let objectID = psc.managedObjectID(forURIRepresentation: url),
+                  let object = try? context.existingObject(with: objectID)
+            else { return nil }
+            return object
+        }
+
+        let selectedHousehold = resolve(householdURI)
+        let selectedMember = resolve(memberURI)
+
+        return DiagnosticSnapshot(
+            selectedHouseholdURI: householdURI,
+            selectedMemberURI: memberURI,
+            selectedHouseholdResolves: selectedHousehold != nil,
+            selectedMemberResolves: selectedMember != nil,
+            selectedHouseholdObjectURI: selectedHousehold?.objectID.uriRepresentation().absoluteString,
+            selectedMemberObjectURI: selectedMember?.objectID.uriRepresentation().absoluteString
+        )
+    }
+
     static func clearAll() {
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: householdKey)
