@@ -413,6 +413,8 @@ struct SettingsView: View {
                     lastError: lastCloudKitError ?? (persistedLastShareError.isEmpty ? nil : persistedLastShareError),
                     persistedLastShareStatus: persistedLastShareStatus,
                     persistentContainer: persistentContainer,
+                    currentMember: appState.member,
+                    currentMembership: appState.currentMembership,
                     onResetShare: { resetHouseholdShare() },
                     onReloadShareStatus: { reloadShareStatus() },
                     onForceResync: { forceCloudKitResync() }
@@ -770,6 +772,8 @@ private struct AdvancedSharingView: View {
     let lastError: String?
     let persistedLastShareStatus: String
     let persistentContainer: NSPersistentCloudKitContainer
+    let currentMember: HouseholdMember?
+    let currentMembership: HouseholdMembership?
 
     let onResetShare: () -> Void
     let onReloadShareStatus: () -> Void
@@ -855,6 +859,7 @@ private struct AdvancedSharingView: View {
                         onForceResync()
                     }
                 }
+#endif
 
                 NavigationLink("Share Diagnostics") {
                     ShareDiagnosticsView(
@@ -862,10 +867,11 @@ private struct AdvancedSharingView: View {
                         accountStatus: accountStatus,
                         accountStatusMessage: accountStatusMessage,
                         lastError: lastError,
-                        persistentContainer: persistentContainer
+                        persistentContainer: persistentContainer,
+                        currentMember: currentMember,
+                        currentMembership: currentMembership
                     )
                 }
-#endif
             }
         }
         .navigationTitle("Advanced")
@@ -889,27 +895,23 @@ private struct ShareDiagnosticsView: View {
     let accountStatusMessage: String?
     let lastError: String?
     let persistentContainer: NSPersistentCloudKitContainer
+    let currentMember: HouseholdMember?
+    let currentMembership: HouseholdMembership?
 
-    @State private var shareRecordName: String?
-    @State private var canFetchShare = false
+    @Environment(\.managedObjectContext) private var context
+    @State private var diagnostics = ShareDiagnosticsSnapshot.empty
 
     var body: some View {
         Form {
-            Section("CloudKit") {
-                HStack {
-                    Text("Container")
-                    Spacer()
-                    Text(CloudSharing.containerIdentifier(from: persistentContainer))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                HStack {
-                    Text("Account status")
-                    Spacer()
-                    Text(accountStatusLabel)
-                        .foregroundStyle(.secondary)
-                }
+            Section("CloudKit / Stores") {
+                diagnosticRow("Container", diagnostics.containerIdentifier)
+                diagnosticRow("Private store", diagnostics.privateStoreLabel)
+                diagnosticRow("Shared store", diagnostics.sharedStoreLabel)
+                diagnosticRow("Private loaded", diagnostics.privateStoreLoaded ? "Yes" : "No")
+                diagnosticRow("Shared loaded", diagnostics.sharedStoreLoaded ? "Yes" : "No")
+                diagnosticRow("Persistent history", diagnostics.persistentHistoryEnabledText)
+                diagnosticRow("Remote change notifications", diagnostics.remoteChangeNotificationsEnabledText)
+                diagnosticRow("iCloud account", accountStatusLabel)
 
                 if let accountStatusMessage, !accountStatusMessage.isEmpty {
                     Text(accountStatusMessage)
@@ -918,38 +920,80 @@ private struct ShareDiagnosticsView: View {
                 }
             }
 
-            Section("Share") {
-                HStack {
-                    Text("Existing share")
-                    Spacer()
-                    Text(canFetchShare ? "Share exists" : "Share missing")
-                        .foregroundStyle(.secondary)
-                }
+            Section("Current Active Household") {
+                HouseholdDiagnosticSummaryView(summary: diagnostics.activeHousehold)
 
-                HStack {
-                    Text("Share record")
-                    Spacer()
-                    Text(shareRecordName ?? "None")
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                diagnosticRow("Currently selected", diagnostics.activeHousehold.isSelected ? "Yes" : "No")
+                diagnosticRow("Selected member", diagnostics.selectedMemberText)
+                diagnosticRow("Current membership", diagnostics.currentMembershipText)
+            }
+
+            Section("Active Household Share") {
+                ShareDiagnosticStatusView(status: diagnostics.activeShareStatus)
+            }
+
+            Section("Local Shared-Store Households") {
+                if diagnostics.sharedHouseholds.isEmpty {
+                    ContentUnavailableView("No local shared households", systemImage: "person.3.sequence")
+                } else {
+                    ForEach(diagnostics.sharedHouseholds) { sharedHousehold in
+                        SharedHouseholdDiagnosticRow(summary: sharedHousehold)
+                    }
                 }
             }
 
-            Section("Last error") {
-                Text(lastError ?? "None")
-                    .foregroundStyle(lastError == nil ? Color.secondary : Color.red)
+            Section("Local Stale References") {
+                diagnosticRow("Selected household URI", diagnostics.selection.selectedHouseholdURI ?? "None")
+                diagnosticRow("Selected household resolves", diagnostics.selection.selectedHouseholdResolves ? "Yes" : "No")
+                if let resolvedURI = diagnostics.selection.selectedHouseholdObjectURI {
+                    diagnosticRow("Resolved household object", resolvedURI)
+                }
+
+                diagnosticRow("Selected member URI", diagnostics.selection.selectedMemberURI ?? "None")
+                diagnosticRow("Selected member resolves", diagnostics.selection.selectedMemberResolves ? "Yes" : "No")
+                if let resolvedURI = diagnostics.selection.selectedMemberObjectURI {
+                    diagnosticRow("Resolved member object", resolvedURI)
+                }
+
+                diagnosticRow("Pending invite URL", diagnostics.pendingInviteURL ?? "None")
+                diagnosticRow("Last share error", lastError ?? "None")
+            }
+
+            Section("Last Observed Zone Error") {
+                diagnosticRow("Zone name", diagnostics.lastObservedZoneName)
+                diagnosticRow("Mentioned in saved error", diagnostics.lastErrorMentionsObservedZone ? "Yes" : "No")
+                Text("This screen is read-only. If this zone does not match the active or listed shared households, it may exist only in Core Data + CloudKit mirroring metadata for a previously deleted or revoked share.")
                     .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Share Diagnostics")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            guard let household else { return }
-            if let share = try? CloudSharing.fetchShare(for: household.objectID, persistentContainer: persistentContainer) {
-                canFetchShare = true
-                shareRecordName = share.recordID.recordName
-            }
+        .task { refreshDiagnostics() }
+    }
+
+    private func refreshDiagnostics() {
+        diagnostics = ShareDiagnosticsSnapshot.build(
+            household: household,
+            currentMember: currentMember,
+            currentMembership: currentMembership,
+            lastError: lastError,
+            persistentContainer: persistentContainer,
+            context: context
+        )
+    }
+
+    @ViewBuilder
+    private func diagnosticRow(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
         }
+        .padding(.vertical, 2)
     }
 
     private var accountStatusLabel: String {
@@ -959,6 +1003,407 @@ private struct ShareDiagnosticsView: View {
         case .restricted: return "Restricted"
         case .couldNotDetermine: return "Could not determine"
         @unknown default: return "Unknown"
+        }
+    }
+}
+
+private struct HouseholdDiagnosticSummaryView: View {
+    let summary: HouseholdDiagnosticSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            diagnosticRow("Name", summary.name)
+            diagnosticRow("UUID", summary.uuid)
+            diagnosticRow("Object URI", summary.objectURI)
+            diagnosticRow("Store scope", summary.storeScope)
+            diagnosticRow("Created", summary.createdText)
+        }
+    }
+
+    @ViewBuilder
+    private func diagnosticRow(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+        }
+    }
+}
+
+private struct SharedHouseholdDiagnosticRow: View {
+    let summary: SharedHouseholdDiagnosticSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HouseholdDiagnosticSummaryView(summary: summary.household)
+
+            HStack {
+                Label(summary.matchesActiveHousehold ? "Matches active" : "Not active", systemImage: summary.matchesActiveHousehold ? "checkmark.circle" : "circle")
+                Spacer()
+                Label(summary.isHiddenOrLeft ? "Hidden/left" : "Visible", systemImage: summary.isHiddenOrLeft ? "eye.slash" : "eye")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Memberships")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(summary.membershipText)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+            }
+
+            ShareDiagnosticStatusView(status: summary.shareStatus)
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+private struct ShareDiagnosticStatusView: View {
+    let status: ShareDiagnosticStatus
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            diagnosticRow("fetchShares(matching:)", status.fetchStatusText)
+            diagnosticRow("CKShare record", status.recordName ?? "None")
+            diagnosticRow("CKShare zone", status.zoneName ?? "None")
+            diagnosticRow("CKShare zone owner", status.zoneOwnerName ?? "None")
+            diagnosticRow("Matches observed ZoneDeleted zone", status.matchesObservedZone ? "Yes" : "No")
+            diagnosticRow("Participants", status.participantsText)
+            if let errorText = status.errorText {
+                diagnosticRow("Error", errorText)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func diagnosticRow(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+        }
+    }
+}
+
+private struct ShareDiagnosticsSnapshot {
+    static let observedZoneName = "com.apple.coredata.cloudkit.share.931A2312-7985-4B36-A891-0A16DCC9AB09"
+
+    let containerIdentifier: String
+    let privateStoreLabel: String
+    let sharedStoreLabel: String
+    let privateStoreLoaded: Bool
+    let sharedStoreLoaded: Bool
+    let persistentHistoryEnabledText: String
+    let remoteChangeNotificationsEnabledText: String
+    let activeHousehold: HouseholdDiagnosticSummary
+    let activeShareStatus: ShareDiagnosticStatus
+    let sharedHouseholds: [SharedHouseholdDiagnosticSummary]
+    let selectedMemberText: String
+    let currentMembershipText: String
+    let selection: SelectionStore.DiagnosticSnapshot
+    let pendingInviteURL: String?
+    let lastObservedZoneName: String
+    let lastErrorMentionsObservedZone: Bool
+
+    static var empty: ShareDiagnosticsSnapshot {
+        ShareDiagnosticsSnapshot(
+            containerIdentifier: "Unknown",
+            privateStoreLabel: "Not loaded",
+            sharedStoreLabel: "Not loaded",
+            privateStoreLoaded: false,
+            sharedStoreLoaded: false,
+            persistentHistoryEnabledText: "Unknown",
+            remoteChangeNotificationsEnabledText: "Unknown",
+            activeHousehold: .none,
+            activeShareStatus: .notChecked(reason: "No active household"),
+            sharedHouseholds: [],
+            selectedMemberText: "None",
+            currentMembershipText: "None",
+            selection: SelectionStore.DiagnosticSnapshot(
+                selectedHouseholdURI: nil,
+                selectedMemberURI: nil,
+                selectedHouseholdResolves: false,
+                selectedMemberResolves: false,
+                selectedHouseholdObjectURI: nil,
+                selectedMemberObjectURI: nil
+            ),
+            pendingInviteURL: nil,
+            lastObservedZoneName: observedZoneName,
+            lastErrorMentionsObservedZone: false
+        )
+    }
+
+    static func build(
+        household: Household?,
+        currentMember: HouseholdMember?,
+        currentMembership: HouseholdMembership?,
+        lastError: String?,
+        persistentContainer: NSPersistentCloudKitContainer,
+        context: NSManagedObjectContext
+    ) -> ShareDiagnosticsSnapshot {
+        let persistence = PersistenceController.shared
+        let selection = SelectionStore.diagnosticSnapshot(context: context)
+        let sharedHouseholds = fetchSharedHouseholdSummaries(
+            activeHousehold: household,
+            persistentContainer: persistentContainer,
+            context: context
+        )
+
+        return ShareDiagnosticsSnapshot(
+            containerIdentifier: CloudSharing.containerIdentifier(from: persistentContainer),
+            privateStoreLabel: storeLabel(for: persistence.privateStore),
+            sharedStoreLabel: storeLabel(for: persistence.sharedStore),
+            privateStoreLoaded: persistence.privateStore != nil,
+            sharedStoreLoaded: persistence.sharedStore != nil,
+            persistentHistoryEnabledText: optionStatus(for: NSPersistentHistoryTrackingKey, in: persistentContainer),
+            remoteChangeNotificationsEnabledText: optionStatus(for: NSPersistentStoreRemoteChangeNotificationPostOptionKey, in: persistentContainer),
+            activeHousehold: HouseholdDiagnosticSummary(household: household, selection: selection),
+            activeShareStatus: shareStatus(for: household, persistentContainer: persistentContainer),
+            sharedHouseholds: sharedHouseholds,
+            selectedMemberText: memberText(currentMember),
+            currentMembershipText: membershipText(currentMembership),
+            selection: selection,
+            pendingInviteURL: PendingInviteStore.load()?.absoluteString,
+            lastObservedZoneName: observedZoneName,
+            lastErrorMentionsObservedZone: (lastError ?? "").contains(observedZoneName)
+        )
+    }
+
+    private static func fetchSharedHouseholdSummaries(
+        activeHousehold: Household?,
+        persistentContainer: NSPersistentCloudKitContainer,
+        context: NSManagedObjectContext
+    ) -> [SharedHouseholdDiagnosticSummary] {
+        guard let sharedStore = PersistenceController.shared.sharedStore else { return [] }
+        let request = Household.fetchRequest()
+        request.affectedStores = [sharedStore]
+        request.includesPendingChanges = true
+        request.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
+
+        let households = (try? context.fetch(request) as? [Household]) ?? []
+        return households.map { household in
+            SharedHouseholdDiagnosticSummary(
+                household: HouseholdDiagnosticSummary(household: household, selection: SelectionStore.diagnosticSnapshot(context: context)),
+                membershipText: membershipSummary(for: household, context: context),
+                isHiddenOrLeft: SharedHouseholdLeaveStore.contains(household),
+                matchesActiveHousehold: household.objectID == activeHousehold?.objectID,
+                shareStatus: shareStatus(for: household, persistentContainer: persistentContainer)
+            )
+        }
+    }
+
+    private static func shareStatus(for household: Household?, persistentContainer: NSPersistentCloudKitContainer) -> ShareDiagnosticStatus {
+        guard let household else { return .notChecked(reason: "No household") }
+        do {
+            let shares = try persistentContainer.fetchShares(matching: [household.objectID])
+            guard let share = shares[household.objectID] else {
+                return ShareDiagnosticStatus(fetchSucceeded: true, recordName: nil, zoneName: nil, zoneOwnerName: nil, participants: [], errorText: nil)
+            }
+            return ShareDiagnosticStatus(
+                fetchSucceeded: true,
+                recordName: share.recordID.recordName,
+                zoneName: share.recordID.zoneID.zoneName,
+                zoneOwnerName: share.recordID.zoneID.ownerName,
+                participants: share.participants.map(ShareParticipantDiagnostic.init(participant:)),
+                errorText: nil
+            )
+        } catch {
+            let nsError = error as NSError
+            return ShareDiagnosticStatus(
+                fetchSucceeded: false,
+                recordName: nil,
+                zoneName: nil,
+                zoneOwnerName: nil,
+                participants: [],
+                errorText: "domain=\(nsError.domain) code=\(nsError.code) description=\(nsError.localizedDescription) userInfo=\(nsError.userInfo)"
+            )
+        }
+    }
+
+    private static func membershipSummary(for household: Household, context: NSManagedObjectContext) -> String {
+        let request = NSFetchRequest<HouseholdMembership>(entityName: "HouseholdMembership")
+        request.predicate = NSPredicate(format: "household == %@", household)
+        request.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
+
+        let memberships = (try? context.fetch(request)) ?? []
+        guard !memberships.isEmpty else { return "0 memberships" }
+
+        let statusCounts = Dictionary(grouping: memberships, by: { ($0.status ?? "<nil>").isEmpty ? "<empty>" : ($0.status ?? "<nil>") })
+            .mapValues(\.count)
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key): \($0.value)" }
+            .joined(separator: ", ")
+        return "\(memberships.count) memberships (\(statusCounts))"
+    }
+
+    private static func optionStatus(for key: String, in persistentContainer: NSPersistentCloudKitContainer) -> String {
+        let values = persistentContainer.persistentStoreDescriptions.map { description -> String in
+            let scope = scopeLabel(for: description.cloudKitContainerOptions?.databaseScope)
+            let value = description.options[AnyHashable(key)]
+            return "\(scope): \(boolText(value))"
+        }
+        return values.isEmpty ? "Unknown" : values.joined(separator: ", ")
+    }
+
+    private static func boolText(_ value: Any?) -> String {
+        if let number = value as? NSNumber { return number.boolValue ? "enabled" : "disabled" }
+        if let bool = value as? Bool { return bool ? "enabled" : "disabled" }
+        return "unknown"
+    }
+
+    private static func storeLabel(for store: NSPersistentStore?) -> String {
+        guard let store else { return "Not loaded" }
+        guard let url = store.url else { return "<no URL>" }
+        return "\(url.lastPathComponent) — \(url.absoluteString)"
+    }
+
+    private static func scopeLabel(for scope: CKDatabase.Scope?) -> String {
+        switch scope {
+        case .private: return "private"
+        case .shared: return "shared"
+        case .public: return "public"
+        default: return "unknown"
+        }
+    }
+
+    private static func memberText(_ member: HouseholdMember?) -> String {
+        guard let member else { return "None" }
+        let name = member.displayName ?? "Unnamed member"
+        return "\(name) — \(member.objectID.uriRepresentation().absoluteString)"
+    }
+
+    private static func membershipText(_ membership: HouseholdMembership?) -> String {
+        guard let membership else { return "None" }
+        let status = membership.status ?? "<nil>"
+        let role = membership.role ?? "<nil>"
+        return "status=\(status) role=\(role) uri=\(membership.objectID.uriRepresentation().absoluteString)"
+    }
+}
+
+private struct HouseholdDiagnosticSummary {
+    let name: String
+    let uuid: String
+    let objectURI: String
+    let storeScope: String
+    let createdText: String
+    let isSelected: Bool
+
+    static let none = HouseholdDiagnosticSummary(
+        name: "None",
+        uuid: "None",
+        objectURI: "None",
+        storeScope: "None",
+        createdText: "None",
+        isSelected: false
+    )
+
+    init(household: Household?, selection: SelectionStore.DiagnosticSnapshot) {
+        guard let household else {
+            self = .none
+            return
+        }
+
+        name = household.name ?? "Unnamed household"
+        uuid = household.id?.uuidString ?? "<nil>"
+        objectURI = household.objectID.uriRepresentation().absoluteString
+        storeScope = Self.scope(for: household.objectID.persistentStore)
+        if let createdAt = household.createdAt {
+            createdText = createdAt.formatted(date: .abbreviated, time: .shortened)
+        } else {
+            createdText = "<nil>"
+        }
+        isSelected = selection.selectedHouseholdObjectURI == objectURI
+    }
+
+    private static func scope(for store: NSPersistentStore?) -> String {
+        guard let store else { return "unknown" }
+        if store == PersistenceController.shared.privateStore { return "private" }
+        if store == PersistenceController.shared.sharedStore { return "shared" }
+        let filename = store.url?.lastPathComponent ?? "unknown"
+        if filename.localizedCaseInsensitiveContains("shared") { return "shared (filename inferred)" }
+        return "private/unknown (filename: \(filename))"
+    }
+}
+
+private struct SharedHouseholdDiagnosticSummary: Identifiable {
+    var id: String { household.objectURI }
+    let household: HouseholdDiagnosticSummary
+    let membershipText: String
+    let isHiddenOrLeft: Bool
+    let matchesActiveHousehold: Bool
+    let shareStatus: ShareDiagnosticStatus
+}
+
+private struct ShareDiagnosticStatus {
+    let fetchSucceeded: Bool
+    let recordName: String?
+    let zoneName: String?
+    let zoneOwnerName: String?
+    let participants: [ShareParticipantDiagnostic]
+    let errorText: String?
+
+    var fetchStatusText: String {
+        if let errorText, !errorText.isEmpty { return "Error" }
+        return fetchSucceeded ? "Succeeded" : "Not checked"
+    }
+
+    var participantsText: String {
+        if participants.isEmpty { return "None / unavailable" }
+        return participants.map(\.summary).joined(separator: "\n")
+    }
+
+    var matchesObservedZone: Bool {
+        zoneName == ShareDiagnosticsSnapshot.observedZoneName
+    }
+
+    static func notChecked(reason: String) -> ShareDiagnosticStatus {
+        ShareDiagnosticStatus(fetchSucceeded: false, recordName: nil, zoneName: nil, zoneOwnerName: nil, participants: [], errorText: reason)
+    }
+}
+
+private struct ShareParticipantDiagnostic {
+    let summary: String
+
+    init(participant: CKShare.Participant) {
+        let name = participant.userIdentity.nameComponents?.formatted() ?? "Unknown participant"
+        summary = "\(name) permission=\(Self.permissionText(participant.permission)) role=\(Self.roleText(participant.role)) acceptance=\(Self.acceptanceText(participant.acceptanceStatus))"
+    }
+
+    private static func permissionText(_ permission: CKShare.ParticipantPermission) -> String {
+        switch permission {
+        case .unknown: return "unknown"
+        case .none: return "none"
+        case .readOnly: return "readOnly"
+        case .readWrite: return "readWrite"
+        @unknown default: return "unknown-default"
+        }
+    }
+
+    private static func roleText(_ role: CKShare.ParticipantRole) -> String {
+        switch role {
+        case .unknown: return "unknown"
+        case .owner: return "owner"
+        case .privateUser: return "privateUser"
+        case .publicUser: return "publicUser"
+        @unknown default: return "unknown-default"
+        }
+    }
+
+    private static func acceptanceText(_ status: CKShare.ParticipantAcceptanceStatus) -> String {
+        switch status {
+        case .unknown: return "unknown"
+        case .pending: return "pending"
+        case .accepted: return "accepted"
+        case .removed: return "removed"
+        @unknown default: return "unknown-default"
         }
     }
 }
