@@ -1247,7 +1247,7 @@ private struct ShareDiagnosticsSnapshot {
     private static func optionStatus(for key: String, in persistentContainer: NSPersistentCloudKitContainer) -> String {
         let values = persistentContainer.persistentStoreDescriptions.map { description -> String in
             let scope = scopeLabel(for: description.cloudKitContainerOptions?.databaseScope)
-            let value = description.options[AnyHashable(key)]
+            let value = description.options[key]
             return "\(scope): \(boolText(value))"
         }
         return values.isEmpty ? "Unknown" : values.joined(separator: ", ")
@@ -1304,6 +1304,22 @@ private struct HouseholdDiagnosticSummary {
         createdText: "None",
         isSelected: false
     )
+
+    private init(
+        name: String,
+        uuid: String,
+        objectURI: String,
+        storeScope: String,
+        createdText: String,
+        isSelected: Bool
+    ) {
+        self.name = name
+        self.uuid = uuid
+        self.objectURI = objectURI
+        self.storeScope = storeScope
+        self.createdText = createdText
+        self.isSelected = isSelected
+    }
 
     init(household: Household?, selection: SelectionStore.DiagnosticSnapshot) {
         guard let household else {
