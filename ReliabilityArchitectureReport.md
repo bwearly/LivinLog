@@ -31,6 +31,8 @@ All new fields are optional to preserve lightweight migration compatibility with
 
 ## CloudKit Production schema checklist
 
+> **Automated check:** `python3 Scripts/check_cloudkit_schema.py` (repo root) diffs the live Core Data model against this table and exits non-zero if any model attribute or relationship is absent from the table. Run it before every TestFlight build.
+
 TestFlight and App Store builds use the **Production** CloudKit schema. Before uploading a TestFlight build, deploy the Development schema containing these Core Data entities, attributes, and relationships to Production:
 
 | Entity | Attributes | Relationships |
@@ -40,7 +42,7 @@ TestFlight and App Store builds use the **Production** CloudKit schema. Before u
 | `LLCalendarEvent` | `createdAt`, `day`, `id`, `month`, `name`, `notificationsEnabledForEvent`, `tag`, `updatedAt`, `year` | `household` |
 | `LLChild` | `birthday`, `createdAt`, `id`, `name`, `updatedAt` | `household`, `quotes` |
 | `LLPuzzle` | `brand`, `completedAt`, `createdAt`, `id`, `name`, `notes`, `photoData`, `pieceCount`, `updatedAt` | `household` |
-| `LLQuote` | `ageInMonthsAtSaidAt`, `contextText`, `createdAt`, `id`, `saidAt`, `speakerName`, `text`, `updatedAt` | `child`, `household` |
+| `LLQuote` | `ageInMonthsAtSaidAt`, `contextText`, `createdAt`, `householdId`, `id`, `saidAt`, `speakerName`, `text`, `updatedAt` | `child`, `household` |
 | `Movie` | `createdAt`, `genre`, `householdID`, `id`, `mpaaRating`, `notes`, `posterURL`, `title`, `year` | `feedbacks`, `household`, `viewing` |
 | `MovieFeedback` | `id`, `notes`, `rating`, `slept`, `updatedAt` | `household`, `member`, `movie` |
 | `TVShow` | `createdAt`, `householdID`, `id`, `notes`, `posterURL`, `ratingText`, `rewatch`, `seasons`, `title`, `year` | `household` |
