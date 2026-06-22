@@ -268,6 +268,12 @@ struct QuotesListView: View {
             let orphanedByHouseholdID = try context.fetch(orphanedByHouseholdIDRequest)
 
             for quote in missingHouseholdID {
+                do {
+                    try context.validateSamePersistentStore([("quote", quote), ("household", scopedHousehold), ("child", quote.child)])
+                } catch {
+                    print("⚠️ [QuoteRepair] skipped cross-store quote (preflight) quote=\(quote.textValue.prefix(32)) householdID=\(householdID.uuidString)")
+                    continue
+                }
                 quote.setValue(householdID, forKey: "householdId")
                 didRepairHouseholdLinks = true
                 try context.validateSamePersistentStore([("quote", quote), ("household", scopedHousehold), ("child", quote.child)])
@@ -277,6 +283,12 @@ struct QuotesListView: View {
             for quote in orphanedByHouseholdID {
                 guard quote.objectID.persistentStore === scopedHousehold.objectID.persistentStore else {
                     print("⚠️ [QuoteRepair] skipped cross-store orphan quote=\(quote.textValue.prefix(32)) householdID=\(householdID.uuidString)")
+                    continue
+                }
+                do {
+                    try context.validateSamePersistentStore([("quote", quote), ("household", scopedHousehold), ("child", quote.child)])
+                } catch {
+                    print("⚠️ [QuoteRepair] skipped cross-store orphan (child) quote=\(quote.textValue.prefix(32)) householdID=\(householdID.uuidString)")
                     continue
                 }
                 quote.household = scopedHousehold

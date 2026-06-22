@@ -46,7 +46,7 @@ struct TVShowsListView: View {
 
         _tvShows = FetchRequest<TVShow>(
             sortDescriptors: sortDescriptors,
-            predicate: householdScopedPredicate(household),
+            predicate: householdScopedPredicate(household, idKey: "householdID"),
             animation: .default
         )
     }

@@ -40,7 +40,7 @@ TestFlight and App Store builds use the **Production** CloudKit schema. Before u
 | `LLCalendarEvent` | `createdAt`, `day`, `id`, `month`, `name`, `notificationsEnabledForEvent`, `tag`, `updatedAt`, `year` | `household` |
 | `LLChild` | `birthday`, `createdAt`, `id`, `name`, `updatedAt` | `household`, `quotes` |
 | `LLPuzzle` | `brand`, `completedAt`, `createdAt`, `id`, `name`, `notes`, `photoData`, `pieceCount`, `updatedAt` | `household` |
-| `LLQuote` | `ageInMonthsAtSaidAt`, `contextText`, `createdAt`, `id`, `saidAt`, `speakerName`, `text`, `updatedAt` | `child`, `household` |
+| `LLQuote` | `ageInMonthsAtSaidAt`, `contextText`, `createdAt`, `householdId`, `id`, `saidAt`, `speakerName`, `text`, `updatedAt` | `child`, `household` |
 | `Movie` | `createdAt`, `genre`, `householdID`, `id`, `mpaaRating`, `notes`, `posterURL`, `title`, `year` | `feedbacks`, `household`, `viewing` |
 | `MovieFeedback` | `id`, `notes`, `rating`, `slept`, `updatedAt` | `household`, `member`, `movie` |
 | `TVShow` | `createdAt`, `householdID`, `id`, `notes`, `posterURL`, `ratingText`, `rewatch`, `seasons`, `title`, `year` | `household` |
