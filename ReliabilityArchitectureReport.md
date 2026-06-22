@@ -31,6 +31,8 @@ All new fields are optional to preserve lightweight migration compatibility with
 
 ## CloudKit Production schema checklist
 
+> **Automated check:** `python3 Scripts/check_cloudkit_schema.py` (repo root) diffs the live Core Data model against this table and exits non-zero if any model attribute or relationship is absent from the table. Run it before every TestFlight build.
+
 TestFlight and App Store builds use the **Production** CloudKit schema. Before uploading a TestFlight build, deploy the Development schema containing these Core Data entities, attributes, and relationships to Production:
 
 | Entity | Attributes | Relationships |
