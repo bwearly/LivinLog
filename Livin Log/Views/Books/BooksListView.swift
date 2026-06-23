@@ -7,9 +7,24 @@ struct BooksListView: View {
 
     let household: Household
 
+    @FetchRequest private var allBooks: FetchedResults<BookEntry>
+
     @State private var selectedMemberID: NSManagedObjectID?
     @State private var showAdd = false
     @State private var deleteErrorMessage: String?
+
+    init(household: Household) {
+        self.household = household
+
+        _allBooks = FetchRequest<BookEntry>(
+            sortDescriptors: [
+                NSSortDescriptor(key: "finishedAt", ascending: false),
+                NSSortDescriptor(key: "createdAt", ascending: false)
+            ],
+            predicate: householdScopedPredicate(household, idKey: "householdId"),
+            animation: .default
+        )
+    }
 
     private var members: [HouseholdMember] {
         let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
@@ -28,12 +43,12 @@ struct BooksListView: View {
         return IdentityStore.canAct(as: selectedMember, appUser: appState.appUser, context: context)
     }
 
+    // ✅ Now derived from the live FetchRequest above instead of a one-off
+    // NSFetchRequest. This makes the list reactive to Core Data changes,
+    // including CloudKit imports merged in from other household members.
     private var books: [BookEntry] {
         guard let selectedMember else { return [] }
-        let req = NSFetchRequest<BookEntry>(entityName: "BookEntry")
-        req.predicate = NSPredicate(format: "household == %@ AND ownerMember == %@", household, selectedMember)
-        req.sortDescriptors = [NSSortDescriptor(key: "finishedAt", ascending: false), NSSortDescriptor(key: "createdAt", ascending: false)]
-        return (try? context.fetch(req)) ?? []
+        return allBooks.filter { $0.ownerMember == selectedMember }
     }
 
     var body: some View {

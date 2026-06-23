@@ -169,6 +169,32 @@ struct PersistenceController {
 
         container.viewContext.automaticallyMergesChangesFromParent = true
         container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+        // Add this block in PersistenceController.init() after the line:
+        // container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+
+        NotificationCenter.default.addObserver(
+            forName: NSPersistentCloudKitContainer.eventChangedNotification,
+            object: container,
+            queue: .main
+        ) { notification in
+            guard let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
+                as? NSPersistentCloudKitContainer.Event else { return }
+
+            let typeText: String
+            switch event.type {
+            case .setup: typeText = "setup"
+            case .import: typeText = "import"
+            case .export: typeText = "export"
+            @unknown default: typeText = "unknown"
+            }
+
+            print("☁️ [CKEvent] type=\(typeText) succeeded=\(event.succeeded) storeURL=\(event.storeIdentifier) start=\(event.startDate.description ?? "nil") end=\(event.endDate?.description ?? "nil")")
+
+            if let error = event.error {
+                let nsError = error as NSError
+                print("☁️ [CKEvent] ❌ domain=\(nsError.domain) code=\(nsError.code) desc=\(nsError.localizedDescription) userInfo=\(nsError.userInfo)")
+            }
+        }
     }
 
 
