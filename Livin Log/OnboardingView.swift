@@ -9,6 +9,7 @@ import SwiftUI
 import AuthenticationServices
 
 struct OnboardingView: View {
+    @Environment(\.managedObjectContext) private var context
     @EnvironmentObject private var appState: AppState
 
     @State private var householdName: String = "Our Household"
@@ -98,6 +99,9 @@ struct OnboardingView: View {
             .navigationTitle("Setup")
             .navigationBarTitleDisplayMode(.inline)
         }
+        .onAppear { logSetupDiagnostics(reason: "onAppear") }
+        .onChange(of: isSignedIn) { _, _ in logSetupDiagnostics(reason: "isSignedIn changed") }
+        .onChange(of: pendingInvite?.id) { _, _ in logSetupDiagnostics(reason: "pendingInvite changed") }
         .sheet(isPresented: $showingPasteInvite) {
             PasteInviteLinkSheet(
                 isSignedIn: isSignedIn,
@@ -120,6 +124,19 @@ struct OnboardingView: View {
                 isSignedIn: isSignedIn
             )
         }
+    }
+
+    private func logSetupDiagnostics(reason: String) {
+        SetupDiagnostics.logOnboardingScreen(
+            isSignedIn: isSignedIn,
+            appUser: appState.appUser,
+            household: appState.household,
+            member: appState.member,
+            membership: appState.currentMembership,
+            candidateMembershipCount: appState.candidateMemberships.count,
+            isInviteFlow: pendingInvite != nil || PendingInviteStore.load() != nil,
+            context: context
+        )
     }
 
     private func createHousehold() async {
@@ -153,9 +170,7 @@ struct OnboardingView: View {
                 .joined(separator: " ")
 
             do {
-#if DEBUG
-                print("🍎 Apple Sign-In credential received (user id length: \(credential.user.count))")
-#endif
+                print("🍎 [SetupDiagnostics] Apple Sign-In credential received (user id length: \(credential.user.count))")
                 try appState.handleAppleSignIn(subject: credential.user, displayName: prettyName.isEmpty ? nil : prettyName)
                 if myName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     myName = prettyName
