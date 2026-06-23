@@ -8,6 +8,20 @@
 import SwiftUI
 import AuthenticationServices
 
+private struct OnboardingTextFieldStyle: TextFieldStyle {
+    func _body(configuration: TextField<Self._Label>) -> some View {
+        configuration
+            .font(.body)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color(.separator).opacity(0.25), lineWidth: 0.5)
+            }
+    }
+}
+
 struct OnboardingView: View {
     @Environment(\.managedObjectContext) private var context
     @EnvironmentObject private var appState: AppState
@@ -75,15 +89,15 @@ struct OnboardingView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Create a household")
+                    Text("Create Household")
                         .font(.headline)
 
                     TextField("Your name (required)", text: $myName)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(OnboardingTextFieldStyle())
                         .textContentType(.name)
 
                     TextField("Household name", text: $householdName)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(OnboardingTextFieldStyle())
 
                     Text("Your name is required so family members know who created the household.")
                         .font(.caption)
@@ -131,10 +145,12 @@ struct OnboardingView: View {
                         }
                         .buttonStyle(.bordered)
 
-                        Button("Use a Different Apple ID", role: .destructive) {
+                        Button("Use a Different Apple ID") {
                             showingDifferentAppleIDConfirmation = true
                         }
+                        .buttonStyle(.plain)
                         .font(.footnote)
+                        .foregroundStyle(.secondary)
                     }
                     .padding(.horizontal)
                 }
@@ -174,7 +190,7 @@ struct OnboardingView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This clears the Apple-linked identity saved on this device for Livin Log and returns you to sign-in/setup. It will not delete household data from iCloud or CloudKit.")
+            Text("This will clear the Apple account currently linked on this device and return you to sign-in. It will not delete any household data from iCloud.")
         }
         .sheet(item: $pendingInvite) { invite in
             AcceptHouseholdInviteSheet(
@@ -195,7 +211,7 @@ struct OnboardingView: View {
                 .font(.headline)
                 .foregroundStyle(.green)
 
-            Text("Create a household or join one with an invite. We’ll also check iCloud for any household already linked to your account.")
+            Text("Create a household or join one with an invite. We’ll check iCloud for any household linked to your account.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
@@ -226,8 +242,16 @@ struct OnboardingView: View {
 
     private func prefillNameIfAvailable() {
         guard trimmedName.isEmpty else { return }
-        let storedName = appState.appUser?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !storedName.isEmpty {
+
+        let candidateNames = [
+            appState.appUser?.displayName,
+            appState.member?.displayName,
+            appState.currentMembership?.memberProfile?.displayName
+        ]
+
+        if let storedName = candidateNames
+            .compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines) })
+            .first(where: { !$0.isEmpty }) {
             myName = storedName
         }
     }
