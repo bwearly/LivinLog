@@ -304,12 +304,15 @@ struct SettingsView: View {
                     currentHousehold: appState.household,
                     currentMember: appState.member,
                     currentAppUser: appState.appUser,
+                    onPicked: { membership in
+                        appState.selectMembership(membership)
+                    },
                     onCleanupCompleted: { await appState.start(callSite: "SettingsView.profileCleanup") }
                 )
             } label: {
-                Label("Manage Duplicate Profiles", systemImage: "person.2.badge.gearshape")
+                Label("Manage Households & Profiles", systemImage: "house.and.flag")
             }
-            Text("Review duplicate-looking profiles with household names, creation dates, roles, and safe swipe-to-delete actions.")
+            Text("Tap a profile to switch your active household. Swipe left to leave or delete a duplicate. Household content stays in the household.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -831,12 +834,7 @@ private struct AdvancedSharingView: View {
                 Button("Reload share status") { onReloadShareStatus() }
             }
 
-            Section("How sharing works") {
-                Text("Inviting someone creates an iCloud share link for your household. They can tap the link or manually enter the code/token from the link, then create their own claimed member profile.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
+#if DEBUG
             Section("Troubleshooting") {
                 if let lastError, !lastError.isEmpty {
                     Text(lastError)
@@ -848,7 +846,6 @@ private struct AdvancedSharingView: View {
                         .font(.footnote)
                 }
 
-#if DEBUG
                 if household != nil {
                     Button("Reset Household Share", role: .destructive) {
                         onResetShare()
@@ -859,7 +856,6 @@ private struct AdvancedSharingView: View {
                         onForceResync()
                     }
                 }
-#endif
 
                 NavigationLink("Share Diagnostics") {
                     ShareDiagnosticsView(
@@ -873,6 +869,7 @@ private struct AdvancedSharingView: View {
                     )
                 }
             }
+#endif
         }
         .navigationTitle("Advanced")
         .navigationBarTitleDisplayMode(.inline)
