@@ -73,6 +73,27 @@ enum IdentityStore {
         return memberships
     }
 
+
+    static func activeMembership(
+        for appUser: AppUser,
+        household: Household,
+        context: NSManagedObjectContext
+    ) -> HouseholdMembership? {
+        guard let subject = appUser.providerSubject else { return nil }
+        let durableId = durableUserId(for: appUser) ?? subject
+        let req = NSFetchRequest<HouseholdMembership>(entityName: "HouseholdMembership")
+        req.fetchLimit = 1
+        req.predicate = NSPredicate(
+            format: "household == %@ AND status == %@ AND (appUser.providerSubject == %@ OR appUserId == %@)",
+            household,
+            "active",
+            subject,
+            durableId
+        )
+        req.sortDescriptors = [NSSortDescriptor(key: "joinedAt", ascending: true), NSSortDescriptor(key: "createdAt", ascending: true)]
+        return try? context.fetch(req).first
+    }
+
     static func membership(
         for appUser: AppUser,
         household: Household,
@@ -144,6 +165,28 @@ enum IdentityStore {
         try context.save()
         debug("created membership role=\(role) userId=\(durableId) household=\(household.name ?? "Household") member=\(member.displayName ?? "Member") store=\(storeLabel(membership))")
         return membership
+    }
+
+
+    static func removeMemberFromHousehold(_ member: HouseholdMember, context: NSManagedObjectContext) throws {
+        guard let household = member.household else { return }
+
+        let membershipReq = NSFetchRequest<HouseholdMembership>(entityName: "HouseholdMembership")
+        membershipReq.predicate = NSPredicate(format: "household == %@ AND memberProfile == %@ AND status == %@", household, member, "active")
+        let memberships = try context.fetch(membershipReq)
+
+        for membership in memberships {
+            membership.status = "removed"
+            membership.memberProfile = nil
+            membership.household = household
+            membership.appUser = nil
+        }
+
+        member.setValue(nil, forKey: "claimedByAppUserId")
+        member.household = nil
+
+        if context.hasChanges { try context.save() }
+        debug("removed member from household member=\(member.displayName ?? "Member") household=\(household.name ?? "Household") memberships=\(memberships.count)")
     }
 
     static func unclaimedMembers(for household: Household, context: NSManagedObjectContext) -> [HouseholdMember] {

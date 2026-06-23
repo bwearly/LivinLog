@@ -254,6 +254,13 @@ final class AppState: ObservableObject {
             )
         }
 
+        if let existingMembership = IdentityStore.activeMembership(for: appUser, household: scopedHousehold, context: context),
+           let existingMember = existingMembership.memberProfile {
+            applyMembership(existingMembership, reason: "reused existing household membership")
+            needsMemberClaim = false
+            return existingMember
+        }
+
         let member = HouseholdMember(context: context)
         if let store = scopedHousehold.objectID.persistentStore { context.assign(member, to: store) }
         member.id = UUID()
