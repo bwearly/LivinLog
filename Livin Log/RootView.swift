@@ -203,11 +203,26 @@ struct RootView: View {
     }
 
     private func resumePendingInviteIfPossible(reason: String) {
-        guard appState.appUser != nil else { return }
-        guard !isPresentingPendingInvite else { return }
-        guard !isResumingPendingInvite else { return }
-        guard let url = PendingInviteStore.load() else { return }
-        guard lastFailedPendingInviteURL != url else { return }
+        guard appState.appUser != nil else {
+            print("🔗 [PendingInvite] resume skipped reason=noAppUser")
+            return
+        }
+        guard !isPresentingPendingInvite else {
+            print("🔗 [PendingInvite] resume skipped reason=alreadyPresenting")
+            return
+        }
+        guard !isResumingPendingInvite else {
+            print("🔗 [PendingInvite] resume skipped reason=alreadyResuming")
+            return
+        }
+        guard let url = PendingInviteStore.load() else {
+            print("🔗 [PendingInvite] resume skipped reason=noPendingInvite")
+            return
+        }
+        guard lastFailedPendingInviteURL != url else {
+            print("🔗 [PendingInvite] resume skipped reason=lastFetchFailed url=\(url.absoluteString)")
+            return
+        }
 
         isResumingPendingInvite = true
         print("🔗 [PendingInvite] resuming pending invite reason=\(reason) url=\(url.absoluteString)")
