@@ -40,7 +40,7 @@ struct OnboardingView: View {
                         .padding(.horizontal)
 
                     SignInWithAppleButton(.signIn, onRequest: { request in
-                        request.requestedScopes = [.fullName]
+                        request.requestedScopes = [.fullName, .email]
                     }, onCompletion: { result in
                         handleAppleSignIn(result)
                     })

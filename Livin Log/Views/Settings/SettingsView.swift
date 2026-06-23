@@ -34,6 +34,7 @@ struct SettingsView: View {
     @AppStorage("ll_notify_enabled") private var notificationsEnabled = false
     @State private var showNotificationsDeniedAlert = false
     @State private var showConfirmDeleteAll = false
+    @State private var memberPendingRemoval: HouseholdMember?
 
     // Presents Apple's official CloudKit sharing UI.
     @State private var showingInviteShareSheet = false
@@ -164,6 +165,17 @@ struct SettingsView: View {
             Text("This will delete local household data on this device and reset your selection. Shared iCloud data for other members may still exist.")
         }
 
+        .alert("Remove Household Member?", isPresented: Binding(get: { memberPendingRemoval != nil }, set: { if !$0 { memberPendingRemoval = nil } })) {
+            Button("Cancel", role: .cancel) { memberPendingRemoval = nil }
+            Button("Remove", role: .destructive) {
+                if let memberPendingRemoval {
+                    removeMember(memberPendingRemoval)
+                }
+            }
+        } message: {
+            Text("This removes \(memberPendingRemoval?.displayName ?? "this member") from the household. Shared household content is preserved, and their global Apple sign-in user is not deleted.")
+        }
+
         .alert("Notifications Disabled", isPresented: $showNotificationsDeniedAlert) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -269,23 +281,14 @@ struct SettingsView: View {
                     ContentUnavailableView("No members yet", systemImage: "person.3")
                 } else {
                     ForEach(members) { m in
-                        HStack(spacing: 12) {
-                            Image(systemName: "person.circle.fill")
-                                .font(.title3)
-                                .foregroundStyle(.secondary)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(m.displayName ?? "Unnamed")
-                                    .font(.body)
-
-                                if m == member {
-                                    Text("You")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                        memberManagementRow(for: m)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                if canRemoveMember(m) {
+                                    Button("Remove", role: .destructive) {
+                                        memberPendingRemoval = m
+                                    }
                                 }
                             }
-                            Spacer()
-                        }
                     }
                 }
             } else {
@@ -587,6 +590,49 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private func memberManagementRow(for managedMember: HouseholdMember) -> some View {
+        let membership = activeMembership(for: managedMember)
+        HStack(spacing: 12) {
+            Image(systemName: isOwner(managedMember) ? "crown.fill" : "person.circle.fill")
+                .font(.title3)
+                .foregroundStyle(isOwner(managedMember) ? .yellow : .secondary)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(managedMember.displayName ?? "Unnamed")
+                    .font(.body)
+
+                HStack(spacing: 6) {
+                    if managedMember.objectID == member?.objectID {
+                        Text("You")
+                    }
+                    Text(roleLabel(for: membership))
+                    if let identity = identityLabel(for: managedMember, membership: membership) {
+                        Text(identity)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if canRemoveMember(managedMember) {
+                Button(role: .destructive) {
+                    memberPendingRemoval = managedMember
+                } label: {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Remove \(managedMember.displayName ?? "member")")
+            } else if !canCurrentUserManageMembers {
+                Text("View only")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     // MARK: - Members
 
     private func fetchMembers(for household: Household) -> [HouseholdMember] {
@@ -617,6 +663,76 @@ struct SettingsView: View {
     private func isAuthorized(_ member: HouseholdMember) -> Bool {
         IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
     }
+    private func activeMembership(for managedMember: HouseholdMember) -> HouseholdMembership? {
+        guard let household = managedMember.household else { return nil }
+        let req = NSFetchRequest<HouseholdMembership>(entityName: "HouseholdMembership")
+        req.fetchLimit = 1
+        req.predicate = NSPredicate(format: "household == %@ AND memberProfile == %@ AND status == %@", household, managedMember, "active")
+        req.sortDescriptors = [NSSortDescriptor(key: "joinedAt", ascending: true), NSSortDescriptor(key: "createdAt", ascending: true)]
+        return try? context.fetch(req).first
+    }
+
+    private var canCurrentUserManageMembers: Bool {
+        guard let role = appState.currentMembership?.role?.lowercased() else { return false }
+        return ["leader", "owner", "admin"].contains(role)
+    }
+
+    private func canRemoveMember(_ managedMember: HouseholdMember) -> Bool {
+        guard canCurrentUserManageMembers else { return false }
+        guard managedMember.objectID != member?.objectID else { return false }
+        guard !isOwner(managedMember) else { return false }
+        return activeMembership(for: managedMember) != nil
+    }
+
+    private func isOwner(_ managedMember: HouseholdMember) -> Bool {
+        if let role = activeMembership(for: managedMember)?.role?.lowercased(), ["leader", "owner"].contains(role) {
+            return true
+        }
+        guard let household = managedMember.household,
+              let creatorId = household.value(forKey: "createdByAppUserId") as? String,
+              !creatorId.isEmpty else { return false }
+        return (managedMember.value(forKey: "claimedByAppUserId") as? String) == creatorId
+    }
+
+    private func roleLabel(for membership: HouseholdMembership?) -> String {
+        let rawRole = membership?.role?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let role = rawRole?.isEmpty == false ? rawRole! : "member"
+        return role.prefix(1).uppercased() + role.dropFirst()
+    }
+
+    private func identityLabel(for managedMember: HouseholdMember, membership: HouseholdMembership?) -> String? {
+        if let displayName = membership?.appUser?.displayName, !displayName.isEmpty, displayName != managedMember.displayName {
+            return displayName
+        }
+        if let appUserId = membership?.value(forKey: "appUserId") as? String, !appUserId.isEmpty {
+            return appUserId.hasPrefix("apple:") ? "Apple ID linked" : "Identity linked"
+        }
+        if let claimed = managedMember.value(forKey: "claimedByAppUserId") as? String, !claimed.isEmpty {
+            return claimed.hasPrefix("apple:") ? "Apple ID linked" : "Identity linked"
+        }
+        return "Invite pending"
+    }
+
+    private func removeMember(_ managedMember: HouseholdMember) {
+        errorText = nil
+        defer { memberPendingRemoval = nil }
+        guard canRemoveMember(managedMember) else {
+            errorText = "You do not have permission to remove that member."
+            return
+        }
+
+        do {
+            let scopedMember = try context.existingObject(with: managedMember.objectID) as? HouseholdMember
+            if let scopedMember {
+                try IdentityStore.removeMemberFromHousehold(scopedMember, context: context)
+                NotificationCenter.default.post(name: .didRequestCloudKitResync, object: nil)
+            }
+        } catch {
+            context.rollback()
+            errorText = "Could not remove member: \(error.localizedDescription)"
+        }
+    }
+
 
     private func ensureDefaultMemberExists(in household: Household) {
         let isSharedHousehold = household.objectID.persistentStore == PersistenceController.shared.sharedStore
