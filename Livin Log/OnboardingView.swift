@@ -18,20 +18,29 @@ struct OnboardingView: View {
     @State private var showingPasteInvite = false
     @State private var pendingInvite: PendingShareInvite?
     @State private var errorText: String?
+    @State private var showingDifferentAppleIDConfirmation = false
 
     let onFinished: () -> Void
 
     private var isSignedIn: Bool { appState.appUser != nil }
     private var shouldShowAppleButton: Bool {
-        SetupDiagnostics.signInWithAppleUIEnabled(
+        !isSignedIn && SetupDiagnostics.signInWithAppleUIEnabled(
             isSignedIn: isSignedIn,
             household: appState.household,
             membership: appState.currentMembership
         )
     }
 
+    private var trimmedName: String {
+        myName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canCreateHousehold: Bool {
+        isSignedIn && !trimmedName.isEmpty && !isCreating
+    }
+
     private var appleButtonTitle: SignInWithAppleButton.Label {
-        isSignedIn ? .continue : .signIn
+        .signIn
     }
 
     var body: some View {
@@ -65,12 +74,20 @@ struct OnboardingView: View {
                     .padding(.horizontal)
                 }
 
-                VStack(spacing: 10) {
-                    TextField("Your name (e.g., Blake)", text: $myName)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Create a household")
+                        .font(.headline)
+
+                    TextField("Your name (required)", text: $myName)
                         .textFieldStyle(.roundedBorder)
+                        .textContentType(.name)
 
                     TextField("Household name", text: $householdName)
                         .textFieldStyle(.roundedBorder)
+
+                    Text("Your name is required so family members know who created the household.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal)
 
@@ -93,28 +110,32 @@ struct OnboardingView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .padding(.horizontal)
-                .disabled(!isSignedIn || myName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCreating)
+                .disabled(!canCreateHousehold)
 
                 Button {
                     showingPasteInvite = true
                 } label: {
-                    Text("Join Household (Invite)")
+                    Text("Join Household with Invite")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
                 .padding(.horizontal)
 
                 if isSignedIn {
-                    Button("Retry Sync") {
-                        Task { await appState.start(callSite: "OnboardingView.retrySync") }
-                    }
-                    .buttonStyle(.bordered)
-                    .padding(.horizontal)
+                    Divider()
+                        .padding(.horizontal)
 
-                    Button("Use a Different Apple ID / Reset Sign In", role: .destructive) {
-                        appState.resetAppleSignInSession(reason: "onboarding reset button")
+                    VStack(spacing: 8) {
+                        Button("Retry iCloud Sync") {
+                            Task { await appState.start(callSite: "OnboardingView.retrySync") }
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button("Use a Different Apple ID", role: .destructive) {
+                            showingDifferentAppleIDConfirmation = true
+                        }
+                        .font(.footnote)
                     }
-                    .font(.footnote)
                     .padding(.horizontal)
                 }
 
@@ -123,8 +144,14 @@ struct OnboardingView: View {
             .navigationTitle("Setup")
             .navigationBarTitleDisplayMode(.inline)
         }
-        .onAppear { logSetupDiagnostics(reason: "onAppear") }
-        .onChange(of: isSignedIn) { _, _ in logSetupDiagnostics(reason: "isSignedIn changed") }
+        .onAppear {
+            prefillNameIfAvailable()
+            logSetupDiagnostics(reason: "onAppear")
+        }
+        .onChange(of: isSignedIn) { _, _ in
+            prefillNameIfAvailable()
+            logSetupDiagnostics(reason: "isSignedIn changed")
+        }
         .onChange(of: pendingInvite?.id) { _, _ in logSetupDiagnostics(reason: "pendingInvite changed") }
         .sheet(isPresented: $showingPasteInvite) {
             PasteInviteLinkSheet(
@@ -136,6 +163,18 @@ struct OnboardingView: View {
                     errorText = "Sign in with Apple to finish joining this household invite."
                 }
             )
+        }
+        .confirmationDialog(
+            "Use a Different Apple ID?",
+            isPresented: $showingDifferentAppleIDConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Use a Different Apple ID", role: .destructive) {
+                appState.resetAppleSignInSession(reason: "onboarding different Apple ID confirmation")
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This clears the Apple-linked identity saved on this device for Livin Log and returns you to sign-in/setup. It will not delete household data from iCloud or CloudKit.")
         }
         .sheet(item: $pendingInvite) { invite in
             AcceptHouseholdInviteSheet(
@@ -156,12 +195,12 @@ struct OnboardingView: View {
                 .font(.headline)
                 .foregroundStyle(.green)
 
-            Text("We found your Apple identity, but this install does not have an active household membership yet. You can create a household, join with an invite, retry sync, or reset sign-in if this is the wrong Apple ID.")
+            Text("Create a household or join one with an invite. We’ll also check iCloud for any household already linked to your account.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
             if appState.isWaitingForCloudKitMembershipImport {
-                Label("Checking iCloud for an existing household…", systemImage: "icloud.and.arrow.down")
+                Label("Checking iCloud…", systemImage: "icloud.and.arrow.down")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -183,6 +222,14 @@ struct OnboardingView: View {
             isInviteFlow: pendingInvite != nil || PendingInviteStore.load() != nil,
             context: context
         )
+    }
+
+    private func prefillNameIfAvailable() {
+        guard trimmedName.isEmpty else { return }
+        let storedName = appState.appUser?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !storedName.isEmpty {
+            myName = storedName
+        }
     }
 
     private func createHousehold() async {
