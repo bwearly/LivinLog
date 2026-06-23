@@ -21,23 +21,39 @@ enum SetupDiagnostics {
         context: NSManagedObjectContext
     ) {
         let counts = entityCounts(context: context)
-        log(
-            "onboarding screen " +
-            "bundle=\(bundleIdentifier) " +
-            "version=\(version) build=\(build) config=\(buildConfiguration) " +
-            "platform=\(platform) " +
-            "signInWithAppleUIEnabled=\(signInWithAppleUIEnabled(isSignedIn: isSignedIn, household: household, membership: membership)) " +
-            "reason=\(signInWithAppleUIReason(isSignedIn: isSignedIn, household: household, membership: membership)) " +
-            "onboardingReason=\(onboardingReason(isSignedIn: isSignedIn, household: household, member: member, membership: membership, isInviteFlow: isInviteFlow)) " +
-            "authenticatedWithApple=\(isSignedIn) " +
-            "usesMockIdentity=false " +
-            "inviteFlow=\(isInviteFlow) " +
-            "appUserExists=\(appUser != nil) appUser=\(describeAppUser(appUser)) appUserCount=\(counts.appUsers) " +
-            "householdExists=\(household != nil) household=\(describeHousehold(household)) householdCount=\(counts.households) " +
-            "currentMemberExists=\(member != nil) member=\(describeMember(member)) memberCount=\(counts.members) " +
-            "currentMembershipExists=\(membership != nil) membershipCount=\(counts.memberships) " +
+        let appMetadata = [
+            "bundle=\(bundleIdentifier)",
+            "version=\(version)",
+            "build=\(build)",
+            "config=\(buildConfiguration)",
+            "platform=\(platform)"
+        ].joined(separator: " ")
+
+        let signInStatus = [
+            "signInWithAppleUIEnabled=\(signInWithAppleUIEnabled(isSignedIn: isSignedIn, household: household, membership: membership))",
+            "reason=\(signInWithAppleUIReason(isSignedIn: isSignedIn, household: household, membership: membership))",
+            "onboardingReason=\(onboardingReason(isSignedIn: isSignedIn, household: household, member: member, membership: membership, isInviteFlow: isInviteFlow))",
+            "authenticatedWithApple=\(isSignedIn)",
+            "usesMockIdentity=false",
+            "inviteFlow=\(isInviteFlow)"
+        ].joined(separator: " ")
+
+        let entityStatus = [
+            "appUserExists=\(appUser != nil)",
+            "appUser=\(describeAppUser(appUser))",
+            "appUserCount=\(counts.appUsers)",
+            "householdExists=\(household != nil)",
+            "household=\(describeHousehold(household))",
+            "householdCount=\(counts.households)",
+            "currentMemberExists=\(member != nil)",
+            "member=\(describeMember(member))",
+            "memberCount=\(counts.members)",
+            "currentMembershipExists=\(membership != nil)",
+            "membershipCount=\(counts.memberships)",
             "candidateMembershipCount=\(candidateMembershipCount)"
-        )
+        ].joined(separator: " ")
+
+        log("onboarding screen \(appMetadata) \(signInStatus) \(entityStatus)")
     }
 
     static func logRouteDecision(
@@ -66,11 +82,11 @@ enum SetupDiagnostics {
         )
     }
 
-    static func signInWithAppleUIEnabled(isSignedIn: Bool, household: Household?, membership: Household?) -> Bool {
+    static func signInWithAppleUIEnabled(isSignedIn: Bool, household: Household?, membership: HouseholdMembership?) -> Bool {
         !isSignedIn || (isSignedIn && household == nil && membership == nil)
     }
 
-    static func signInWithAppleUIReason(isSignedIn: Bool, household: Household?, membership: Household?) -> String {
+    static func signInWithAppleUIReason(isSignedIn: Bool, household: Household?, membership: HouseholdMembership?) -> String {
         if !isSignedIn { return "notAuthenticated" }
         if household == nil && membership == nil { return "alreadyAuthenticatedButUnlinked" }
         return "alreadyAuthenticatedWithApple"
