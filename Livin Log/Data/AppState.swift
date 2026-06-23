@@ -387,6 +387,16 @@ final class AppState: ObservableObject {
         if oldRoute != newRoute {
             debugLog("route changed \(routeLabel(oldRoute)) -> \(routeLabel(newRoute)) [\(reason)]")
         }
+        SetupDiagnostics.logRouteDecision(
+            route: routeLabel(newRoute),
+            reason: reason,
+            appUser: appUser,
+            household: household,
+            member: member,
+            membership: currentMembership,
+            candidateMembershipCount: candidateMemberships.count,
+            context: container.viewContext
+        )
     }
 
     private func setSelection(household: Household?, member: HouseholdMember?, membership: HouseholdMembership?, reason: String) {
@@ -530,10 +540,8 @@ final class AppState: ObservableObject {
     }
 
     private func debugLog(_ message: String) {
-        #if DEBUG
         let ts = ISO8601DateFormatter().string(from: Date())
         print("🧭 [AppState \(ts)] \(message)")
-        #endif
     }
 
     private func isCurrentHouseholdInPrivateStore() -> Bool {
