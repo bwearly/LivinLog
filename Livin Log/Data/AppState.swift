@@ -35,6 +35,7 @@ final class AppState: ObservableObject {
     @Published var currentMembership: HouseholdMembership?
     @Published var candidateMemberships: [HouseholdMembership] = []
     @Published var needsMemberClaim = false
+    @Published var isWaitingForCloudKitMembershipImport = false
 
     private let container: NSPersistentCloudKitContainer
     private let cloudKitContainerId = "iCloud.com.blakeearly.livinlog"
@@ -95,8 +96,11 @@ final class AppState: ObservableObject {
         self.appUser = resolvedAppUser
 
         if !hasAnyHousehold() {
-            setSelection(household: nil, member: nil, membership: nil, reason: "no household available")
-            setRoute(.onboarding, reason: "no household available")
+            candidateMemberships = []
+            needsMemberClaim = false
+            setSelection(household: nil, member: nil, membership: nil, reason: "authenticated Apple user without imported household or membership")
+            setRoute(.onboarding, reason: "authenticatedAppleUserWithoutHouseholdOrMembership")
+            scheduleCloudKitMembershipImportRetryIfNeeded(callSite: callSite)
             await runQueuedStartIfNeeded()
             return
         }
@@ -120,6 +124,7 @@ final class AppState: ObservableObject {
 
         if memberships.count == 1, let membership = memberships.first {
             applyMembership(membership, reason: "single membership")
+            isWaitingForCloudKitMembershipImport = false
             needsMemberClaim = false
             setRoute(.main, reason: "ready with one membership")
             await runQueuedStartIfNeeded()
@@ -130,6 +135,7 @@ final class AppState: ObservableObject {
             if let preferred = resolvePreferredMembership(from: memberships) {
                 applyMembership(preferred, reason: "resolved preferred membership")
             }
+            isWaitingForCloudKitMembershipImport = false
             needsMemberClaim = false
             setRoute(.main, reason: "multiple memberships require explicit selection")
             await runQueuedStartIfNeeded()
@@ -137,14 +143,16 @@ final class AppState: ObservableObject {
         }
 
         guard let h = fetchPreferredHousehold() else {
-            setSelection(household: nil, member: nil, membership: nil, reason: "no preferred household")
-            setRoute(.onboarding, reason: "no preferred household")
+            setSelection(household: nil, member: nil, membership: nil, reason: "authenticated Apple user without preferred household")
+            setRoute(.onboarding, reason: "authenticatedAppleUserWithoutHouseholdOrMembership")
+            scheduleCloudKitMembershipImportRetryIfNeeded(callSite: callSite)
             await runQueuedStartIfNeeded()
             return
         }
 
         if let migrated = tryAutoMigrateMembership(for: resolvedAppUser, household: h) {
             applyMembership(migrated, reason: "auto-migrated from existing local selection")
+            isWaitingForCloudKitMembershipImport = false
             needsMemberClaim = false
             setRoute(.main, reason: "ready after migration")
             await runQueuedStartIfNeeded()
@@ -155,6 +163,14 @@ final class AppState: ObservableObject {
         needsMemberClaim = true
         setRoute(.main, reason: "requires claim flow")
         await runQueuedStartIfNeeded()
+    }
+
+    func resetAppleSignInSession(reason: String) {
+        debugLog("resetting Apple sign-in session [\(reason)]")
+        AuthSessionStore.clearAppleUserSubject()
+        isWaitingForCloudKitMembershipImport = false
+        clearResolvedIdentity(reason: "reset Apple sign-in session")
+        setRoute(.onboarding, reason: "resetAppleSignInSession")
     }
 
     func handleAppleSignIn(subject: String, displayName: String?) throws {
@@ -176,6 +192,8 @@ final class AppState: ObservableObject {
                 userInfo: [NSLocalizedDescriptionKey: "Sign in is required before creating a household."]
             )
         }
+
+        isWaitingForCloudKitMembershipImport = false
 
         let context = container.viewContext
         let trimmedHouseholdName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -315,6 +333,14 @@ final class AppState: ObservableObject {
 
     func isCurrentMemberAuthorized() -> Bool {
         IdentityStore.canAct(as: member, appUser: appUser, context: container.viewContext)
+    }
+
+    private func scheduleCloudKitMembershipImportRetryIfNeeded(callSite: String) {
+        guard appUser != nil else { return }
+        guard !isWaitingForCloudKitMembershipImport else { return }
+        isWaitingForCloudKitMembershipImport = true
+        debugLog("authenticated Apple user has no household/membership; waiting briefly for CloudKit import before assuming first-run [\(callSite)]")
+        scheduleStartDebounced(label: "CloudKit membership import grace", delayNanoseconds: 2_500_000_000)
     }
 
     private func observeShareAcceptanceAndStoreChanges() {

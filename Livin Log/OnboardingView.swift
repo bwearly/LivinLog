@@ -22,6 +22,17 @@ struct OnboardingView: View {
     let onFinished: () -> Void
 
     private var isSignedIn: Bool { appState.appUser != nil }
+    private var shouldShowAppleButton: Bool {
+        SetupDiagnostics.signInWithAppleUIEnabled(
+            isSignedIn: isSignedIn,
+            household: appState.household,
+            membership: appState.currentMembership
+        )
+    }
+
+    private var appleButtonTitle: SignInWithAppleButton.Label {
+        isSignedIn ? .continue : .signIn
+    }
 
     var body: some View {
         NavigationStack {
@@ -34,13 +45,17 @@ struct OnboardingView: View {
                 Text("Welcome to Livin Log")
                     .font(.title2).bold()
 
-                if !isSignedIn {
+                if isSignedIn {
+                    signedInStatusCard
+                } else {
                     Text("Sign in with Apple to securely attach your member profile across reinstall and new devices.")
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal)
+                }
 
-                    SignInWithAppleButton(.signIn, onRequest: { request in
+                if shouldShowAppleButton {
+                    SignInWithAppleButton(appleButtonTitle, onRequest: { request in
                         request.requestedScopes = [.fullName, .email]
                     }, onCompletion: { result in
                         handleAppleSignIn(result)
@@ -48,11 +63,6 @@ struct OnboardingView: View {
                     .signInWithAppleButtonStyle(.black)
                     .frame(height: 44)
                     .padding(.horizontal)
-                } else {
-                    Text("Create a household or join with an invite.")
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal)
                 }
 
                 VStack(spacing: 10) {
@@ -94,6 +104,20 @@ struct OnboardingView: View {
                 .buttonStyle(.bordered)
                 .padding(.horizontal)
 
+                if isSignedIn {
+                    Button("Retry Sync") {
+                        Task { await appState.start(callSite: "OnboardingView.retrySync") }
+                    }
+                    .buttonStyle(.bordered)
+                    .padding(.horizontal)
+
+                    Button("Use a Different Apple ID / Reset Sign In", role: .destructive) {
+                        appState.resetAppleSignInSession(reason: "onboarding reset button")
+                    }
+                    .font(.footnote)
+                    .padding(.horizontal)
+                }
+
                 Spacer()
             }
             .navigationTitle("Setup")
@@ -124,6 +148,28 @@ struct OnboardingView: View {
                 isSignedIn: isSignedIn
             )
         }
+    }
+
+    private var signedInStatusCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Signed in with Apple", systemImage: "checkmark.seal.fill")
+                .font(.headline)
+                .foregroundStyle(.green)
+
+            Text("We found your Apple identity, but this install does not have an active household membership yet. You can create a household, join with an invite, retry sync, or reset sign-in if this is the wrong Apple ID.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            if appState.isWaitingForCloudKitMembershipImport {
+                Label("Checking iCloud for an existing household…", systemImage: "icloud.and.arrow.down")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .padding(.horizontal)
     }
 
     private func logSetupDiagnostics(reason: String) {

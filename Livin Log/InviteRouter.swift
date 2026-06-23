@@ -9,8 +9,10 @@ final class InviteRouter {
     }
 
     func pendingInvite(from url: URL) async -> PendingShareInvite? {
-        // ✅ Normalize: remove fragment (#...) which often breaks metadata fetch
+        // ✅ Normalize: remove fragment (#...) which often breaks metadata fetch.
+        // CloudKit share links are code/token based; we do not match invitees by email, so Apple private relay email cannot block lookup here.
         let normalized = Self.stripFragment(url)
+        print("🔗 [PendingInvite] lookup url=\(normalized.absoluteString) lookupMode=cloudKitShareURL store=sharedCloudKit emailMatching=false codeBased=true")
 
         guard isICloudShareURL(normalized) else {
             print("ℹ️ Not an iCloud share URL: \(normalized.absoluteString)")
@@ -20,18 +22,18 @@ final class InviteRouter {
         return await withCheckedContinuation { continuation in
             container.fetchShareMetadata(with: normalized) { metadata, error in
                 if let error {
-                    print("❌ Failed to fetch share metadata for \(normalized.absoluteString): \(error)")
+                    print("❌ [PendingInvite] share metadata lookup failed reason=fetchShareMetadataError url=\(normalized.absoluteString) error=\(error.localizedDescription)")
                     continuation.resume(returning: nil)
                     return
                 }
 
                 guard let metadata else {
-                    print("❌ Failed to fetch share metadata: metadata is nil for \(normalized.absoluteString)")
+                    print("❌ [PendingInvite] share metadata lookup failed reason=nilMetadata url=\(normalized.absoluteString)")
                     continuation.resume(returning: nil)
                     return
                 }
 
-                print("✅ Fetched share metadata for \(normalized.absoluteString)")
+                print("✅ [PendingInvite] fetched share metadata url=\(normalized.absoluteString)")
                 continuation.resume(returning: PendingShareInvite(metadata: metadata, sourceURL: normalized))
             }
         }
