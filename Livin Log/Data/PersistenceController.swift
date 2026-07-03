@@ -28,6 +28,80 @@ struct PersistenceLoadError: Identifiable, Equatable {
     }
 }
 
+/// Tracks per-store in-flight CloudKit export state from the existing
+/// `NSPersistentCloudKitContainer.eventChangedNotification` observer in
+/// `PersistenceController.init()`, so `CloudSharing.fetchOrCreateShare` can check/wait for
+/// export-idle before calling `persistentContainer.share(...)`.
+///
+/// Experimental (Task 3 deadlock-hypothesis test), not a permanent architectural decision:
+/// this only tracks presence of *any* in-flight export per store identifier, not a count. If
+/// two export events overlap for the same store, the first "end" clears the flag even though
+/// the second export may still be running. That's an accepted simplification for this
+/// experiment, not a claim it's correct in general — see the Task 3 summary.
+final class CloudKitExportTracker {
+    static let shared = CloudKitExportTracker()
+    private init() {}
+
+    /// "A few seconds" per the experiment spec, and short enough to leave room inside the
+    /// existing 9s prepareShare watchdog (UICloudSharingControllerRepresentable) so a caller
+    /// waiting here still has time left for the actual share() call before that outer watchdog
+    /// fires. If this value and the outer watchdog need independent tuning later, that's a sign
+    /// this gate belongs in the caller's timeout budget explicitly rather than being implicit.
+    static let exportIdleWaitTimeout: TimeInterval = 5.0
+
+    private let queue = DispatchQueue(label: "CloudKitExportTracker")
+    private var inFlightStoreIdentifiers: Set<String> = []
+    private var waiters: [String: [(Bool) -> Void]] = [:]
+
+    func markExportStarted(storeIdentifier: String) {
+        queue.async {
+            self.inFlightStoreIdentifiers.insert(storeIdentifier)
+        }
+    }
+
+    func markExportEnded(storeIdentifier: String) {
+        queue.async {
+            self.inFlightStoreIdentifiers.remove(storeIdentifier)
+            let pending = self.waiters.removeValue(forKey: storeIdentifier) ?? []
+            pending.forEach { $0(true) }
+        }
+    }
+
+    func isExportInFlight(storeIdentifier: String) -> Bool {
+        queue.sync {
+            inFlightStoreIdentifiers.contains(storeIdentifier)
+        }
+    }
+
+    /// Resolves `true` if idle now or once the in-flight export clears; `false` if `timeout`
+    /// elapses first. Never throws — the caller decides what a timed-out wait means.
+    func waitForExportIdle(storeIdentifier: String, timeout: TimeInterval) async -> Bool {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            queue.async {
+                guard self.inFlightStoreIdentifiers.contains(storeIdentifier) else {
+                    continuation.resume(returning: true)
+                    return
+                }
+
+                var resumed = false
+                let resumeOnce: (Bool) -> Void = { result in
+                    self.queue.async {
+                        guard !resumed else { return }
+                        resumed = true
+                        continuation.resume(returning: result)
+                    }
+                }
+
+                self.waiters[storeIdentifier, default: []].append(resumeOnce)
+
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                    resumeOnce(false)
+                }
+            }
+        }
+    }
+}
+
 struct PersistenceController {
     static let shared = PersistenceController()
 
@@ -59,6 +133,17 @@ struct PersistenceController {
         let container = NSPersistentCloudKitContainer(name: "LivinLog")
         let bundleIdentifier = Bundle.main.bundleIdentifier ?? "<unknown>"
         print("ℹ️ PersistenceController init bundleIdentifier=\(bundleIdentifier) persistentContainerName=\(container.name)")
+
+        let apsEnvironment = Self.detectAPSEnvironment()
+        print("🌐 [CloudKitEnvironment] embedded.mobileprovision aps-environment=\(apsEnvironment)")
+        switch apsEnvironment {
+        case "development":
+            print("🌐 [CloudKitEnvironment] ⚠️ This build is running against the CloudKit DEVELOPMENT/Sandbox environment, NOT Production. Any household/share repro captured on this build does NOT validate anything against the real Production household — treat those captures as sandbox-only evidence.")
+        case "production":
+            print("🌐 [CloudKitEnvironment] This build is running against the CloudKit PRODUCTION environment.")
+        default:
+            print("🌐 [CloudKitEnvironment] ⚠️ Could not determine aps-environment (\(apsEnvironment)). No embedded.mobileprovision usually means an App Store/TestFlight-processed build (Production) or a Simulator run (no CloudKit provisioning at all) — do not assume which one without corroborating evidence.")
+        }
 
         // Two stores are required for Core Data + CloudKit sharing:
         // - Private: the owner's database
@@ -194,6 +279,20 @@ struct PersistenceController {
                 let nsError = error as NSError
                 print("☁️ [CKEvent] ❌ domain=\(nsError.domain) code=\(nsError.code) desc=\(nsError.localizedDescription) userInfo=\(nsError.userInfo)")
             }
+
+            // Task 3 experiment: `event.storeIdentifier` matches NSPersistentStore.identifier
+            // (confirmed against Apple's docs, not a URL despite the "storeURL" log label
+            // above). end==nil means the export is still in flight for that store; a
+            // subsequent event with a non-nil end clears it. CloudSharing.fetchOrCreateShare
+            // reads this via CloudKitExportTracker.shared to gate share(...) as a direct test
+            // of the "share() called mid-export deadlocks" hypothesis.
+            if event.type == .export {
+                if event.endDate == nil {
+                    CloudKitExportTracker.shared.markExportStarted(storeIdentifier: event.storeIdentifier)
+                } else {
+                    CloudKitExportTracker.shared.markExportEnded(storeIdentifier: event.storeIdentifier)
+                }
+            }
         }
     }
 
@@ -226,6 +325,53 @@ struct PersistenceController {
 
         if hasMoveReceipt {
             print("⚠️ [CoreDataModelDiagnostics] Loaded BookEntry still contains moveReceipt; this build can try to export CD_moveReceipt to CloudKit.")
+        }
+    }
+
+    /// Reads the `aps-environment` entitlement out of the app's embedded provisioning
+    /// profile, at runtime, without guessing. `embedded.mobileprovision` is a CMS/PKCS#7-signed
+    /// blob, not a plain plist, but it contains one verbatim `<plist>...</plist>` XML document
+    /// as its payload; the standard technique (used by fastlane, Xcode-adjacent tooling, etc.)
+    /// is to scan the raw bytes for that substring rather than parse the CMS envelope.
+    ///
+    /// Returns "development", "production", or a bracketed diagnostic string explaining why
+    /// neither could be determined (e.g. no embedded profile at all, which is normal for both
+    /// Simulator builds and App Store/TestFlight-processed builds — Apple strips the profile
+    /// during App Store processing, so its absence alone does not tell you which environment
+    /// you're in).
+    private static func detectAPSEnvironment() -> String {
+        guard let profileURL = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let profileData = try? Data(contentsOf: profileURL) else {
+            return "<no embedded.mobileprovision found (Simulator or App Store/TestFlight build)>"
+        }
+
+        guard let profileText = String(data: profileData, encoding: .isoLatin1) else {
+            return "<embedded.mobileprovision could not be decoded>"
+        }
+
+        guard let plistStart = profileText.range(of: "<?xml"),
+              let plistEnd = profileText.range(of: "</plist>") else {
+            return "<could not locate embedded plist inside embedded.mobileprovision>"
+        }
+
+        let plistText = String(profileText[plistStart.lowerBound..<plistEnd.upperBound])
+        guard let plistData = plistText.data(using: .isoLatin1) else {
+            return "<could not re-encode embedded plist>"
+        }
+
+        do {
+            guard let plist = try PropertyListSerialization.propertyList(from: plistData, format: nil) as? [String: Any] else {
+                return "<embedded.mobileprovision plist was not a dictionary>"
+            }
+            guard let entitlements = plist["Entitlements"] as? [String: Any] else {
+                return "<no Entitlements dictionary in embedded.mobileprovision>"
+            }
+            guard let apsEnvironment = entitlements["aps-environment"] as? String else {
+                return "<no aps-environment key in embedded.mobileprovision Entitlements>"
+            }
+            return apsEnvironment
+        } catch {
+            return "<failed to parse embedded.mobileprovision plist: \(error.localizedDescription)>"
         }
     }
 
