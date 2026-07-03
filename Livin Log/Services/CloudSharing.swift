@@ -6,6 +6,16 @@
 import CoreData
 import CloudKit
 
+/// Distinct from `PrepareShareWatchdogTimeoutError` (UICloudSharingControllerRepresentable) so
+/// Settings/logs can tell "the export-idle gate itself timed out before share() was even
+/// called" apart from "share()'s completion handler never fired." Experimental error for the
+/// Task 3 deadlock-hypothesis test, not a permanent user-facing message.
+struct ExportIdleWaitTimeoutError: LocalizedError {
+    var errorDescription: String? {
+        "iCloud sharing could not start because a pending sync operation did not finish in time. Please try again in a moment."
+    }
+}
+
 enum CloudSharing {
     // Schema safety checklist for TestFlight / Production CloudKit:
     // 1) Any CloudKit-backed Core Data model change must be deployed from Development -> Production schema
@@ -65,6 +75,53 @@ enum CloudSharing {
             }
         }
 
+        // ✅ Resolve the PRIVATE store (owner creates share in private DB). This is
+        // container-level (not context-bound), so it's resolved up front, before entering
+        // context.perform, so the export-idle gate below can be awaited without blocking the
+        // managed object context's queue while waiting.
+        let privateStoreURL = persistentContainer.persistentStoreDescriptions
+            .first(where: { $0.cloudKitContainerOptions?.databaseScope == .private })?
+            .url
+
+        let storeForShare: NSPersistentStore? = {
+            if let url = privateStoreURL {
+                return persistentContainer.persistentStoreCoordinator.persistentStore(for: url)
+            }
+            return persistentContainer.persistentStoreCoordinator.persistentStores.first
+        }()
+
+        guard let store = storeForShare else {
+            throw NSError(
+                domain: "CloudSharing",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Could not resolve a persistent store to persist the share."]
+            )
+        }
+
+        let shareAttemptID = UUID().uuidString.prefix(8)
+
+        // --- Task 3 experiment: gate share() on export-idle for this store -----------------
+        // Evidence from device captures: persistentContainer.share(...) called while an
+        // export-type CKEvent is open (end=nil) on the same store is followed by neither the
+        // export nor the share ever completing. This waits for that in-flight export to clear
+        // before calling share(), as a direct test of the deadlock hypothesis. Diagnostic only;
+        // see CloudKitSharingInvestigation.md / Task 3 summary for caveats.
+        let storeIdentifier = store.identifier ?? "<nil-store-identifier>"
+        if CloudKitExportTracker.shared.isExportInFlight(storeIdentifier: storeIdentifier) {
+            print("⏳ [CloudSharing] export in flight, waiting store=\(storeIdentifier) attempt=\(shareAttemptID)")
+            let clearedInTime = await CloudKitExportTracker.shared.waitForExportIdle(
+                storeIdentifier: storeIdentifier,
+                timeout: CloudKitExportTracker.exportIdleWaitTimeout
+            )
+            if clearedInTime {
+                print("✅ [CloudSharing] export cleared, proceeding store=\(storeIdentifier) attempt=\(shareAttemptID)")
+            } else {
+                print("⏱️ [CloudSharing] wait-for-export-idle timed out store=\(storeIdentifier) attempt=\(shareAttemptID)")
+                throw ExportIdleWaitTimeoutError()
+            }
+        }
+        // -------------------------------------------------------------------------------------
+
         return try await withCheckedThrowingContinuation { continuation in
             context.perform {
                 do {
@@ -77,30 +134,8 @@ enum CloudSharing {
                         return
                     }
 
-                    // ✅ Resolve the PRIVATE store (owner creates share in private DB)
-                    let privateStoreURL = persistentContainer.persistentStoreDescriptions
-                        .first(where: { $0.cloudKitContainerOptions?.databaseScope == .private })?
-                        .url
-
-                    let storeForShare: NSPersistentStore? = {
-                        if let url = privateStoreURL {
-                            return persistentContainer.persistentStoreCoordinator.persistentStore(for: url)
-                        }
-                        return persistentContainer.persistentStoreCoordinator.persistentStores.first
-                    }()
-
-                    guard let store = storeForShare else {
-                        continuation.resume(throwing: NSError(
-                            domain: "CloudSharing",
-                            code: 3,
-                            userInfo: [NSLocalizedDescriptionKey: "Could not resolve a persistent store to persist the share."]
-                        ))
-                        return
-                    }
-
                     let householdURI = householdInContext.objectID.uriRepresentation().absoluteString
                     let storeURLString = store.url?.lastPathComponent ?? "unknown-store"
-                    let shareAttemptID = UUID().uuidString.prefix(8)
                     print("ℹ️ [CloudSharing] Creating/updating owner Household share household=\(householdURI) store=\(storeURLString) attempt=\(shareAttemptID)")
 
                     // Correlate against the "☁️ [CKEvent] type=export ..." lines logged by
