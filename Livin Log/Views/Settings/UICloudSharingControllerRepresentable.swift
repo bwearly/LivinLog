@@ -8,6 +8,19 @@ import CoreData
 import CloudKit
 import UIKit
 
+private struct PrepareShareWatchdogTimeoutError: LocalizedError {
+    var errorDescription: String? {
+        "Preparing the invite link is taking longer than expected. Check your connection and try again."
+    }
+}
+
+/// Carries a `CKShare` across the `withThrowingTaskGroup` boundary in `prepareShare`.
+/// `CKShare`'s own `Sendable` conformance isn't verified, so this box is used instead
+/// of relying on it directly satisfying the task group's `Sendable` result constraint.
+private struct PrepareShareResultBox: @unchecked Sendable {
+    let share: CKShare
+}
+
 /// ✅ “Share via Messages” flow:
 /// - Creates/updates the CKShare for the Household
 /// - Sets publicPermission = .readWrite so anyone with the link can join
@@ -109,11 +122,40 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
                     return
                 }
 
-                let share = try await CloudSharing.fetchOrCreateShare(
-                    for: householdInContext,
-                    in: context,
-                    persistentContainer: persistentContainer
-                )
+                let watchdogAttemptID = UUID().uuidString.prefix(8)
+                print("ℹ️ [CloudSharing] prepareShare starting fetchOrCreateShare (watchdog armed) attempt=\(watchdogAttemptID) at=\(ISO8601DateFormatter().string(from: Date()))")
+
+                // Safety net only: this does not fix a stuck mirroring-delegate completion
+                // handler, it just turns an indefinite spinner into a visible, user-facing
+                // error after ~9s so the share sheet host is never left blank forever.
+                // CKShare's Sendable conformance isn't verified against the SDK, so the
+                // result is carried across the task group in an @unchecked Sendable box
+                // rather than assuming CKShare itself satisfies the group's Sendable bound.
+                let resultBox = try await withThrowingTaskGroup(of: PrepareShareResultBox.self) { group -> PrepareShareResultBox in
+                    group.addTask { @MainActor in
+                        let share = try await CloudSharing.fetchOrCreateShare(
+                            for: householdInContext,
+                            in: context,
+                            persistentContainer: persistentContainer
+                        )
+                        return PrepareShareResultBox(share: share)
+                    }
+                    group.addTask {
+                        try await Task.sleep(nanoseconds: 9_000_000_000)
+                        print("⏱️ [CloudSharing] prepareShare watchdog fired after 9s with no result attempt=\(watchdogAttemptID) at=\(ISO8601DateFormatter().string(from: Date()))")
+                        throw PrepareShareWatchdogTimeoutError()
+                    }
+
+                    defer { group.cancelAll() }
+
+                    guard let result = try await group.next() else {
+                        throw PrepareShareWatchdogTimeoutError()
+                    }
+                    return result
+                }
+                let share = resultBox.share
+
+                print("ℹ️ [CloudSharing] prepareShare fetchOrCreateShare returned before watchdog attempt=\(watchdogAttemptID) at=\(ISO8601DateFormatter().string(from: Date()))")
 
 #if DEBUG
                 debugPrintShareStatus(for: householdInContext, persistentContainer: persistentContainer)

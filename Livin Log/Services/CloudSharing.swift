@@ -100,9 +100,20 @@ enum CloudSharing {
 
                     let householdURI = householdInContext.objectID.uriRepresentation().absoluteString
                     let storeURLString = store.url?.lastPathComponent ?? "unknown-store"
-                    print("ℹ️ [CloudSharing] Creating/updating owner Household share household=\(householdURI) store=\(storeURLString)")
+                    let shareAttemptID = UUID().uuidString.prefix(8)
+                    print("ℹ️ [CloudSharing] Creating/updating owner Household share household=\(householdURI) store=\(storeURLString) attempt=\(shareAttemptID)")
+
+                    // Correlate against the "☁️ [CKEvent] type=export ..." lines logged by
+                    // PersistenceController's eventChangedNotification observer: a share(_:to:)
+                    // call typically surfaces internally as an export-type CKEvent. Comparing
+                    // this timestamp (and the completion-closure timestamp below) against CKEvent
+                    // start/end times shows whether the mirroring delegate is still busy
+                    // (e.g. mid zone-reset) when the share call is issued.
+                    print("ℹ️ [CloudSharing] Calling persistentContainer.share(...) attempt=\(shareAttemptID) at=\(ISO8601DateFormatter().string(from: Date()))")
 
                     persistentContainer.share([householdInContext], to: nil) { _, share, _, error in
+                        print("ℹ️ [CloudSharing] share(...) completion closure fired attempt=\(shareAttemptID) at=\(ISO8601DateFormatter().string(from: Date()))")
+
                         if let error {
                             print("❌ [CloudSharing] Household share creation failed: \(error.localizedDescription)")
                             continuation.resume(throwing: error)
