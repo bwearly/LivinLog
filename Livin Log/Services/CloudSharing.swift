@@ -65,7 +65,12 @@ enum CloudSharing {
         persistentContainer: NSPersistentCloudKitContainer
     ) async throws -> CKShare {
 
-        // Ensure the household has a permanent ID and is saved before sharing
+        // Ensure the household has a permanent ID and is saved before sharing.
+        // This step must stay on `context` (viewContext): if `household` currently has a
+        // temporary objectID, only the context that currently holds it can resolve that via
+        // obtainPermanentIDs. A different context cannot look up a temporary ID via
+        // existingObject(with:), so the background context introduced below can only take
+        // over once the objectID here is guaranteed permanent.
         try await context.perform {
             if household.objectID.isTemporaryID {
                 try context.obtainPermanentIDs(for: [household])
@@ -74,6 +79,12 @@ enum CloudSharing {
                 try context.save()
             }
         }
+
+        // Task 5 experiment: household is now guaranteed to have a permanent objectID (either
+        // it already did, or obtainPermanentIDs+save above just assigned one). Capture the
+        // objectID here, before switching to the background context below, so nothing past
+        // this point touches the viewContext-bound `household` instance directly.
+        let householdObjectID = household.objectID
 
         // ✅ Resolve the PRIVATE store (owner creates share in private DB). This is
         // container-level (not context-bound), so it's resolved up front, before entering
@@ -122,10 +133,21 @@ enum CloudSharing {
         }
         // -------------------------------------------------------------------------------------
 
+        // Task 5 experiment: run the share() call itself on a background context instead of
+        // viewContext. `newBackgroundContext()` (not a child context of viewContext) is tied
+        // directly to the persistent store coordinator with no parent/child relationship to
+        // viewContext, so its save() does not synchronously propagate up through viewContext's
+        // main-queue-confined perform — this is what actually tests whether getting Core
+        // Data/CloudKit's internal share() work off the main queue unblocks the freeze.
+        // (See PersistenceController.swift: viewContext.automaticallyMergesChangesFromParent
+        // is already true, so a save on this background context still reaches viewContext/UI
+        // automatically, the same way CloudKit's own import machinery already does today.)
+        let backgroundContext = persistentContainer.newBackgroundContext()
+
         return try await withCheckedThrowingContinuation { continuation in
-            context.perform {
+            backgroundContext.perform {
                 do {
-                    guard let householdInContext = try context.existingObject(with: household.objectID) as? Household else {
+                    guard let householdInBackground = try backgroundContext.existingObject(with: householdObjectID) as? Household else {
                         continuation.resume(throwing: NSError(
                             domain: "CloudSharing",
                             code: 1,
@@ -134,7 +156,7 @@ enum CloudSharing {
                         return
                     }
 
-                    let householdURI = householdInContext.objectID.uriRepresentation().absoluteString
+                    let householdURI = householdInBackground.objectID.uriRepresentation().absoluteString
                     let storeURLString = store.url?.lastPathComponent ?? "unknown-store"
                     print("ℹ️ [CloudSharing] Creating/updating owner Household share household=\(householdURI) store=\(storeURLString) attempt=\(shareAttemptID)")
 
@@ -146,8 +168,14 @@ enum CloudSharing {
                     // (e.g. mid zone-reset) when the share call is issued.
                     print("ℹ️ [CloudSharing] Calling persistentContainer.share(...) attempt=\(shareAttemptID) at=\(ISO8601DateFormatter().string(from: Date()))")
 
-                    persistentContainer.share([householdInContext], to: nil) { _, share, _, error in
+                    // Task 5 experiment: confirm which queue this call actually runs on.
+                    print("🧵 [CloudSharing] pre-share() thread check attempt=\(shareAttemptID) isMainThread=\(Thread.isMainThread)")
+
+                    persistentContainer.share([householdInBackground], to: nil) { _, share, _, error in
                         print("ℹ️ [CloudSharing] share(...) completion closure fired attempt=\(shareAttemptID) at=\(ISO8601DateFormatter().string(from: Date()))")
+
+                        // Task 5 experiment: confirm which queue the completion closure fired on.
+                        print("🧵 [CloudSharing] post-share() completion thread check attempt=\(shareAttemptID) isMainThread=\(Thread.isMainThread)")
 
                         if let error {
                             print("❌ [CloudSharing] Household share creation failed: \(error.localizedDescription)")
@@ -166,7 +194,7 @@ enum CloudSharing {
 
                         // ✅ Configure share for link-based join + read/write
                         share[CKShare.SystemFieldKey.title] =
-                            (householdInContext.name ?? "Livin Log Household") as CKRecordValue
+                            (householdInBackground.name ?? "Livin Log Household") as CKRecordValue
                         share.publicPermission = .readWrite
 
 #if DEBUG
@@ -191,8 +219,8 @@ enum CloudSharing {
                             print("ℹ️ [CloudSharing] Household share persisted recordID=\(share.recordID.recordName) urlAvailable=\(share.url != nil)")
 
                             do {
-                                let persisted = try persistentContainer.fetchShares(matching: [householdInContext.objectID])
-                                let persistedShare = persisted[householdInContext.objectID]
+                                let persisted = try persistentContainer.fetchShares(matching: [householdInBackground.objectID])
+                                let persistedShare = persisted[householdInBackground.objectID]
                                 let persistedRecord = persistedShare?.recordID.recordName ?? "nil"
                                 print("[CloudSharing] post-persist fetchShares success=\(persistedShare != nil) recordID=\(persistedRecord)")
                             } catch {
