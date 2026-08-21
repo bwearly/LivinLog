@@ -42,14 +42,6 @@ struct SettingsView: View {
     // participant-management UI to finish revoking that person's CloudKit access.
     @State private var showingShareManagementForRemoval = false
 
-    // fetchMembers(for:) is a plain NSFetchRequest re-run on every body evaluation, not a
-    // @FetchRequest — bumping this (see the NSManagedObjectContextObjectsDidChange listener
-    // below) is what forces membersSection to actually re-render when a member's row (e.g. an
-    // accepted invitee's HouseholdMember) merges in via CloudKit import while this screen is
-    // already open, instead of relying on AppState's own remote-change handling to happen to
-    // republish and catch it.
-    @State private var membersRosterRefreshTick = 0
-
     // Presents Apple's official CloudKit sharing UI.
     @State private var showingInviteShareSheet = false
 
@@ -104,10 +96,6 @@ struct SettingsView: View {
             if let hh = household { ensureDefaultMemberExists(in: hh) }
             reloadShareStatus()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .NSManagedObjectContextObjectsDidChange, object: context)) { _ in
-            membersRosterRefreshTick += 1
-        }
-
         // Invite sheet (owner sharing)
         .sheet(isPresented: $showingInviteShareSheet, onDismiss: {
             isSharing = false
@@ -305,26 +293,16 @@ struct SettingsView: View {
     private var membersSection: some View {
         Section("Members") {
             if let household {
-                // membersRosterRefreshTick isn't read here directly, but bumping that @State
-                // (see the NSManagedObjectContextObjectsDidChange listener on body) still
-                // forces this whole view's body — and therefore this fresh fetch — to
-                // re-evaluate, not just when SwiftUI happens to re-render for an unrelated
-                // reason.
-                let members = fetchMembers(for: household)
-                if members.isEmpty {
-                    ContentUnavailableView("No members yet", systemImage: "person.3")
-                } else {
-                    ForEach(members) { m in
-                        memberManagementRow(for: m)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                if canRemoveMember(m) {
-                                    Button("Remove", role: .destructive) {
-                                        memberPendingRemoval = m
-                                    }
-                                }
-                            }
-                    }
-                }
+                // Reactive: @FetchRequest re-runs automatically when a member's row (e.g. an
+                // accepted invitee's HouseholdMember) merges in via CloudKit import, instead of
+                // needing a manual NSManagedObjectContextObjectsDidChange listener to force a
+                // full re-fetch on every unrelated Core Data change (see MembersRosterSection).
+                MembersRosterSection(
+                    household: household,
+                    currentMember: member,
+                    canManage: canCurrentUserManageMembers,
+                    onRequestRemoval: { memberPendingRemoval = $0 }
+                )
             } else {
                 Text("Create a household to add members.")
                     .foregroundStyle(.secondary)
@@ -624,75 +602,7 @@ struct SettingsView: View {
         }
     }
 
-    @ViewBuilder
-    private func memberManagementRow(for managedMember: HouseholdMember) -> some View {
-        let membership = activeMembership(for: managedMember)
-        HStack(spacing: 12) {
-            Image(systemName: isOwner(managedMember) ? "crown.fill" : "person.circle.fill")
-                .font(.title3)
-                .foregroundStyle(isOwner(managedMember) ? .yellow : .secondary)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(managedMember.displayName ?? "Unnamed")
-                    .font(.body)
-
-                HStack(spacing: 6) {
-                    if managedMember.objectID == member?.objectID {
-                        Text("You")
-                    }
-                    Text(roleLabel(for: membership))
-                    if let identity = identityLabel(for: managedMember, membership: membership) {
-                        Text(identity)
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            if canRemoveMember(managedMember) {
-                Button(role: .destructive) {
-                    memberPendingRemoval = managedMember
-                } label: {
-                    Image(systemName: "minus.circle")
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("Remove \(managedMember.displayName ?? "member")")
-            } else if !canCurrentUserManageMembers {
-                Text("View only")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
     // MARK: - Members
-
-    private func fetchMembers(for household: Household) -> [HouseholdMember] {
-        // Current-roster context: a departed member (isActive == NO) is intentionally excluded
-        // here — they still show up wherever their historical ratings/entries are attributed,
-        // just not in the active membership list this screen manages.
-        let req: NSFetchRequest<HouseholdMember> = HouseholdMember.fetchRequest()
-        req.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
-            householdScopedPredicate(household, idKey: "householdId"),
-            NSPredicate(format: "isActive == YES")
-        ])
-        req.sortDescriptors = [
-            NSSortDescriptor(
-                key: "displayName",
-                ascending: true,
-                selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
-            )
-        ]
-
-        do {
-            return try context.fetch(req)
-        } catch {
-            print("Fetch members failed:", error)
-            return []
-        }
-    }
 
     private func currentMemberships() -> [HouseholdMembership] {
         guard let appUser = appState.appUser else { return [] }
@@ -703,6 +613,13 @@ struct SettingsView: View {
     private func isAuthorized(_ member: HouseholdMember) -> Bool {
         IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
     }
+
+    // activeMembership(for:)/isOwner(_:)/canRemoveMember(_:) below are kept here — separate
+    // from MembersRosterSection's own copies — purely to guard the one-shot removeMember(_:)
+    // mutation below, which runs once per explicit user action (confirming the "Remove
+    // Household Member?" alert), not per row render. They are intentionally NOT used by the
+    // roster's row-rendering path anymore; see MembersRosterSection for that (a single
+    // activeMembership fetch per row instead of up to four).
     private func activeMembership(for managedMember: HouseholdMember) -> HouseholdMembership? {
         guard let household = managedMember.household else { return nil }
         let req = NSFetchRequest<HouseholdMembership>(entityName: "HouseholdMembership")
@@ -732,25 +649,6 @@ struct SettingsView: View {
               let creatorId = household.value(forKey: "createdByAppUserId") as? String,
               !creatorId.isEmpty else { return false }
         return (managedMember.value(forKey: "claimedByAppUserId") as? String) == creatorId
-    }
-
-    private func roleLabel(for membership: HouseholdMembership?) -> String {
-        let rawRole = membership?.role?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let role = rawRole?.isEmpty == false ? rawRole! : "member"
-        return role.prefix(1).uppercased() + role.dropFirst()
-    }
-
-    private func identityLabel(for managedMember: HouseholdMember, membership: HouseholdMembership?) -> String? {
-        if let displayName = membership?.appUser?.displayName, !displayName.isEmpty, displayName != managedMember.displayName {
-            return displayName
-        }
-        if let appUserId = membership?.value(forKey: "appUserId") as? String, !appUserId.isEmpty {
-            return appUserId.hasPrefix("apple:") ? "Apple ID linked" : "Identity linked"
-        }
-        if let claimed = managedMember.value(forKey: "claimedByAppUserId") as? String, !claimed.isEmpty {
-            return claimed.hasPrefix("apple:") ? "Apple ID linked" : "Identity linked"
-        }
-        return "Invite pending"
     }
 
     private func removeMember(_ managedMember: HouseholdMember) {
@@ -928,6 +826,171 @@ struct SettingsView: View {
                 CloudSharing.saveLastShareError(technicalMessage)
             }
         }
+    }
+}
+
+// MARK: - Members Roster (extracted for a real @FetchRequest)
+
+/// Renders the household's active-member roster. Pulled out of SettingsView so it can take a
+/// non-optional `household` and use a proper reactive `@FetchRequest<HouseholdMember>` —
+/// exactly like MoviesListView/PuzzlesListView already do — instead of SettingsView's old
+/// `fetchMembers(for:)`, a plain NSFetchRequest re-run on every body evaluation and forced to
+/// re-run via a manual `NSManagedObjectContextObjectsDidChange` listener that fired (and forced
+/// a full re-fetch) on *any* Core Data change anywhere in the app, not just household-member
+/// ones. That combination was the confirmed cause of a watchdog termination (0x8BADF00D) on
+/// TestFlight: opening Settings could land in the middle of a burst of CloudKit merge
+/// notifications, each one re-triggering this section's fetch, each of which re-resolved
+/// `HouseholdMembership` up to 4 times per row (once directly, once inside the old `isOwner`,
+/// twice inside the old `canRemoveMember`) — M notifications × (1 + 4N) synchronous compound-
+/// predicate fetches on the main thread, easily exceeding the OS's 5-10s watchdog budget.
+///
+/// This view fixes both halves: `@FetchRequest` is already reactive to the CloudKit-merge case
+/// the listener existed for (no manual tick needed), and `activeMembership(for:)` is resolved
+/// once per row here and threaded down as a parameter, instead of being re-fetched by every
+/// helper that needs it.
+private struct MembersRosterSection: View {
+    @Environment(\.managedObjectContext) private var context
+
+    let household: Household
+    let currentMember: HouseholdMember?
+    let canManage: Bool
+    let onRequestRemoval: (HouseholdMember) -> Void
+
+    @FetchRequest private var members: FetchedResults<HouseholdMember>
+
+    init(household: Household, currentMember: HouseholdMember?, canManage: Bool, onRequestRemoval: @escaping (HouseholdMember) -> Void) {
+        self.household = household
+        self.currentMember = currentMember
+        self.canManage = canManage
+        self.onRequestRemoval = onRequestRemoval
+
+        // Current-roster context: a departed member (isActive == NO) is intentionally excluded
+        // here — they still show up wherever their historical ratings/entries are attributed,
+        // just not in the active membership list this screen manages.
+        _members = FetchRequest<HouseholdMember>(
+            sortDescriptors: [
+                NSSortDescriptor(
+                    key: "displayName",
+                    ascending: true,
+                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
+                )
+            ],
+            predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [
+                householdScopedPredicate(household, idKey: "householdId"),
+                NSPredicate(format: "isActive == YES")
+            ]),
+            animation: .default
+        )
+    }
+
+    var body: some View {
+        if members.isEmpty {
+            ContentUnavailableView("No members yet", systemImage: "person.3")
+        } else {
+            ForEach(members) { m in
+                // Resolved once per row, then threaded down — this is the fix for the up-to-4x
+                // per-row re-fetch (see the type-level doc comment above).
+                let membership = activeMembership(for: m)
+                memberRow(for: m, membership: membership)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        if canRemoveMember(m, membership: membership) {
+                            Button("Remove", role: .destructive) {
+                                onRequestRemoval(m)
+                            }
+                        }
+                    }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func memberRow(for managedMember: HouseholdMember, membership: HouseholdMembership?) -> some View {
+        let owner = isOwner(managedMember, membership: membership)
+        HStack(spacing: 12) {
+            Image(systemName: owner ? "crown.fill" : "person.circle.fill")
+                .font(.title3)
+                .foregroundStyle(owner ? .yellow : .secondary)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(managedMember.displayName ?? "Unnamed")
+                    .font(.body)
+
+                HStack(spacing: 6) {
+                    if managedMember.objectID == currentMember?.objectID {
+                        Text("You")
+                    }
+                    Text(roleLabel(for: membership))
+                    if let identity = identityLabel(for: managedMember, membership: membership) {
+                        Text(identity)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if canRemoveMember(managedMember, membership: membership) {
+                Button(role: .destructive) {
+                    onRequestRemoval(managedMember)
+                } label: {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Remove \(managedMember.displayName ?? "member")")
+            } else if !canManage {
+                Text("View only")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - Row helpers (all take an already-resolved membership; none re-fetch)
+
+    private func activeMembership(for managedMember: HouseholdMember) -> HouseholdMembership? {
+        guard let household = managedMember.household else { return nil }
+        let req = NSFetchRequest<HouseholdMembership>(entityName: "HouseholdMembership")
+        req.fetchLimit = 1
+        req.predicate = NSPredicate(format: "household == %@ AND memberProfile == %@ AND status == %@", household, managedMember, "active")
+        req.sortDescriptors = [NSSortDescriptor(key: "joinedAt", ascending: true), NSSortDescriptor(key: "createdAt", ascending: true)]
+        return try? context.fetch(req).first
+    }
+
+    private func canRemoveMember(_ managedMember: HouseholdMember, membership: HouseholdMembership?) -> Bool {
+        guard canManage else { return false }
+        guard managedMember.objectID != currentMember?.objectID else { return false }
+        guard !isOwner(managedMember, membership: membership) else { return false }
+        return membership != nil
+    }
+
+    private func isOwner(_ managedMember: HouseholdMember, membership: HouseholdMembership?) -> Bool {
+        if let role = membership?.role?.lowercased(), ["leader", "owner"].contains(role) {
+            return true
+        }
+        guard let household = managedMember.household,
+              let creatorId = household.value(forKey: "createdByAppUserId") as? String,
+              !creatorId.isEmpty else { return false }
+        return (managedMember.value(forKey: "claimedByAppUserId") as? String) == creatorId
+    }
+
+    private func roleLabel(for membership: HouseholdMembership?) -> String {
+        let rawRole = membership?.role?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let role = rawRole?.isEmpty == false ? rawRole! : "member"
+        return role.prefix(1).uppercased() + role.dropFirst()
+    }
+
+    private func identityLabel(for managedMember: HouseholdMember, membership: HouseholdMembership?) -> String? {
+        if let displayName = membership?.appUser?.displayName, !displayName.isEmpty, displayName != managedMember.displayName {
+            return displayName
+        }
+        if let appUserId = membership?.value(forKey: "appUserId") as? String, !appUserId.isEmpty {
+            return appUserId.hasPrefix("apple:") ? "Apple ID linked" : "Identity linked"
+        }
+        if let claimed = managedMember.value(forKey: "claimedByAppUserId") as? String, !claimed.isEmpty {
+            return claimed.hasPrefix("apple:") ? "Apple ID linked" : "Identity linked"
+        }
+        return "Invite pending"
     }
 }
 
