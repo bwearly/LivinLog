@@ -35,9 +35,13 @@ enum CloudSharing {
             .containerIdentifier ?? ""
     }
 
-    static func accountStatus(using persistentContainer: NSPersistentCloudKitContainer) async -> CKAccountStatus {
+    static func cloudKitContainer(from persistentContainer: NSPersistentCloudKitContainer) -> CKContainer {
         let identifier = containerIdentifier(from: persistentContainer)
-        let container = identifier.isEmpty ? CKContainer.default() : CKContainer(identifier: identifier)
+        return identifier.isEmpty ? CKContainer.default() : CKContainer(identifier: identifier)
+    }
+
+    static func accountStatus(using persistentContainer: NSPersistentCloudKitContainer) async -> CKAccountStatus {
+        let container = cloudKitContainer(from: persistentContainer)
 
         do {
             return try await container.accountStatus()
@@ -264,9 +268,31 @@ enum CloudSharing {
         share: CKShare,
         persistentContainer: NSPersistentCloudKitContainer
     ) async throws {
-        let identifier = containerIdentifier(from: persistentContainer)
-        let container = identifier.isEmpty ? CKContainer.default() : CKContainer(identifier: identifier)
+        let container = cloudKitContainer(from: persistentContainer)
         _ = try await container.privateCloudDatabase.deleteRecord(withID: share.recordID)
     }
-    
+
+    /// Called by a participant (never the owner) to leave a shared household on their own.
+    /// Deleting the CKShare record from *my own* shared database is CloudKit's documented
+    /// mechanism for a participant to leave a share they don't own — it removes this
+    /// participant from `share.participants` without touching the owner's private-database
+    /// record, mirroring `stopSharing` above (the owner-side equivalent: delete from
+    /// `privateCloudDatabase` to stop sharing entirely). If no CKShare is resolvable for this
+    /// household from this device (e.g. share metadata hasn't synced down yet), this is a
+    /// no-op rather than a throw — the caller still proceeds with the local depart step so a
+    /// member isn't blocked from leaving locally by a CloudKit-side lookup gap.
+    static func leaveShare(
+        for household: Household,
+        persistentContainer: NSPersistentCloudKitContainer
+    ) async throws {
+        guard let share = try fetchShare(for: household.objectID, persistentContainer: persistentContainer) else {
+            print("⚠️ [CloudSharing] leaveShare: no CKShare resolvable for household; skipping CloudKit-side leave")
+            return
+        }
+
+        let container = cloudKitContainer(from: persistentContainer)
+        _ = try await container.sharedCloudDatabase.deleteRecord(withID: share.recordID)
+        print("✅ [CloudSharing] Left share recordID=\(share.recordID.recordName) household=\(household.name ?? "Household")")
+    }
+
 }

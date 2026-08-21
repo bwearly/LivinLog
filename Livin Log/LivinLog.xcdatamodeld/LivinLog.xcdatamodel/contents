@@ -17,12 +17,15 @@
         <relationship name="memberships" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="HouseholdMembership" inverseName="household" inverseEntity="HouseholdMembership" />
         <relationship name="bookEntries" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="BookEntry" inverseName="household" inverseEntity="BookEntry" />
         <relationship name="invites" optional="YES" deletionRule="Cascade" destinationEntity="Invite" inverseName="household" inverseEntity="Invite" toMany="YES" />
+        <relationship name="recipes" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Recipe" inverseName="household" inverseEntity="Recipe" />
     </entity>
     <entity name="HouseholdMember" representedClassName="HouseholdMember" syncable="YES" codeGenerationType="class">
         <attribute name="claimedByAppUserId" optional="YES" attributeType="String" />
         <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
         <attribute name="displayName" optional="YES" attributeType="String" />
+        <attribute name="householdId" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
         <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
+        <attribute name="isActive" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES" />
         <relationship name="feedbacks" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="MovieFeedback" inverseName="member" inverseEntity="MovieFeedback" />
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="members" inverseEntity="Household" />
         <relationship name="memberships" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="HouseholdMembership" inverseName="memberProfile" inverseEntity="HouseholdMembership" />
@@ -178,5 +181,47 @@
         <attribute name="expiresAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
         <attribute name="maxUses" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES" />
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="invites" inverseEntity="Household" />
+    </entity>
+    <entity name="Recipe" representedClassName="Recipe" syncable="YES" codeGenerationType="class">
+        <attribute name="authorSource" optional="YES" attributeType="String" />
+        <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
+        <attribute name="householdId" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
+        <attribute name="notes" optional="YES" attributeType="String" />
+        <attribute name="servings" attributeType="Integer 16" defaultValueString="4" usesScalarValueType="YES" />
+        <attribute name="title" optional="YES" attributeType="String" />
+        <attribute name="updatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
+        <relationship name="categories" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="RecipeCategory" inverseName="recipes" inverseEntity="RecipeCategory" />
+        <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="recipes" inverseEntity="Household" />
+        <relationship name="ingredients" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="RecipeIngredient" inverseName="recipe" inverseEntity="RecipeIngredient" />
+        <relationship name="photos" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="RecipePhoto" inverseName="recipe" inverseEntity="RecipePhoto" />
+        <relationship name="steps" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="RecipeStep" inverseName="recipe" inverseEntity="RecipeStep" />
+    </entity>
+    <entity name="RecipeCategory" representedClassName="RecipeCategory" syncable="YES" codeGenerationType="class">
+        <attribute name="householdId" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
+        <attribute name="name" optional="YES" attributeType="String" />
+        <relationship name="recipes" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Recipe" inverseName="categories" inverseEntity="Recipe" />
+    </entity>
+    <entity name="RecipeIngredient" representedClassName="RecipeIngredient" syncable="YES" codeGenerationType="class">
+        <attribute name="amount" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES" />
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
+        <attribute name="name" optional="YES" attributeType="String" />
+        <attribute name="position" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES" />
+        <attribute name="unit" optional="YES" attributeType="String" />
+        <relationship name="recipe" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Recipe" inverseName="ingredients" inverseEntity="Recipe" />
+    </entity>
+    <entity name="RecipeStep" representedClassName="RecipeStep" syncable="YES" codeGenerationType="class">
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
+        <attribute name="position" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES" />
+        <attribute name="sectionTitle" optional="YES" attributeType="String" />
+        <attribute name="text" optional="YES" attributeType="String" />
+        <relationship name="recipe" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Recipe" inverseName="steps" inverseEntity="Recipe" />
+    </entity>
+    <entity name="RecipePhoto" representedClassName="RecipePhoto" syncable="YES" codeGenerationType="class">
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
+        <attribute name="photoData" optional="YES" attributeType="Binary" allowsExternalBinaryDataStorage="YES" />
+        <attribute name="position" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES" />
+        <relationship name="recipe" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Recipe" inverseName="photos" inverseEntity="Recipe" />
     </entity>
 </model>

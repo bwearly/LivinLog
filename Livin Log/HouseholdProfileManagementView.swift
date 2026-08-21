@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreData
+import CloudKit
 
 struct HouseholdProfileManagementView: View {
     @Environment(\.managedObjectContext) private var context
@@ -13,7 +14,10 @@ struct HouseholdProfileManagementView: View {
     let currentAppUser: AppUser?
     let onCleanupCompleted: (() async -> Void)?
 
+    private let persistentContainer = PersistenceController.shared.container
+
     @State private var pendingDeletion: ProfileDeletionCandidate?
+    @State private var pendingLeave: ProfileLeaveCandidate?
     @State private var deletionError: String?
     @State private var isDeleting = false
     @State private var hiddenMembershipIDs: Set<NSManagedObjectID> = []
@@ -48,7 +52,7 @@ struct HouseholdProfileManagementView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(showsPickerTitle ? "Choose your profile" : "Manage duplicate profiles")
                         .font(.headline)
-                    Text("Swipe left on an extra profile to delete only that profile or membership. Household content stays in the household.")
+                    Text("Swipe left on a duplicate private profile to delete it, or on a shared household's profile to leave it. Household content stays in the household either way.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -81,10 +85,24 @@ struct HouseholdProfileManagementView: View {
         } message: {
             Text(pendingDeletion?.message ?? "")
         }
-        .alert("Profile Delete Failed", isPresented: Binding(get: { deletionError != nil }, set: { if !$0 { deletionError = nil } })) {
+        .alert("Couldn't Complete", isPresented: Binding(get: { deletionError != nil }, set: { if !$0 { deletionError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(deletionError ?? "The selected profile could not be deleted.")
+            Text(deletionError ?? "The selected profile could not be updated.")
+        }
+        .confirmationDialog(
+            pendingLeave?.title ?? "Leave Household?",
+            isPresented: Binding(get: { pendingLeave != nil }, set: { if !$0 { pendingLeave = nil } }),
+            titleVisibility: .visible
+        ) {
+            if let pendingLeave {
+                Button(pendingLeave.buttonTitle, role: .destructive) {
+                    performLeaveHousehold(pendingLeave)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(pendingLeave?.message ?? "")
         }
     }
 
@@ -167,6 +185,13 @@ struct HouseholdProfileManagementView: View {
                     Label("Delete", systemImage: "trash")
                 }
                 .disabled(isDeleting)
+            case .leaveAllowed(let candidate):
+                Button(role: .destructive) {
+                    pendingLeave = candidate
+                } label: {
+                    Label("Leave", systemImage: "rectangle.portrait.and.arrow.right")
+                }
+                .disabled(isDeleting)
             case .blocked:
                 Button(role: .destructive) {} label: {
                     Label("Can't Delete", systemImage: "trash.slash")
@@ -201,8 +226,26 @@ struct HouseholdProfileManagementView: View {
             return .blocked("Delete unavailable: store could not be resolved.")
         }
 
+        if store == PersistenceController.shared.sharedStore {
+            // Only a participant's own mirrored membership ever lives in the shared store — the
+            // owner always sees their own household via the private store (they own the zone),
+            // so this can't be the owner leaving their own household. The role check below is
+            // defense in depth on top of that store-scoping guarantee, not the primary guard.
+            let role = (membership.role ?? "member").lowercased()
+            guard !["leader", "owner"].contains(role) else {
+                return .blocked("Household owners can't leave their own household from here.")
+            }
+
+            return .leaveAllowed(ProfileLeaveCandidate(
+                membership: membership,
+                title: "Leave \(summary.householdName)?",
+                message: "This removes \(summary.memberName) from \(summary.householdName)'s active roster and revokes your iCloud access to it. Your past ratings and other content stay in the household, attributed to you. This cannot be undone.",
+                buttonTitle: "Leave Household"
+            ))
+        }
+
         guard store == PersistenceController.shared.privateStore else {
-            return .blocked("Shared household profiles are managed by the household owner. Leaving a shared household is separate from deleting a profile.")
+            return .blocked("Delete unavailable: unrecognized store.")
         }
 
         return .allowed(ProfileDeletionCandidate(
@@ -292,6 +335,61 @@ struct HouseholdProfileManagementView: View {
         try context.save()
     }
 
+    private func performLeaveHousehold(_ candidate: ProfileLeaveCandidate) {
+        deletionError = nil
+        isDeleting = true
+
+        Task { @MainActor in
+            do {
+                try await leaveHousehold(candidate.membership)
+                hiddenMembershipIDs.insert(candidate.membership.objectID)
+                pendingLeave = nil
+                isDeleting = false
+                debugProfileDeletion("left household membership id=\(candidate.membership.objectID.uriRepresentation().absoluteString)")
+
+                if let onCleanupCompleted {
+                    await onCleanupCompleted()
+                }
+            } catch {
+                context.rollback()
+                isDeleting = false
+                deletionError = error.localizedDescription
+                debugProfileDeletion("leave failed: \(error)")
+            }
+        }
+    }
+
+    /// Self-leave counterpart to `deleteProfile`. Unlike delete, this never removes the
+    /// `HouseholdMember`/`HouseholdMembership` rows — see `IdentityStore.departHousehold` for
+    /// why (historical attribution must keep resolving). CloudKit access is revoked first,
+    /// before the local soft-delete, so a failed CKShare call doesn't leave the member
+    /// locally "departed" while still holding live write access to the household's zone.
+    private func leaveHousehold(_ membership: HouseholdMembership) async throws {
+        guard let scopedMembership = try context.existingObject(with: membership.objectID) as? HouseholdMembership else {
+            throw profileDeletionError("Profile no longer exists.")
+        }
+
+        guard scopedMembership.objectID != currentMembership?.objectID else {
+            throw profileDeletionError("Switch to another profile before leaving the current household.")
+        }
+
+        guard let household = scopedMembership.household else {
+            throw profileDeletionError("Household could not be resolved.")
+        }
+
+        guard household.objectID.persistentStore == PersistenceController.shared.sharedStore else {
+            throw profileDeletionError("This profile isn't part of a shared household.")
+        }
+
+        guard let member = scopedMembership.memberProfile else {
+            throw profileDeletionError("Member profile could not be resolved.")
+        }
+
+        try await CloudSharing.leaveShare(for: household, persistentContainer: persistentContainer)
+        try IdentityStore.departHousehold(member, context: context)
+        SharedHouseholdLeaveStore.markLeft(household)
+    }
+
     private func canSafelyDeleteMember(_ member: HouseholdMember, excluding membership: HouseholdMembership) throws -> Bool {
         guard let household = member.household else { return false }
 
@@ -322,6 +420,7 @@ struct HouseholdProfileManagementView: View {
 
 private enum ProfileDeleteAvailability {
     case allowed(ProfileDeletionCandidate)
+    case leaveAllowed(ProfileLeaveCandidate)
     case blocked(String)
 }
 
@@ -371,6 +470,14 @@ private struct ProfileSummary {
 }
 
 private struct ProfileDeletionCandidate: Identifiable {
+    let id = UUID()
+    let membership: HouseholdMembership
+    let title: String
+    let message: String
+    let buttonTitle: String
+}
+
+private struct ProfileLeaveCandidate: Identifiable {
     let id = UUID()
     let membership: HouseholdMembership
     let title: String

@@ -8,6 +8,7 @@ struct BooksListView: View {
     let household: Household
 
     @FetchRequest private var allBooks: FetchedResults<BookEntry>
+    @FetchRequest private var fetchedMembers: FetchedResults<HouseholdMember>
 
     @State private var selectedMemberID: NSManagedObjectID?
     @State private var showAdd = false
@@ -24,13 +25,15 @@ struct BooksListView: View {
             predicate: householdScopedPredicate(household, idKey: "householdId"),
             animation: .default
         )
+
+        _fetchedMembers = FetchRequest<HouseholdMember>(
+            sortDescriptors: [NSSortDescriptor(key: "createdAt", ascending: true)],
+            predicate: householdScopedPredicate(household, idKey: "householdId")
+        )
     }
 
     private var members: [HouseholdMember] {
-        let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
-        req.predicate = NSPredicate(format: "household == %@", household)
-        req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
-        return (try? context.fetch(req)) ?? []
+        Array(fetchedMembers)
     }
 
     private var selectedMember: HouseholdMember? {
@@ -59,7 +62,12 @@ struct BooksListView: View {
                 }, set: { selectedMemberID = $0 })) {
                     Text("Select profile").tag(Optional<NSManagedObjectID>.none)
                     ForEach(members, id: \.objectID) { member in
-                        Text(member.displayName ?? "Member").tag(Optional(member.objectID))
+                        // Kept in this picker even after leaving (unlike roster-only pickers
+                        // elsewhere) so their reading log stays reachable — see summary in the
+                        // "Select Profile" card list below for the fuller explanation.
+                        let isFormerMember = (member.value(forKey: "isActive") as? Bool) == false
+                        Text((member.displayName ?? "Member") + (isFormerMember ? " (left)" : ""))
+                            .tag(Optional(member.objectID))
                     }
                 }
                 .pickerStyle(.segmented)
@@ -68,6 +76,12 @@ struct BooksListView: View {
             if selectedMember == nil {
                 Section {
                     ForEach(members, id: \.objectID) { member in
+                        // This picker deliberately isn't roster-filtered by isActive: it's
+                        // "whose reading log do you want to view," not "who can add a book"
+                        // (that's still gated separately by canEditSelectedMember/canAct), so a
+                        // departed member's reading history stays reachable — just labeled.
+                        let isFormerMember = (member.value(forKey: "isActive") as? Bool) == false
+
                         Button {
                             selectedMemberID = member.objectID
                         } label: {
@@ -79,7 +93,7 @@ struct BooksListView: View {
                                         .font(.headline)
                                         .foregroundStyle(.primary)
 
-                                    Text("View this reader’s books")
+                                    Text(isFormerMember ? "No longer in household · view their books" : "View this reader’s books")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }

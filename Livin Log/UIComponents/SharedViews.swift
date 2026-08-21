@@ -16,6 +16,7 @@ enum AppCategoryStyle {
     case dates
     case puzzles
     case settings
+    case recipes
 
     var accent: Color {
         switch self {
@@ -27,6 +28,7 @@ enum AppCategoryStyle {
         case .dates: return .green
         case .puzzles: return .teal
         case .settings: return .blue
+        case .recipes: return .brown
         }
     }
 
@@ -40,6 +42,7 @@ enum AppCategoryStyle {
         case .dates: return .mint
         case .puzzles: return .yellow
         case .settings: return .cyan
+        case .recipes: return .orange
         }
     }
 

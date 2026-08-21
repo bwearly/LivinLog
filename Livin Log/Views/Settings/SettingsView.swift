@@ -36,6 +36,20 @@ struct SettingsView: View {
     @State private var showConfirmDeleteAll = false
     @State private var memberPendingRemoval: HouseholdMember?
 
+    // Presented right after a member is removed: this app has no reliable way to pick out
+    // which CKShare.Participant corresponds to the just-removed HouseholdMembership (see
+    // CloudShareManagementSheet's doc comment), so it hands the owner off to Apple's own
+    // participant-management UI to finish revoking that person's CloudKit access.
+    @State private var showingShareManagementForRemoval = false
+
+    // fetchMembers(for:) is a plain NSFetchRequest re-run on every body evaluation, not a
+    // @FetchRequest — bumping this (see the NSManagedObjectContextObjectsDidChange listener
+    // below) is what forces membersSection to actually re-render when a member's row (e.g. an
+    // accepted invitee's HouseholdMember) merges in via CloudKit import while this screen is
+    // already open, instead of relying on AppState's own remote-change handling to happen to
+    // republish and catch it.
+    @State private var membersRosterRefreshTick = 0
+
     // Presents Apple's official CloudKit sharing UI.
     @State private var showingInviteShareSheet = false
 
@@ -89,6 +103,9 @@ struct SettingsView: View {
         .onChange(of: household?.objectID) { _, _ in
             if let hh = household { ensureDefaultMemberExists(in: hh) }
             reloadShareStatus()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSManagedObjectContextObjectsDidChange, object: context)) { _ in
+            membersRosterRefreshTick += 1
         }
 
         // Invite sheet (owner sharing)
@@ -154,6 +171,18 @@ struct SettingsView: View {
                 SelectionStore.saveDeviceMember(createdMember, for: sharedHousehold)
             }
         }
+        .sheet(isPresented: $showingShareManagementForRemoval, onDismiss: {
+            reloadShareStatus()
+        }) {
+            if let share {
+                CloudShareManagementSheet(
+                    share: share,
+                    container: CloudSharing.cloudKitContainer(from: persistentContainer),
+                    onDismiss: { showingShareManagementForRemoval = false }
+                )
+                .ignoresSafeArea()
+            }
+        }
 
 
         .alert("Delete All Data?", isPresented: $showConfirmDeleteAll) {
@@ -173,7 +202,7 @@ struct SettingsView: View {
                 }
             }
         } message: {
-            Text("This removes \(memberPendingRemoval?.displayName ?? "this member") from the household. Shared household content is preserved, and their global Apple sign-in user is not deleted.")
+            Text("This removes \(memberPendingRemoval?.displayName ?? "this member") from the household's active roster. Their past ratings and other household content are preserved and stay attributed to them. You'll be asked next to finish revoking their iCloud access.")
         }
 
         .alert("Notifications Disabled", isPresented: $showNotificationsDeniedAlert) {
@@ -276,6 +305,11 @@ struct SettingsView: View {
     private var membersSection: some View {
         Section("Members") {
             if let household {
+                // membersRosterRefreshTick isn't read here directly, but bumping that @State
+                // (see the NSManagedObjectContextObjectsDidChange listener on body) still
+                // forces this whole view's body — and therefore this fresh fetch — to
+                // re-evaluate, not just when SwiftUI happens to re-render for an unrelated
+                // reason.
                 let members = fetchMembers(for: household)
                 if members.isEmpty {
                     ContentUnavailableView("No members yet", systemImage: "person.3")
@@ -636,8 +670,14 @@ struct SettingsView: View {
     // MARK: - Members
 
     private func fetchMembers(for household: Household) -> [HouseholdMember] {
+        // Current-roster context: a departed member (isActive == NO) is intentionally excluded
+        // here — they still show up wherever their historical ratings/entries are attributed,
+        // just not in the active membership list this screen manages.
         let req: NSFetchRequest<HouseholdMember> = HouseholdMember.fetchRequest()
-        req.predicate = NSPredicate(format: "household == %@", household)
+        req.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            householdScopedPredicate(household, idKey: "householdId"),
+            NSPredicate(format: "isActive == YES")
+        ])
         req.sortDescriptors = [
             NSSortDescriptor(
                 key: "displayName",
@@ -724,8 +764,18 @@ struct SettingsView: View {
         do {
             let scopedMember = try context.existingObject(with: managedMember.objectID) as? HouseholdMember
             if let scopedMember {
-                try IdentityStore.removeMemberFromHousehold(scopedMember, context: context)
+                // Soft-deactivates: household/feedbacks/bookEntries relationships stay intact,
+                // so this member's past ratings keep resolving. See IdentityStore.departHousehold.
+                try IdentityStore.departHousehold(scopedMember, context: context)
                 NotificationCenter.default.post(name: .didRequestCloudKitResync, object: nil)
+
+                // Data is preserved locally as of this point regardless of what happens next.
+                // CloudKit access revocation is a separate step handed off to Apple's native
+                // share-management UI (see CloudShareManagementSheet) since this app can't
+                // reliably pick out which CKShare.Participant corresponds to `scopedMember`.
+                if share != nil {
+                    showingShareManagementForRemoval = true
+                }
             }
         } catch {
             context.rollback()

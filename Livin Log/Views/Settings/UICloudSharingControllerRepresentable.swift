@@ -207,3 +207,58 @@ struct CloudKitHouseholdSharingSheet: UIViewControllerRepresentable {
         }
     }
 }
+
+/// Presents Apple's native "people with access" management UI for an *existing* household
+/// CKShare (constructed with `UICloudSharingController(share:container:)`, not the
+/// preparation-handler initializer `CloudKitHouseholdSharingSheet` above uses to create one).
+///
+/// This exists specifically so leader-initiated member removal doesn't have to solve identity
+/// correlation itself: this app has no stored mapping from a `HouseholdMembership`/`AppUser`
+/// to the corresponding `CKShare.Participant` (CloudKit's `CKUserIdentity` isn't the same
+/// identity system as this app's Sign in with Apple durable subject, and nothing persists a
+/// link between them). Rather than guess a participant to remove by, e.g., matching display
+/// names, this hands the owner off to CloudKit's own participant list, which already knows the
+/// real identities and lets them pick the right person to remove.
+struct CloudShareManagementSheet: UIViewControllerRepresentable {
+    let share: CKShare
+    let container: CKContainer
+    let onDismiss: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onDismiss: onDismiss)
+    }
+
+    func makeUIViewController(context: Context) -> UICloudSharingController {
+        let controller = UICloudSharingController(share: share, container: container)
+        controller.delegate = context.coordinator
+        controller.availablePermissions = [.allowReadWrite, .allowPrivate]
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UICloudSharingController, context: Context) {}
+
+    final class Coordinator: NSObject, UICloudSharingControllerDelegate {
+        private let onDismiss: () -> Void
+
+        init(onDismiss: @escaping () -> Void) {
+            self.onDismiss = onDismiss
+        }
+
+        func itemTitle(for csc: UICloudSharingController) -> String? {
+            csc.share?[CKShare.SystemFieldKey.title] as? String
+        }
+
+        func cloudSharingControllerDidSaveShare(_ csc: UICloudSharingController) {
+            print("ℹ️ [CloudShareManagementSheet] share changes saved (e.g. a participant was removed)")
+        }
+
+        func cloudSharingControllerDidStopSharing(_ csc: UICloudSharingController) {
+            print("ℹ️ [CloudShareManagementSheet] owner stopped sharing from the management sheet")
+            DispatchQueue.main.async { self.onDismiss() }
+        }
+
+        func cloudSharingController(_ csc: UICloudSharingController, failedToSaveShareWithError error: Error) {
+            print("❌ [CloudShareManagementSheet] failed to save share changes: \(error.localizedDescription)")
+        }
+    }
+}

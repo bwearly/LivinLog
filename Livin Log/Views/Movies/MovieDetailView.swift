@@ -19,6 +19,10 @@ struct MovieDetailView: View {
 
     // Loaded data (keeps SwiftUI body simple)
     @State private var members: [HouseholdMember] = []
+    // Departed members whose past rating on this specific movie should still display (see
+    // fetchedFormerMembersWithFeedback). Kept separate from `members` so the roster-facing
+    // editor picker never offers them, while the read-only summary section still can.
+    @State private var formerMembersWithFeedback: [HouseholdMember] = []
     @State private var viewings: [Viewing] = []
     @State private var feedbackByMemberID: [NSManagedObjectID: MovieFeedback] = [:]
 
@@ -158,6 +162,12 @@ struct MovieDetailView: View {
         }
         .task {
             await ensurePosterLoaded()
+        }
+        // Same pattern as MoviesListView: members/feedback here are loaded once into @State
+        // (not @FetchRequest), so without this the rating rows won't pick up a member whose
+        // HouseholdMember row merges in via CloudKit import while this screen is already open.
+        .onReceive(NotificationCenter.default.publisher(for: .NSManagedObjectContextObjectsDidChange, object: context)) { _ in
+            if didInitialLoad { reloadAll() }
         }
         .sheet(item: $viewingToEdit) { viewing in
             ViewingDateEditor(
@@ -368,7 +378,7 @@ struct MovieDetailView: View {
 
     private var feedbackSummarySection: some View {
         Section("Household Feedback") {
-            if members.isEmpty {
+            if members.isEmpty && formerMembersWithFeedback.isEmpty {
                 Text("No members found.")
                     .foregroundStyle(.secondary)
             } else {
@@ -384,6 +394,13 @@ struct MovieDetailView: View {
                     } else {
                         summaryRow(for: m)
                     }
+                }
+
+                // Former members are always read-only here (never tappable, even while
+                // editing) — they've left the household, so there's nothing to route into
+                // feedbackEditorSection for them.
+                ForEach(formerMembersWithFeedback) { m in
+                    summaryRow(for: m)
                 }
             }
         }
@@ -608,6 +625,7 @@ struct MovieDetailView: View {
 
     private func reloadMembers() {
         members = fetchedMembers()
+        formerMembersWithFeedback = fetchedFormerMembersWithFeedback()
         if selectedMember == nil {
             selectedMember = authorizedActingMember
         }
@@ -1103,10 +1121,34 @@ struct MovieDetailView: View {
 
     // MARK: - Data helpers
 
+    /// Current roster: feeds the editable feedback picker and the tappable rows in the
+    /// summary section. A departed member (isActive == NO) isn't offered here — see
+    /// fetchedFormerMembersWithFeedback() for how their past rating still surfaces.
     private func fetchedMembers() -> [HouseholdMember] {
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return [] }
         let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
-        req.predicate = householdScopedPredicate(scopedHousehold)
+        req.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            householdScopedPredicate(scopedHousehold, idKey: "householdId"),
+            NSPredicate(format: "isActive == YES")
+        ])
+        req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
+        return (try? context.fetch(req)) ?? []
+    }
+
+    /// Historical-attribution context: former members (isActive == NO) who rated *this*
+    /// specific movie, so their existing rating keeps displaying (read-only) after they've
+    /// left the household, instead of disappearing from the summary the way a plain
+    /// roster-scoped fetch would drop them. Deliberately scoped to "has feedback on this
+    /// movie" rather than every former member ever, so movies nobody departed rated don't
+    /// grow an empty former-members section.
+    private func fetchedFormerMembersWithFeedback() -> [HouseholdMember] {
+        guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return [] }
+        let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
+        req.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            householdScopedPredicate(scopedHousehold, idKey: "householdId"),
+            NSPredicate(format: "isActive == NO"),
+            NSPredicate(format: "ANY feedbacks.movie == %@", movie)
+        ])
         req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
         return (try? context.fetch(req)) ?? []
     }
@@ -1134,17 +1176,28 @@ struct MovieDetailView: View {
 
     private func summaryRow(for m: HouseholdMember) -> some View {
         let fb = fetchFeedback(movie: movie, member: m)
+        let isFormerMember = (m.value(forKey: "isActive") as? Bool) == false
 
         return VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(m.displayName ?? "Member")
                     .font(.headline)
+
+                if isFormerMember {
+                    Text("No longer in household")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.12), in: Capsule())
+                }
+
                 Spacer()
                 Text(ratingText(fb?.rating ?? 0))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
 
-                if isEditing {
+                if isEditing && !isFormerMember {
                     Image(systemName: "chevron.right")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(.tertiary)

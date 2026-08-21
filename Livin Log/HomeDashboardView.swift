@@ -25,6 +25,7 @@ struct HomeDashboardView: View {
                     moviesCard
                     puzzlesCard
                     quotesCard
+                    recipesCard
                     tvShowsCard
                 }
                 .padding(.horizontal, 16)
@@ -182,6 +183,28 @@ struct HomeDashboardView: View {
         }
     }
 
+
+    @ViewBuilder
+    private var recipesCard: some View {
+        if let household {
+            SharedViews.SectionCard(
+                title: "Recipes",
+                subtitle: "Household recipe box",
+                systemImage: "fork.knife",
+                style: .recipes,
+                destination: RecipesListView(household: household, member: member)
+            )
+        } else {
+            SharedViews.SectionCard(
+                title: "Recipes",
+                subtitle: "Select a household first",
+                systemImage: "fork.knife",
+                style: .recipes,
+                destination: SharedViews.PlaceholderView(title: "Select Household")
+            )
+            .opacity(0.6)
+        }
+    }
 
     @ViewBuilder
     private var quotesCard: some View {

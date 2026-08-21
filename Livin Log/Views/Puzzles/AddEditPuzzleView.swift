@@ -329,7 +329,9 @@ private enum PieceCountPreset: Int32, CaseIterable, Identifiable {
     }
 }
 
-private struct CameraPicker: UIViewControllerRepresentable {
+// Internal (not private) so AddEditRecipeView can reuse this camera flow — see
+// RecipesListView/AddEditRecipeView.swift.
+struct CameraPicker: UIViewControllerRepresentable {
     var onImagePicked: (UIImage?) -> Void
 
     func makeUIViewController(context: Context) -> UIImagePickerController {

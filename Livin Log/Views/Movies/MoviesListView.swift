@@ -175,6 +175,10 @@ struct MoviesListView: View {
             Task { await reloadSleptAggregates() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSManagedObjectContextObjectsDidChange, object: context)) { _ in
+            // reloadMembers() previously only ran once (the didBackfill-guarded .task above),
+            // so a member whose HouseholdMember row merged in via CloudKit import while this
+            // screen was already open (e.g. an accepted invitee) never showed up here.
+            reloadMembers()
             Task { await reloadAggregates() }
         }
         .alert("Could Not Update Movies", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
@@ -400,8 +404,15 @@ struct MoviesListView: View {
     }
 
     private func reloadMembers() {
+        // Roster context (judgment call): this feeds the "who slept" member picker, which is
+        // about the current household's members going forward, so a departed member
+        // (isActive == NO) is excluded here. Their past feedback rows are unaffected — this
+        // only controls the picker, not what MovieDetailView displays for existing feedback.
         let request = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
-        request.predicate = householdScopedPredicate(household)
+        request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            householdScopedPredicate(household, idKey: "householdId"),
+            NSPredicate(format: "isActive == YES")
+        ])
         request.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
         members = (try? context.fetch(request)) ?? []
     }

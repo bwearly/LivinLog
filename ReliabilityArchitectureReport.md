@@ -16,6 +16,7 @@
 - `HouseholdMember.claimedByAppUserId` records the durable owner of a profile. Legacy/imported members may remain nil until explicitly claimed.
 - Book writes require a resolved current `AppUser`, `Household`, and claimed/authorized `HouseholdMember`; writes are denied with visible errors when the actor cannot be resolved or attempts to write for another member.
 - Pending invite URLs are stored only until accepted or explicitly cleared. Resume attempts are guarded so the same invalid invite cannot continuously refetch or re-present an error loop in one app session.
+- Leaving a household (self-leave via `HouseholdProfileManagementView`'s swipe action, or leader-initiated removal via `SettingsView`) is a soft-deactivation (`IdentityStore.departHousehold`): `HouseholdMember.isActive = false` and the member's `HouseholdMembership.status` moves off `"active"`, but the `household`/`feedbacks`/`bookEntries`/`memberships` relationships are never touched, so historical attribution (past ratings, book entries) keeps resolving after departure. `IdentityStore.canAct`'s existing `status == "active"` membership check already blocks a departed member from further writes with no extra code — departure just stops satisfying that check. CKShare-side access revocation is separate: self-leave calls `CloudSharing.leaveShare` (the participant deletes the share record from their own shared database — CloudKit's documented mechanism, mirroring `stopSharing`'s owner-side equivalent); leader-initiated removal hands off to Apple's native `UICloudSharingController` (`CloudShareManagementSheet`) instead of guessing which `CKShare.Participant` to remove programmatically, since this app has no stored mapping from a `HouseholdMembership`/`AppUser` to a `CKUserIdentity`.
 
 ## Data model changes
 
@@ -26,8 +27,10 @@
 - `BookEntry.householdId`, `ownerMemberId`, `ownerAppUserId`
 - `BookEntry.coverID`, `isbn`, `firstPublishYear` for reliable OpenLibrary cover/result persistence
 - New `Invite` entity for future first-class invite tracking (`inviteCode`, `token`, `householdId`, creator, dates, max uses, status, relationship to household)
+- `HouseholdMember.householdId` — denormalized scalar mirror of `household.id`, set alongside the `household` relationship at every creation site (`AppState.createInitialHousehold`, `AppState.createAndClaimMember`, `ManageMembersView.addMember`). Lets `HouseholdMember` fetches use the same `household == %@ OR householdId == %@` fallback pattern (`householdScopedPredicate(_:idKey:)`) already used for `Movie`/`TVShow`/`LLQuote`/`BookEntry`, instead of a bare relationship predicate that can miss a row whose `household` relationship reference hasn't finished importing yet.
+- `HouseholdMember.isActive` (non-optional Bool, default `YES`) — added ahead of the leave/remove-household work (Session B) so a departed member's row can be soft-deactivated instead of detached or hard-deleted, keeping historical rating/book attribution resolvable. Relies on Core Data's automatic default-value application for non-optional scalars (same convention as `MovieFeedback.slept`/`Viewing.isRewatch`), so no `awakeFromInsert` change was needed.
 
-All new fields are optional to preserve lightweight migration compatibility with already-shipped stores.
+All new fields are optional (or scalar-with-default) to preserve lightweight migration compatibility with already-shipped stores.
 
 ## CloudKit Production schema checklist
 
@@ -37,8 +40,8 @@ TestFlight and App Store builds use the **Production** CloudKit schema. Before u
 
 | Entity | Attributes | Relationships |
 | --- | --- | --- |
-| `Household` | `createdByAppUserId`, `createdAt`, `id`, `name` | `calendarEvents`, `feedbacks`, `members`, `movies`, `puzzles`, `children`, `quotes`, `tvshows`, `viewings`, `memberships`, `bookEntries`, `invites` |
-| `HouseholdMember` | `claimedByAppUserId`, `createdAt`, `displayName`, `id` | `feedbacks`, `household`, `memberships`, `bookEntries` |
+| `Household` | `createdByAppUserId`, `createdAt`, `id`, `name` | `calendarEvents`, `feedbacks`, `members`, `movies`, `puzzles`, `children`, `quotes`, `tvshows`, `viewings`, `memberships`, `bookEntries`, `invites`, `recipes` |
+| `HouseholdMember` | `claimedByAppUserId`, `createdAt`, `displayName`, `householdId`, `id`, `isActive` | `feedbacks`, `household`, `memberships`, `bookEntries` |
 | `LLCalendarEvent` | `createdAt`, `day`, `id`, `month`, `name`, `notificationsEnabledForEvent`, `tag`, `updatedAt`, `year` | `household` |
 | `LLChild` | `birthday`, `createdAt`, `id`, `name`, `updatedAt` | `household`, `quotes` |
 | `LLPuzzle` | `brand`, `completedAt`, `createdAt`, `id`, `name`, `notes`, `photoData`, `pieceCount`, `updatedAt` | `household` |
@@ -51,6 +54,11 @@ TestFlight and App Store builds use the **Production** CloudKit schema. Before u
 | `HouseholdMembership` | `joinedAt`, `householdMemberId`, `householdId`, `appUserId`, `id`, `role`, `status`, `createdAt` | `household`, `memberProfile`, `appUser` |
 | `BookEntry` | `ownerAppUserId`, `ownerMemberId`, `householdId`, `id`, `title`, `author`, `rating`, `notes`, `spiceLevel`, `bookLength`, `createdAt`, `finishedAt`, `coverURL`, `coverID`, `isbn`, `firstPublishYear` | `household`, `ownerMember`, `ownerAppUser` |
 | `Invite` | `id`, `inviteCode`, `token`, `createdByAppUserId`, `householdId`, `status`, `createdAt`, `expiresAt`, `maxUses` | `household` |
+| `Recipe` | `authorSource`, `createdAt`, `householdId`, `id`, `notes`, `servings`, `title`, `updatedAt` | `categories`, `household`, `ingredients`, `photos`, `steps` |
+| `RecipeCategory` | `householdId`, `id`, `name` | `recipes` |
+| `RecipeIngredient` | `amount`, `id`, `name`, `position`, `unit` | `recipe` |
+| `RecipeStep` | `id`, `position`, `sectionTitle`, `text` | `recipe` |
+| `RecipePhoto` | `id`, `photoData`, `position` | `recipe` |
 
 ## Migration and recovery implications
 

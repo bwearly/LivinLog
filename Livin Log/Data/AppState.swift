@@ -210,6 +210,7 @@ final class AppState: ObservableObject {
         createdMember.createdAt = createdMember.createdAt ?? Date()
         createdMember.displayName = trimmedMemberName
         createdMember.household = household
+        createdMember.setValue(household.id, forKey: "householdId")
 
         try context.save()
 
@@ -285,6 +286,7 @@ final class AppState: ObservableObject {
         member.createdAt = Date()
         member.displayName = name
         member.household = scopedHousehold
+        member.setValue(scopedHousehold.id, forKey: "householdId")
 
         try context.save()
 

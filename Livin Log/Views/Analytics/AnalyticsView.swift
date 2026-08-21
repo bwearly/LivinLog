@@ -463,7 +463,7 @@ struct AnalyticsView: View {
 
     private func fetchMembers() throws -> [HouseholdMember] {
         let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
-        req.predicate = householdScopedPredicate(household)
+        req.predicate = householdScopedPredicate(household, idKey: "householdId")
         req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
         return try context.fetch(req)
     }

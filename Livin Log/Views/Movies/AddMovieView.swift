@@ -358,9 +358,15 @@ struct AddMovieView: View {
     }
 
     private func fetchedMembers() -> [HouseholdMember] {
+        // Roster context: this seeds a fresh feedback draft slot per member for a brand-new
+        // movie, so a departed member (isActive == NO) is excluded — they can't be offered a
+        // new rating slot for something they weren't in the household to watch.
         guard let scopedHousehold = activeHouseholdInContext(household, context: context) else { return [] }
         let req = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
-        req.predicate = householdScopedPredicate(scopedHousehold)
+        req.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            householdScopedPredicate(scopedHousehold, idKey: "householdId"),
+            NSPredicate(format: "isActive == YES")
+        ])
         req.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
         return (try? context.fetch(req)) ?? []
     }

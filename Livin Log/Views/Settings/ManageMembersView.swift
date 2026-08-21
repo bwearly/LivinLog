@@ -14,9 +14,42 @@ struct ManageMembersView: View {
 
     let household: Household?
 
+    // Reactive: re-fires automatically when a member's row (e.g. an accepted invitee's
+    // HouseholdMember) merges in via CloudKit import, instead of only on the next body
+    // re-evaluation triggered for some unrelated reason.
+    @FetchRequest private var fetchedMembers: FetchedResults<HouseholdMember>
+
     @State private var showingAdd = false
     @State private var addName = ""
     @State private var errorText: String?
+
+    init(household: Household?) {
+        self.household = household
+        let sortDescriptors = [
+            NSSortDescriptor(
+                key: "displayName",
+                ascending: true,
+                selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
+            )
+        ]
+        if let household {
+            // Roster context: departed members (isActive == NO) are excluded.
+            _fetchedMembers = FetchRequest(
+                entity: HouseholdMember.entity(),
+                sortDescriptors: sortDescriptors,
+                predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [
+                    householdScopedPredicate(household, idKey: "householdId"),
+                    NSPredicate(format: "isActive == YES")
+                ])
+            )
+        } else {
+            _fetchedMembers = FetchRequest(
+                entity: HouseholdMember.entity(),
+                sortDescriptors: sortDescriptors,
+                predicate: NSPredicate(value: false)
+            )
+        }
+    }
 
     private var canWrite: Bool {
         appState.isCurrentMemberAuthorized()
@@ -34,7 +67,7 @@ struct ManageMembersView: View {
             if household == nil {
                 ContentUnavailableView("No household selected", systemImage: "person.3")
             } else {
-                let members = fetchMembers()
+                let members = Array(fetchedMembers)
 
                 if members.isEmpty {
                     ContentUnavailableView("No members yet", systemImage: "person.3")
@@ -114,29 +147,6 @@ struct ManageMembersView: View {
         .disabled(household == nil || !canWrite)
     }
 
-    // MARK: - Fetch
-
-    private func fetchMembers() -> [HouseholdMember] {
-        guard let household else { return [] }
-
-        let req: NSFetchRequest<HouseholdMember> = HouseholdMember.fetchRequest()
-        req.predicate = NSPredicate(format: "household == %@", household)
-        req.sortDescriptors = [
-            NSSortDescriptor(
-                key: "displayName",
-                ascending: true,
-                selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
-            )
-        ]
-
-        do {
-            return try context.fetch(req)
-        } catch {
-            print("Fetch members failed:", error)
-            return []
-        }
-    }
-
     // MARK: - Mutations
 
     private func addMember() {
@@ -157,6 +167,7 @@ struct ManageMembersView: View {
         member.displayName = trimmed
         member.createdAt = Date()
         member.household = scopedHousehold
+        member.setValue(scopedHousehold.id, forKey: "householdId")
 
         do {
             try context.save()
@@ -174,7 +185,7 @@ struct ManageMembersView: View {
     private func deleteMembers(offsets: IndexSet) {
         guard canWrite else { return }
         errorText = nil
-        let members = fetchMembers()
+        let members = Array(fetchedMembers)
 
         offsets.map { members[$0] }.forEach(context.delete)
 

@@ -168,7 +168,32 @@ enum IdentityStore {
     }
 
 
-    static func removeMemberFromHousehold(_ member: HouseholdMember, context: NSManagedObjectContext) throws {
+    /// Shared by both flows a member can leave a household through: the leader removing
+    /// someone else, and a member removing themselves. Soft-deactivates instead of detaching:
+    /// `household`, `feedbacks`, `bookEntries`, and `memberships` relationships on `member` are
+    /// left completely intact, and the `HouseholdMembership` row is kept (not deleted) — only
+    /// `isActive` and the membership's `status` change. That keeps the relationship graph
+    /// unbroken so historical attribution (e.g. past movie ratings, book entries) still
+    /// resolves through `feedback.member`/`bookEntry.ownerMember` after departure, instead of
+    /// silently dropping out of roster-scoped fetches the way the previous
+    /// household/claimedByAppUserId-nilling implementation did.
+    ///
+    /// `claimedByAppUserId` is deliberately left untouched: it's this member's durable identity
+    /// link, not a "currently active" flag, and clearing it would make `unclaimedMembers(for:)`
+    /// offer this profile up to be claimed by someone else even though it still represents a
+    /// specific person's history.
+    ///
+    /// This only touches Core Data. CKShare-side access revocation (removing the departing
+    /// person as a CloudKit participant) is a separate step the caller is responsible for —
+    /// see `CloudSharing.leaveShare` for self-leave, and the native share-management sheet for
+    /// leader-initiated removal — since which mechanism applies depends on which side (owner vs.
+    /// participant) is departing, and this function doesn't know that.
+    ///
+    /// Uses a single `"removed"` status for both leader-initiated and self-initiated departure
+    /// (judgment call: a distinct `"left"` status was considered, but every existing status
+    /// check in this codebase already just tests `status == "active"`, so a second inactive
+    /// value would add a schema-adjacent distinction nothing currently reads).
+    static func departHousehold(_ member: HouseholdMember, context: NSManagedObjectContext) throws {
         guard let household = member.household else { return }
 
         let membershipReq = NSFetchRequest<HouseholdMembership>(entityName: "HouseholdMembership")
@@ -177,16 +202,12 @@ enum IdentityStore {
 
         for membership in memberships {
             membership.status = "removed"
-            membership.memberProfile = nil
-            membership.household = household
-            membership.appUser = nil
         }
 
-        member.setValue(nil, forKey: "claimedByAppUserId")
-        member.household = nil
+        member.setValue(false, forKey: "isActive")
 
         if context.hasChanges { try context.save() }
-        debug("removed member from household member=\(member.displayName ?? "Member") household=\(household.name ?? "Household") memberships=\(memberships.count)")
+        debug("member departed household (soft, data preserved) member=\(member.displayName ?? "Member") household=\(household.name ?? "Household") memberships=\(memberships.count)")
     }
 
     static func unclaimedMembers(for household: Household, context: NSManagedObjectContext) -> [HouseholdMember] {
