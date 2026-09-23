@@ -4,8 +4,12 @@ import CoreData
 /// relationship to `Household`. Do not call `NSPersistentCloudKitContainer.share`
 /// for child records and an existing household `CKShare`; mutating the share
 /// per child can cause CloudKit container-assignment crashes in Release/TestFlight.
+///
+/// Phase 1 (CKSyncEngine migration): `persistentContainer` param retyped to plain
+/// `NSPersistentContainer` -- this function's body never called any sharing API directly
+/// anyway, it only logs store placement.
 func includeInHouseholdShare(
-    persistentContainer _: NSPersistentCloudKitContainer,
+    persistentContainer _: NSPersistentContainer,
     household: Household,
     objects: [NSManagedObject],
     label: String

@@ -112,31 +112,15 @@ struct AcceptHouseholdInviteSheet: View {
         isAccepting = true
         errorMessage = nil
 
-        let persistence = PersistenceController.shared
-        persistence.container.acceptShareInvitations(
-            from: [pendingInvite.metadata],
-            into: persistence.sharedStore
-        ) { _, error in
-            DispatchQueue.main.async {
-                if let error {
-                    errorMessage = "Could not accept invite: \(error.localizedDescription)"
-                    isAccepting = false
-                    return
-                }
-
-                isAccepting = false
-                if let sourceURL = pendingInvite.sourceURL {
-                    PendingInviteStore.clear(reason: "accepted invite \(sourceURL.absoluteString)")
-                } else {
-                    PendingInviteStore.clear(reason: "accepted invite")
-                }
-                SharedHouseholdLeaveStore.clearAll()
-                dismiss()
-                NotificationCenter.default.post(name: .didAcceptCloudKitShare, object: nil)
-                print("✅ Invite accepted; posted didAcceptCloudKitShare; rerunning app state")
-
-                Task { await onAccepted() }
-            }
+        // Phase 1 (CKSyncEngine migration): disabled, not deleted. `persistence.container` is
+        // now a plain NSPersistentContainer, which has no `acceptShareInvitations(from:into:)`
+        // -- that was NSPersistentCloudKitContainer-mirroring-specific, and `sharedStore` no
+        // longer resolves to anything (single store). Sharing/accept waits on the shared-DB
+        // CKSyncEngine (Phase 3); surface the same error UI this screen already had for any
+        // other accept failure rather than silently doing nothing.
+        DispatchQueue.main.async {
+            errorMessage = "Accepting household invites is temporarily unavailable while iCloud sharing is being rebuilt."
+            isAccepting = false
         }
     }
 }

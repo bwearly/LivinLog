@@ -1003,7 +1003,7 @@ private struct AdvancedSharingView: View {
     let accountStatusMessage: String?
     let lastError: String?
     let persistedLastShareStatus: String
-    let persistentContainer: NSPersistentCloudKitContainer
+    let persistentContainer: NSPersistentContainer
     let currentMember: HouseholdMember?
     let currentMembership: HouseholdMembership?
 
@@ -1120,7 +1120,7 @@ private struct ShareDiagnosticsView: View {
     let accountStatus: CKAccountStatus
     let accountStatusMessage: String?
     let lastError: String?
-    let persistentContainer: NSPersistentCloudKitContainer
+    let persistentContainer: NSPersistentContainer
     let currentMember: HouseholdMember?
     let currentMembership: HouseholdMembership?
 
@@ -1372,7 +1372,7 @@ private struct ShareDiagnosticsSnapshot {
         currentMember: HouseholdMember?,
         currentMembership: HouseholdMembership?,
         lastError: String?,
-        persistentContainer: NSPersistentCloudKitContainer,
+        persistentContainer: NSPersistentContainer,
         context: NSManagedObjectContext
     ) -> ShareDiagnosticsSnapshot {
         let persistence = PersistenceController.shared
@@ -1405,7 +1405,7 @@ private struct ShareDiagnosticsSnapshot {
 
     private static func fetchSharedHouseholdSummaries(
         activeHousehold: Household?,
-        persistentContainer: NSPersistentCloudKitContainer,
+        persistentContainer: NSPersistentContainer,
         context: NSManagedObjectContext
     ) -> [SharedHouseholdDiagnosticSummary] {
         guard let sharedStore = PersistenceController.shared.sharedStore else { return [] }
@@ -1426,32 +1426,13 @@ private struct ShareDiagnosticsSnapshot {
         }
     }
 
-    private static func shareStatus(for household: Household?, persistentContainer: NSPersistentCloudKitContainer) -> ShareDiagnosticStatus {
-        guard let household else { return .notChecked(reason: "No household") }
-        do {
-            let shares = try persistentContainer.fetchShares(matching: [household.objectID])
-            guard let share = shares[household.objectID] else {
-                return ShareDiagnosticStatus(fetchSucceeded: true, recordName: nil, zoneName: nil, zoneOwnerName: nil, participants: [], errorText: nil)
-            }
-            return ShareDiagnosticStatus(
-                fetchSucceeded: true,
-                recordName: share.recordID.recordName,
-                zoneName: share.recordID.zoneID.zoneName,
-                zoneOwnerName: share.recordID.zoneID.ownerName,
-                participants: share.participants.map(ShareParticipantDiagnostic.init(participant:)),
-                errorText: nil
-            )
-        } catch {
-            let nsError = error as NSError
-            return ShareDiagnosticStatus(
-                fetchSucceeded: false,
-                recordName: nil,
-                zoneName: nil,
-                zoneOwnerName: nil,
-                participants: [],
-                errorText: "domain=\(nsError.domain) code=\(nsError.code) description=\(nsError.localizedDescription) userInfo=\(nsError.userInfo)"
-            )
-        }
+    // Phase 1 (CKSyncEngine migration): disabled, not deleted. `persistentContainer` is now a
+    // plain NSPersistentContainer, which has no `fetchShares(matching:)` -- that was
+    // NSPersistentCloudKitContainer-mirroring-specific, and there is never a resolvable share
+    // while sharing is disabled anyway.
+    private static func shareStatus(for household: Household?, persistentContainer: NSPersistentContainer) -> ShareDiagnosticStatus {
+        guard household != nil else { return .notChecked(reason: "No household") }
+        return .notChecked(reason: "Sharing disabled in Phase 1 (CKSyncEngine migration)")
     }
 
     private static func membershipSummary(for household: Household, context: NSManagedObjectContext) -> String {
@@ -1470,7 +1451,7 @@ private struct ShareDiagnosticsSnapshot {
         return "\(memberships.count) memberships (\(statusCounts))"
     }
 
-    private static func optionStatus(for key: String, in persistentContainer: NSPersistentCloudKitContainer) -> String {
+    private static func optionStatus(for key: String, in persistentContainer: NSPersistentContainer) -> String {
         let values = persistentContainer.persistentStoreDescriptions.map { description -> String in
             let scope = scopeLabel(for: description.cloudKitContainerOptions?.databaseScope)
             let value = description.options[key]

@@ -37,7 +37,7 @@ final class AppState: ObservableObject {
     @Published var needsMemberClaim = false
     @Published var isWaitingForCloudKitMembershipImport = false
 
-    private let container: NSPersistentCloudKitContainer
+    private let container: NSPersistentContainer
     private let cloudKitContainerId = "iCloud.com.blakeearly.livinlog"
     private var cancellables = Set<AnyCancellable>()
     private var isStarting = false
@@ -48,7 +48,7 @@ final class AppState: ObservableObject {
     private var lastRemoteChangeStartAt: Date?
     private let remoteChangeCooldown: TimeInterval = 2.0
 
-    init(container: NSPersistentCloudKitContainer) {
+    init(container: NSPersistentContainer) {
         self.container = container
         observeShareAcceptanceAndStoreChanges()
     }
@@ -213,6 +213,10 @@ final class AppState: ObservableObject {
         createdMember.setValue(household.id, forKey: "householdId")
 
         try context.save()
+
+        // Phase 1 (CKSyncEngine migration): create this household's CloudKit zone now that it
+        // has a permanent objectID and a stamped recordName (Data/CoreDataDefaults.swift).
+        SyncController.shared.createZone(for: household)
 
         let membership = try IdentityStore.ensureMembership(
             appUser: appUser,

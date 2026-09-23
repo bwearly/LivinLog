@@ -19,7 +19,7 @@ struct RootView: View {
     @State private var isResumingPendingInvite = false
     @State private var lastFailedPendingInviteURL: URL?
 
-    init(container: NSPersistentCloudKitContainer) {
+    init(container: NSPersistentContainer) {
         _appState = StateObject(wrappedValue: AppState(container: container))
     }
 

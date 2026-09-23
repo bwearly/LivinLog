@@ -188,17 +188,10 @@ func debugPrintHouseholdDiagnostics(household: Household, context: NSManagedObje
 
 
 #if DEBUG
-func debugPrintShareStatus(for household: Household, persistentContainer: NSPersistentCloudKitContainer) {
-    do {
-        let shares = try persistentContainer.fetchShares(matching: [household.objectID])
-        if let share = shares[household.objectID] {
-            let urlText = share.url?.absoluteString ?? "nil"
-            print("🧪 [SyncDiag] householdShare=exists recordID=\(share.recordID.recordName) url=\(urlText)")
-        } else {
-            print("🧪 [SyncDiag] householdShare=missing")
-        }
-    } catch {
-        print("🧪 [SyncDiag] householdShare=error error=\(error.localizedDescription)")
-    }
+// Phase 1 (CKSyncEngine migration): disabled, not deleted. `persistentContainer` is now a
+// plain NSPersistentContainer, which has no `fetchShares(matching:)` -- that was
+// NSPersistentCloudKitContainer-mirroring-specific.
+func debugPrintShareStatus(for _: Household, persistentContainer _: NSPersistentContainer) {
+    print("🧪 [SyncDiag] householdShare=disabled (Phase 1: CKSyncEngine migration removed NSPersistentCloudKitContainer sharing)")
 }
 #endif

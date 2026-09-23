@@ -28,16 +28,15 @@ struct PersistenceLoadError: Identifiable, Equatable {
     }
 }
 
-/// Tracks per-store in-flight CloudKit export state from the existing
-/// `NSPersistentCloudKitContainer.eventChangedNotification` observer in
-/// `PersistenceController.init()`, so `CloudSharing.fetchOrCreateShare` can check/wait for
-/// export-idle before calling `persistentContainer.share(...)`.
+/// Tracks per-store in-flight CloudKit export state from the (now-disabled, Phase 1)
+/// `NSPersistentCloudKitContainer.eventChangedNotification` observer, so `CloudSharing`
+/// could check/wait for export-idle before calling `persistentContainer.share(...)`.
 ///
-/// Experimental (Task 3 deadlock-hypothesis test), not a permanent architectural decision:
-/// this only tracks presence of *any* in-flight export per store identifier, not a count. If
-/// two export events overlap for the same store, the first "end" clears the flag even though
-/// the second export may still be running. That's an accepted simplification for this
-/// experiment, not a claim it's correct in general — see the Task 3 summary.
+/// Phase 1 (CKSyncEngine migration): nothing produces `.eventChangedNotification` anymore
+/// (see `PersistenceController.init()` below), so nothing calls `markExportStarted`/
+/// `markExportEnded` and this tracker is permanently idle. Left in place, unmodified, per the
+/// "disable, don't delete" rule -- it's sharing-support infrastructure, not mirroring-specific,
+/// and Phase 3 may still want it once the shared-DB engine exists.
 final class CloudKitExportTracker {
     static let shared = CloudKitExportTracker()
     private init() {}
@@ -105,12 +104,22 @@ final class CloudKitExportTracker {
 struct PersistenceController {
     static let shared = PersistenceController()
 
-    let container: NSPersistentCloudKitContainer
+    // Phase 1 (CKSyncEngine migration): plain NSPersistentContainer, single store. No
+    // NSPersistentCloudKitContainerOptions, no CloudKit mirroring for any entity. Movies sync
+    // via `Sync/SyncController.swift` instead; see the Phase 1 plan for why every other entity
+    // goes device-local for now.
+    let container: NSPersistentContainer
 
-    /// The private (owner) store.
+    /// The single on-disk store. Named `privateStore` (not just `store`) to match the many
+    /// existing `== PersistenceController.shared.privateStore` call sites across the app —
+    /// renaming would touch files outside this phase's scope for no behavioral benefit.
     let privateStore: NSPersistentStore!
 
-    /// The shared store (where accepted shares land on recipients).
+    /// Always `nil` now that there is only one store. Kept (not removed) because a dozen call
+    /// sites across HouseholdProfileManagementView/AppState/SettingsView compare
+    /// `== PersistenceController.shared.sharedStore` to detect "is this a shared household" —
+    /// with this always nil, those comparisons are simply always false, which is exactly the
+    /// correct Phase 1 behavior (no household is ever shared) without touching those files.
     let sharedStore: NSPersistentStore!
 
     /// Non-nil when Core Data/CloudKit stores could not be opened. The app should
@@ -119,7 +128,9 @@ struct PersistenceController {
 
     var isLoaded: Bool { loadError == nil }
 
-    private static let containerId = "iCloud.com.blakeearly.livinlog"
+    /// Still the real CloudKit container identifier -- `Sync/SyncController.swift` reuses this
+    /// (via the now-internal, not private, access level below) rather than duplicating the string.
+    static let containerId = "iCloud.com.blakeearly.livinlog"
 
     private static func storeURLs() -> (privateURL: URL, sharedURL: URL) {
         let storeDirectory = NSPersistentContainer.defaultDirectoryURL()
@@ -130,7 +141,7 @@ struct PersistenceController {
     }
 
     init(inMemory: Bool = false) {
-        let container = NSPersistentCloudKitContainer(name: "LivinLog")
+        let container = NSPersistentContainer(name: "LivinLog")
         let bundleIdentifier = Bundle.main.bundleIdentifier ?? "<unknown>"
         print("ℹ️ PersistenceController init bundleIdentifier=\(bundleIdentifier) persistentContainerName=\(container.name)")
 
@@ -145,53 +156,39 @@ struct PersistenceController {
             print("🌐 [CloudKitEnvironment] ⚠️ Could not determine aps-environment (\(apsEnvironment)). No embedded.mobileprovision usually means an App Store/TestFlight-processed build (Production) or a Simulator run (no CloudKit provisioning at all) — do not assume which one without corroborating evidence.")
         }
 
-        // Two stores are required for Core Data + CloudKit sharing:
-        // - Private: the owner's database
-        // - Shared:  the recipient's shared database
+        // Phase 1 (CKSyncEngine migration): single store. The `LivinLog-shared.sqlite` store
+        // (recipient shared-database mirror) is retired along with NSPersistentCloudKitContainer
+        // mirroring; `storeURLs()` still returns both URLs unchanged (harmless) but only the
+        // private URL is used below.
         let urls = Self.storeURLs()
         let privateURL = urls.privateURL
-        let sharedURL = urls.sharedURL
 
         let privateDesc = NSPersistentStoreDescription(url: privateURL)
-        let sharedDesc  = NSPersistentStoreDescription(url: sharedURL)
 
-        // Keep both stores on the model's default configuration. A previous build or a
-        // future refactor that writes one store with a named configuration and then opens
-        // it with another is what produces Core Data's "model configuration ...
-        // incompatible" launch failure. This app does not define named model
-        // configurations, so be explicit and log it.
+        // Keep the store on the model's default configuration. A previous build or a future
+        // refactor that writes with a named configuration and then opens it with another is
+        // what produces Core Data's "model configuration ... incompatible" launch failure.
+        // This app does not define named model configurations, so be explicit and log it.
         privateDesc.configuration = nil
-        sharedDesc.configuration = nil
 
         if inMemory {
             privateDesc.url = URL(fileURLWithPath: "/dev/null")
-            sharedDesc.url  = URL(fileURLWithPath: "/dev/null")
         }
 
-        let containerId = Self.containerId
-        print("ℹ️ PersistenceController CloudKit containerIdentifier=\(containerId)")
+        print("ℹ️ PersistenceController CloudKit containerIdentifier=\(Self.containerId) (unused for store mirroring in Phase 1 — kept for Sync/SyncController.swift's CKContainer)")
 
-        // Private scope
-        let privateOptions = NSPersistentCloudKitContainerOptions(containerIdentifier: containerId)
-        privateOptions.databaseScope = .private
-        privateDesc.cloudKitContainerOptions = privateOptions
+        // Common store options. Persistent history tracking + remote-change notifications stay
+        // ON: Sync/InboundChangeApplier.swift's background context saves rely on the same
+        // mechanism to propagate into viewContext that NSPersistentCloudKitContainer's
+        // background imports used to.
+        privateDesc.setOption(true as NSNumber, forKey: NSMigratePersistentStoresAutomaticallyOption)
+        privateDesc.setOption(true as NSNumber, forKey: NSInferMappingModelAutomaticallyOption)
+        privateDesc.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
+        privateDesc.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
+        privateDesc.shouldMigrateStoreAutomatically = true
+        privateDesc.shouldInferMappingModelAutomatically = true
 
-        // Shared scope
-        let sharedOptions = NSPersistentCloudKitContainerOptions(containerIdentifier: containerId)
-        sharedOptions.databaseScope = .shared
-        sharedDesc.cloudKitContainerOptions = sharedOptions
-
-        // Common store options
-        for desc in [privateDesc, sharedDesc] {
-            desc.setOption(true as NSNumber, forKey: NSMigratePersistentStoresAutomaticallyOption)
-            desc.setOption(true as NSNumber, forKey: NSInferMappingModelAutomaticallyOption)
-            desc.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
-            desc.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
-            desc.shouldMigrateStoreAutomatically = true
-            desc.shouldInferMappingModelAutomatically = true
-        }
-
-        container.persistentStoreDescriptions = [privateDesc, sharedDesc]
+        container.persistentStoreDescriptions = [privateDesc]
 
         Self.logLoadedModelDiagnostics(container: container, reason: "before loadPersistentStores")
 
@@ -203,15 +200,7 @@ struct PersistenceController {
                 return
             }
 
-            let scope = description.cloudKitContainerOptions?.databaseScope
-            let scopeLabel: String
-            switch scope {
-            case .private: scopeLabel = "private"
-            case .shared: scopeLabel = "shared"
-            case .public: scopeLabel = "public"
-            default: scopeLabel = "unknown"
-            }
-            print("ℹ️ Loaded persistent store url=\(description.url?.absoluteString ?? "<nil>") scope=\(scopeLabel) configuration=\(description.configuration ?? "default") migrate=\(description.shouldMigrateStoreAutomatically) infer=\(description.shouldInferMappingModelAutomatically) ckContainer=\(description.cloudKitContainerOptions?.containerIdentifier ?? "<nil>")")
+            print("ℹ️ Loaded persistent store url=\(description.url?.absoluteString ?? "<nil>") configuration=\(description.configuration ?? "default") migrate=\(description.shouldMigrateStoreAutomatically) infer=\(description.shouldInferMappingModelAutomatically)")
             Self.logStoreMetadata(at: description.url)
         }
 
@@ -226,17 +215,16 @@ struct PersistenceController {
             return
         }
 
-        // Resolve stores by URL from the coordinator after load.
+        // Resolve the store by URL from the coordinator after load.
         func store(matching url: URL) -> NSPersistentStore? {
             container.persistentStoreCoordinator.persistentStores.first { $0.url == url }
         }
 
-        guard let p = store(matching: privateURL),
-              let s = store(matching: sharedURL) else {
+        guard let p = store(matching: privateURL) else {
             let error = NSError(
                 domain: "PersistenceController",
                 code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to resolve private/shared stores after loading."]
+                userInfo: [NSLocalizedDescriptionKey: "Failed to resolve the private store after loading."]
             )
             let description = NSPersistentStoreDescription(url: privateURL)
             Self.logPersistentStoreFailure(error, description: description)
@@ -247,57 +235,54 @@ struct PersistenceController {
         }
 
         self.privateStore = p
-        self.sharedStore = s
+        self.sharedStore = nil
         self.loadError = nil
 
         Self.logLoadedModelDiagnostics(container: container, reason: "after loadPersistentStores")
 
         container.viewContext.automaticallyMergesChangesFromParent = true
         container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
-        // Add this block in PersistenceController.init() after the line:
-        // container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
 
-        NotificationCenter.default.addObserver(
-            forName: NSPersistentCloudKitContainer.eventChangedNotification,
-            object: container,
-            queue: .main
-        ) { notification in
-            guard let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
-                as? NSPersistentCloudKitContainer.Event else { return }
-
-            let typeText: String
-            switch event.type {
-            case .setup: typeText = "setup"
-            case .import: typeText = "import"
-            case .export: typeText = "export"
-            @unknown default: typeText = "unknown"
-            }
-
-            print("☁️ [CKEvent] type=\(typeText) succeeded=\(event.succeeded) storeURL=\(event.storeIdentifier) start=\(event.startDate.description ?? "nil") end=\(event.endDate?.description ?? "nil")")
-
-            if let error = event.error {
-                let nsError = error as NSError
-                print("☁️ [CKEvent] ❌ domain=\(nsError.domain) code=\(nsError.code) desc=\(nsError.localizedDescription) userInfo=\(nsError.userInfo)")
-            }
-
-            // Task 3 experiment: `event.storeIdentifier` matches NSPersistentStore.identifier
-            // (confirmed against Apple's docs, not a URL despite the "storeURL" log label
-            // above). end==nil means the export is still in flight for that store; a
-            // subsequent event with a non-nil end clears it. CloudSharing.fetchOrCreateShare
-            // reads this via CloudKitExportTracker.shared to gate share(...) as a direct test
-            // of the "share() called mid-export deadlocks" hypothesis.
-            if event.type == .export {
-                if event.endDate == nil {
-                    CloudKitExportTracker.shared.markExportStarted(storeIdentifier: event.storeIdentifier)
-                } else {
-                    CloudKitExportTracker.shared.markExportEnded(storeIdentifier: event.storeIdentifier)
-                }
-            }
-        }
+        // Phase 1 (CKSyncEngine migration): disabled, not deleted. Nothing posts
+        // NSPersistentCloudKitContainer.eventChangedNotification anymore since `container` is a
+        // plain NSPersistentContainer — this whole block is dead. Sync/SyncController.swift's
+        // own [SYNC]-prefixed CKSyncEngine event logging is the new visibility layer that
+        // replaces it. Left commented out (rather than removed) for reference.
+        //
+        // NotificationCenter.default.addObserver(
+        //     forName: NSPersistentCloudKitContainer.eventChangedNotification,
+        //     object: container,
+        //     queue: .main
+        // ) { notification in
+        //     guard let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
+        //         as? NSPersistentCloudKitContainer.Event else { return }
+        //
+        //     let typeText: String
+        //     switch event.type {
+        //     case .setup: typeText = "setup"
+        //     case .import: typeText = "import"
+        //     case .export: typeText = "export"
+        //     @unknown default: typeText = "unknown"
+        //     }
+        //
+        //     print("☁️ [CKEvent] type=\(typeText) succeeded=\(event.succeeded) storeURL=\(event.storeIdentifier) start=\(event.startDate.description ?? "nil") end=\(event.endDate?.description ?? "nil")")
+        //
+        //     if let error = event.error {
+        //         let nsError = error as NSError
+        //         print("☁️ [CKEvent] ❌ domain=\(nsError.domain) code=\(nsError.code) desc=\(nsError.localizedDescription) userInfo=\(nsError.userInfo)")
+        //     }
+        //
+        //     if event.type == .export {
+        //         if event.endDate == nil {
+        //             CloudKitExportTracker.shared.markExportStarted(storeIdentifier: event.storeIdentifier)
+        //         } else {
+        //             CloudKitExportTracker.shared.markExportEnded(storeIdentifier: event.storeIdentifier)
+        //         }
+        //     }
+        // }
     }
 
-
-    private static func logLoadedModelDiagnostics(container: NSPersistentCloudKitContainer, reason: String) {
+    private static func logLoadedModelDiagnostics(container: NSPersistentContainer, reason: String) {
         let model = container.managedObjectModel
         let entityNames = model.entities.compactMap(\.name).sorted()
         let versionIdentifiers = model.versionIdentifiers.map { String(describing: $0) }.sorted()
@@ -396,25 +381,18 @@ struct PersistenceController {
     }
 
     #if DEBUG
-    /// DEBUG-only manual CloudKit schema generation for the Development container.
-    ///
-    /// This intentionally does not run during normal app startup. Use it from the
-    /// DEBUG Developer Diagnostics screen when Core Data + CloudKit needs to emit
-    /// schema for framework-managed sharing internals. After it succeeds, open
-    /// CloudKit Dashboard, review the Development schema changes, and deploy them
-    /// to Production before archiving a new Release/TestFlight build.
+    /// Phase 1 (CKSyncEngine migration): disabled, not deleted. `container` is now a plain
+    /// `NSPersistentContainer`, which has no `initializeCloudKitSchema(options:)` — that API
+    /// belonged to `NSPersistentCloudKitContainer` mirroring. Left as a clear runtime error
+    /// (rather than removing the function) so `CloudKitStoreDiagnosticsView.swift:111`'s call
+    /// site keeps compiling and shows an honest message instead of silently doing nothing.
     func initializeDevelopmentCloudKitSchema() throws {
-        print("🧪 [CloudKitSchemaInit] CloudKit schema initialization started containerIdentifier=\(Self.containerId)")
-
-        do {
-            try container.initializeCloudKitSchema(options: [])
-            print("✅ [CloudKitSchemaInit] CloudKit schema initialization succeeded. Review CloudKit Dashboard Development schema changes and deploy them to Production before the next Release/TestFlight archive.")
-        } catch {
-            print("❌ [CloudKitSchemaInit] CloudKit schema initialization failed error=\(String(reflecting: error))")
-            let nsError = error as NSError
-            print("❌ [CloudKitSchemaInit] domain=\(nsError.domain) code=\(nsError.code) userInfo=\(nsError.userInfo)")
-            throw error
-        }
+        print("🧪 [CloudKitSchemaInit] Disabled in Phase 1 — container is a plain NSPersistentContainer, no CloudKit schema to initialize this way anymore.")
+        throw NSError(
+            domain: "PersistenceController",
+            code: 3,
+            userInfo: [NSLocalizedDescriptionKey: "CloudKit schema initialization is disabled in Phase 1 (CKSyncEngine migration removed NSPersistentCloudKitContainer mirroring)."]
+        )
     }
 
     static func resetDevelopmentStores() throws {
