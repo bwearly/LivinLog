@@ -35,7 +35,7 @@ struct TVShowsListView: View {
     @State private var sort: SortOption = .newest
 
     private var canWrite: Bool {
-        IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
+        IdentityStore.canAct(as: member, currentUserRecordName: appState.currentUserRecordName)
     }
 
     init(household: Household, member: HouseholdMember?) {
@@ -111,7 +111,7 @@ struct TVShowsListView: View {
             trailing: trailingButtons
         )
         .scrollContentBackground(.hidden)
-        .background(AppCategoryStyle.tvShows.gradient.opacity(0.12))
+        .background(Color(.systemGroupedBackground))
         .searchable(text: $searchText, prompt: "Search title, year, seasons, rating, notes…")
         .sheet(isPresented: $showingAdd) {
             NavigationStack {

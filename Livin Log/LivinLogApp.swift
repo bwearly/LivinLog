@@ -22,12 +22,17 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         return true
     }
 
+    // Phase 3b (sharing): replaced by SceneDelegate.swift, which covers both warm
+    // (`windowScene(_:userDidAcceptCloudKitShareWith:)`) and cold
+    // (`scene(_:willConnectTo:options:)`'s `connectionOptions.cloudKitShareMetadata`) accept --
+    // this simpler app-delegate-level hook only ever covered the warm case. Registering
+    // `SceneDelegate` below is what makes UIKit call the scene-level hook instead of this one.
     func application(_ application: UIApplication,
-                     userDidAcceptCloudKitShareWith cloudKitShareMetadata: CKShare.Metadata) {
-        NotificationCenter.default.post(
-            name: .didReceiveCloudKitShare,
-            object: cloudKitShareMetadata
-        )
+                     configurationForConnecting connectingSceneSession: UISceneSession,
+                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+        configuration.delegateClass = SceneDelegate.self
+        return configuration
     }
 }
 

@@ -120,7 +120,7 @@ struct PersistenceController {
     /// `== PersistenceController.shared.sharedStore` to detect "is this a shared household" —
     /// with this always nil, those comparisons are simply always false, which is exactly the
     /// correct Phase 1 behavior (no household is ever shared) without touching those files.
-    let sharedStore: NSPersistentStore!
+    let sharedStore: NSPersistentStore?
 
     /// Non-nil when Core Data/CloudKit stores could not be opened. The app should
     /// render recovery UI instead of touching the managed object context.

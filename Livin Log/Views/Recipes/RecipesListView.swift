@@ -16,7 +16,7 @@ struct RecipesListView: View {
     @State private var selectedCategoryIDs: Set<NSManagedObjectID> = []
 
     private var canWrite: Bool {
-        IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
+        IdentityStore.canAct(as: member, currentUserRecordName: appState.currentUserRecordName)
     }
 
     init(household: Household, member: HouseholdMember?) {
@@ -139,7 +139,7 @@ struct RecipesListView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(AppCategoryStyle.recipes.gradient.opacity(0.10))
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Recipes")
         .searchable(text: $searchText, prompt: "Search title, ingredient, category…")
         .toolbar {

@@ -191,26 +191,18 @@ struct AnalyticsView: View {
 
             Text("\(thisMonthCount) logs this month • \(members.count) profile\(members.count == 1 ? "" : "s")")
                 .font(.callout.weight(.medium))
-                .foregroundStyle(.white.opacity(0.88))
+                .foregroundStyle(.secondary)
         }
         .padding(22)
-        .background(
-            LinearGradient(
-                colors: [Color.indigo.opacity(0.88), Color.purple.opacity(0.72), Color.cyan.opacity(0.45)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 28, style: .continuous)
-        )
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .overlay(alignment: .bottomTrailing) {
             Image(systemName: "chart.line.uptrend.xyaxis")
                 .font(.system(size: 76, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.10))
+                .foregroundStyle(.primary.opacity(0.06))
                 .padding(.trailing, 18)
                 .padding(.bottom, 12)
                 .accessibilityHidden(true)
         }
-        .foregroundStyle(.white)
         .scaleEffect(appeared ? 1 : 0.96)
         .opacity(appeared ? 1 : 0)
     }
@@ -430,11 +422,7 @@ struct AnalyticsView: View {
     }
 
     private var dashboardBackground: some View {
-        LinearGradient(
-            colors: [Color(.systemBackground), Color.indigo.opacity(0.10), Color.purple.opacity(0.08)],
-            startPoint: .top,
-            endPoint: .bottom
-        )
+        Color(.systemGroupedBackground)
     }
 
     private func reloadAll() {

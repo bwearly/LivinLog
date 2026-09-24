@@ -164,7 +164,7 @@ struct QuotesListView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(AppCategoryStyle.quotes.gradient.opacity(0.10))
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Quotes")
         .searchable(text: $searchText, prompt: "Search text, speaker, context")
         .toolbar {

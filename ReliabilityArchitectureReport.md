@@ -88,6 +88,8 @@ Use this checklist when TestFlight sharing reports a production-schema error for
 3. Deploy the exact CloudKit schema listed above from Development to Production, including the optional BookEntry OpenLibrary metadata fields.
 4. Archive with the corrected `Livin Log/LivinLog.entitlements` path and validate signing capabilities for iCloud/CloudKit.
 5. Install the archived build on a device or TestFlight internal tester before external release and complete the ordered manual checklist below.
+6. **Store migration failure handling (CKSyncEngine era):** during the CKSyncEngine migration phases the `LivinLog 2` model was edited in place, so a store created by the shipped 1.3.7 model may have no matching source model and fail to load. Before release, change the load-failure path so that on a store migration failure the app deletes the local store and re-syncs from CloudKit, instead of showing `StoreRecoveryView`. Verify by installing over a 1.3.7 build.
+7. **After this release, every Core Data model change needs a new model version** (Editor → Add Model Version, then set it current). No more in-place edits to a shipped model.
 
 ## Final ordered manual testing checklist
 

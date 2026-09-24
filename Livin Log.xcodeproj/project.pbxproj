@@ -145,6 +145,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Livin Log/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Livin Log";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Allow Livin Log to take puzzle photos.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Allow Livin Log to select puzzle photos from your library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -181,6 +183,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Livin Log/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Livin Log";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Allow Livin Log to take puzzle photos.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Allow Livin Log to select puzzle photos from your library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

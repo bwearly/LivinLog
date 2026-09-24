@@ -9,17 +9,21 @@
 import SwiftUI
 
 struct ICloudRequiredView: View {
+    var icon: String = "icloud.slash"
+    var title: String = "iCloud Required"
+    var message: String = "Livin Log uses iCloud to sync and share your household library. Please sign into iCloud on this device, then tap Retry."
+    var footnote: String? = "Settings → Apple ID → iCloud"
     let onRetry: () -> Void
 
     var body: some View {
         VStack(spacing: 14) {
-            Image(systemName: "icloud.slash")
+            Image(systemName: icon)
                 .font(.system(size: 46))
 
-            Text("iCloud Required")
+            Text(title)
                 .font(.title2).bold()
 
-            Text("Livin Log uses iCloud to sync and share your household library. Please sign into iCloud on this device, then tap Retry.")
+            Text(message)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal)
@@ -29,10 +33,12 @@ struct ICloudRequiredView: View {
             }
             .buttonStyle(.borderedProminent)
 
-            Text("Settings → Apple ID → iCloud")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .padding(.top, 6)
+            if let footnote {
+                Text(footnote)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 6)
+            }
         }
         .padding()
     }

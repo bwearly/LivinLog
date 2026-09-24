@@ -230,7 +230,7 @@ struct AddMovieView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(AppCategoryStyle.movies.gradient.opacity(0.18))
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Add Movie")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -373,7 +373,7 @@ struct AddMovieView: View {
 
     private var actingMember: HouseholdMember? {
         guard let member else { return nil }
-        return IdentityStore.canAct(as: member, appUser: appState.appUser, context: context) ? member : nil
+        return IdentityStore.canAct(as: member, currentUserRecordName: appState.currentUserRecordName) ? member : nil
     }
 
     private func seedFeedbackDraftsIfNeeded() {

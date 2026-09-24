@@ -88,7 +88,7 @@ struct EventListView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(AppCategoryStyle.dates.gradient.opacity(0.10))
+        .background(Color(.systemGroupedBackground))
         .sheet(item: $editingEvent) { event in
             AddEditEventView(household: household, editingEvent: event)
         }

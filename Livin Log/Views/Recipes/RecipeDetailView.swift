@@ -14,7 +14,7 @@ struct RecipeDetailView: View {
     @State private var didSeedServings = false
 
     private var canWrite: Bool {
-        IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
+        IdentityStore.canAct(as: member, currentUserRecordName: appState.currentUserRecordName)
     }
 
     var body: some View {

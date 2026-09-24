@@ -110,7 +110,7 @@ struct CalendarMainView: View {
                     }
                 }
             }
-            .background(AppCategoryStyle.dates.gradient.opacity(0.10))
+            .background(Color(.systemGroupedBackground))
             .sheet(item: $activeSheet) { sheet in
                 switch sheet {
                 case let .add(month, day):

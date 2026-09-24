@@ -31,7 +31,7 @@ struct MoviesListView: View {
     @State private var saveError: String?
 
     private var canWrite: Bool {
-        IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
+        IdentityStore.canAct(as: member, currentUserRecordName: appState.currentUserRecordName)
     }
 
     private enum SortOption: String, CaseIterable, Identifiable {
@@ -139,7 +139,7 @@ struct MoviesListView: View {
             trailing: trailingButtons
         )
         .scrollContentBackground(.hidden)
-        .background(AppCategoryStyle.movies.gradient.opacity(0.12))
+        .background(Color(.systemGroupedBackground))
         .searchable(text: $searchText, prompt: "Search title, genre, year…")
         .navigationDestination(isPresented: $showGenrePicker) {
             GenrePickerView(title: "Select Genres", allGenres: allGenres, selected: $selectedGenres)

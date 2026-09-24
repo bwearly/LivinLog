@@ -31,6 +31,19 @@ final class InboundChangeApplier {
     private let context: NSManagedObjectContext
     private let identityIndex: RecordIdentityIndex
 
+    /// Per-row, per-relationship retry attempt counts for retryUnresolvedLinks(), keyed by
+    /// "OwnerEntity.relationshipKey.objectIDURI". In-memory only (resets on relaunch) -- this is
+    /// a defense-in-depth safety net, not the primary fix for orphans (see Movie.feedbacks /
+    /// Movie.viewing now being Cascade), so it doesn't need to survive a relaunch to be useful.
+    private var unresolvedAttemptCounts: [String: Int] = [:]
+    private static let maxUnresolvedAttempts = 5
+
+    /// Rows that hit the attempt cap this session -- skipped without re-fetching or re-logging
+    /// until the app relaunches (this and unresolvedAttemptCounts both reset then, so the row
+    /// gets retried again next launch), or until a new record of the target entity type arrives
+    /// in a later batch this same session (see retryUnresolvedLinks' newlyInsertedEntityTypes).
+    private var gaveUpThisSession: Set<String> = []
+
     init(context: NSManagedObjectContext, identityIndex: RecordIdentityIndex) {
         self.context = context
         self.context.transactionAuthor = OutboundChangeTracker.transactionAuthor
@@ -41,8 +54,17 @@ final class InboundChangeApplier {
     func apply(_ event: CKSyncEngine.Event.FetchedRecordZoneChanges) {
         context.performAndWait {
             var recordsByType: [String: [CKRecord]] = [:]
+            var skippedLegacyModifications = 0
+
             for modification in event.modifications {
                 let record = modification.record
+                guard record.recordID.zoneID.zoneName.hasPrefix("Household-") else {
+                    // Leftover zone from the old NSPersistentCloudKitContainer mirroring
+                    // (com.apple.coredata.cloudkit.zone, com.apple.coredata.cloudkit.share.*).
+                    // Never written to, never applied.
+                    skippedLegacyModifications += 1
+                    continue
+                }
                 if record is CKShare {
                     SyncLogger.log(SyncLogger.inbound, "skipping CKShare record \(record.recordID) (not expected in Phase 1)")
                     continue
@@ -50,21 +72,34 @@ final class InboundChangeApplier {
                 recordsByType[record.recordType, default: []].append(record)
             }
 
+            let filteredDeletions = event.deletions.filter { $0.recordID.zoneID.zoneName.hasPrefix("Household-") }
+            let skippedLegacyDeletions = event.deletions.count - filteredDeletions.count
+            let skippedLegacyCount = skippedLegacyModifications + skippedLegacyDeletions
+
+            if skippedLegacyCount > 0 {
+                SyncLogger.log(SyncLogger.inbound, "skipped \(skippedLegacyCount) legacy-zone records")
+            }
+
+            var newlyInsertedEntityTypes: Set<String> = []
+
             for record in recordsByType[SyncRecordMapping.RecordType.household] ?? [] {
-                let household = fetchOrCreateHousehold(recordName: record.recordID.recordName)
+                let (household, isNew) = fetchOrCreateHousehold(recordName: record.recordID.recordName)
+                if isNew { newlyInsertedEntityTypes.insert("Household") }
                 SyncRecordMapping.apply(record, to: household)
                 indexAfterApply(recordType: SyncRecordMapping.RecordType.household, record: record, object: household)
             }
 
             for record in recordsByType[SyncRecordMapping.RecordType.member] ?? [] {
-                let member = fetchOrCreateMember(recordName: record.recordID.recordName)
+                let (member, isNew) = fetchOrCreateMember(recordName: record.recordID.recordName)
+                if isNew { newlyInsertedEntityTypes.insert("HouseholdMember") }
                 let household = (record["householdRecordName"] as? String).flatMap(fetchHousehold)
                 SyncRecordMapping.apply(record, to: member, household: household)
                 indexAfterApply(recordType: SyncRecordMapping.RecordType.member, record: record, object: member)
             }
 
             for record in recordsByType[SyncRecordMapping.RecordType.movie] ?? [] {
-                let movie = fetchOrCreateMovie(recordName: record.recordID.recordName)
+                let (movie, isNew) = fetchOrCreateMovie(recordName: record.recordID.recordName)
+                if isNew { newlyInsertedEntityTypes.insert("Movie") }
                 let household = (record["householdRecordName"] as? String).flatMap(fetchHousehold)
                 SyncRecordMapping.apply(record, to: movie, household: household)
                 indexAfterApply(recordType: SyncRecordMapping.RecordType.movie, record: record, object: movie)
@@ -87,7 +122,7 @@ final class InboundChangeApplier {
                 indexAfterApply(recordType: SyncRecordMapping.RecordType.viewing, record: record, object: viewing)
             }
 
-            for deletion in event.deletions {
+            for deletion in filteredDeletions {
                 applyDeletion(recordName: deletion.recordID.recordName)
             }
 
@@ -95,14 +130,14 @@ final class InboundChangeApplier {
             // but whose target recordName is set -- not just rows touched in this batch, since a
             // target that arrived just now may unblock a link left unresolved by an earlier
             // batch or session.
-            retryUnresolvedLinks()
+            retryUnresolvedLinks(newlyInsertedEntityTypes: newlyInsertedEntityTypes)
 
             identityIndex.flush()
 
             guard context.hasChanges else { return }
             do {
                 try context.save()
-                SyncLogger.log(SyncLogger.inbound, "applied \(event.modifications.count) modification(s), \(event.deletions.count) deletion(s)")
+                SyncLogger.log(SyncLogger.inbound, "applied \(event.modifications.count - skippedLegacyModifications) modification(s), \(filteredDeletions.count) deletion(s)")
             } catch {
                 SyncLogger.error(SyncLogger.inbound, "save failed: \(String(describing: error))")
                 context.rollback()
@@ -112,7 +147,7 @@ final class InboundChangeApplier {
 
     // MARK: - Link retry
 
-    private func retryUnresolvedLinks() {
+    private func retryUnresolvedLinks(newlyInsertedEntityTypes: Set<String>) {
         var unresolvedCounts: [String: Int] = [:]
 
         func retry<Owner: NSManagedObject, Target: NSManagedObject>(
@@ -122,18 +157,50 @@ final class InboundChangeApplier {
             targetEntityName: String,
             setLink: (Owner, Target) -> Void
         ) {
+            // This batch inserted a new row of the type this relationship points at -- a row
+            // that gave up earlier this session waiting for exactly that type deserves an
+            // immediate retry rather than waiting for relaunch.
+            if newlyInsertedEntityTypes.contains(targetEntityName) {
+                let prefix = "\(ownerEntityName).\(relationshipKey)."
+                gaveUpThisSession = gaveUpThisSession.filter { !$0.hasPrefix(prefix) }
+                unresolvedAttemptCounts = unresolvedAttemptCounts.filter { !$0.key.hasPrefix(prefix) }
+            }
+
             let request = NSFetchRequest<Owner>(entityName: ownerEntityName)
             request.predicate = NSPredicate(format: "%K == nil AND %K != nil", relationshipKey, recordNameKey)
             guard let rows = try? context.fetch(request), !rows.isEmpty else { return }
 
             var stillUnresolved = 0
             for row in rows {
-                guard let targetRecordName = row.value(forKey: recordNameKey) as? String,
-                      let target: Target = SyncRecordMapping.fetchByRecordName(entityName: targetEntityName, recordName: targetRecordName, context: context) else {
-                    stillUnresolved += 1
+                let attemptKey = "\(ownerEntityName).\(relationshipKey).\(row.objectID.uriRepresentation().absoluteString)"
+
+                guard !gaveUpThisSession.contains(attemptKey) else { continue }
+
+                let targetRecordName = row.value(forKey: recordNameKey) as? String
+                let target: Target? = targetRecordName.flatMap {
+                    SyncRecordMapping.fetchByRecordName(entityName: targetEntityName, recordName: $0, context: context)
+                }
+
+                guard let target else {
+                    let attempts = (unresolvedAttemptCounts[attemptKey] ?? 0) + 1
+                    if attempts >= Self.maxUnresolvedAttempts {
+                        // Give up for this session only -- do NOT clear the scalar. On a fresh
+                        // install or a large household, the parent can legitimately arrive several
+                        // batches after the child; clearing the pointer would destroy the only
+                        // record of that link permanently. A wasted retry is cheap, a lost
+                        // relationship isn't -- so just stop retrying until next launch (or until
+                        // a new row of the target type arrives this session -- see above).
+                        gaveUpThisSession.insert(attemptKey)
+                        unresolvedAttemptCounts.removeValue(forKey: attemptKey)
+                        SyncLogger.log(SyncLogger.inbound, "giving up on \(ownerEntityName).\(relationshipKey) for this session (target \(targetRecordName ?? "nil"))")
+                    } else {
+                        unresolvedAttemptCounts[attemptKey] = attempts
+                        stillUnresolved += 1
+                    }
                     continue
                 }
                 setLink(row, target)
+                unresolvedAttemptCounts.removeValue(forKey: attemptKey)
             }
 
             if stillUnresolved > 0 {
@@ -143,9 +210,11 @@ final class InboundChangeApplier {
 
         retry(ownerEntityName: "HouseholdMember", relationshipKey: "household", recordNameKey: "householdRecordName", targetEntityName: "Household") { (member: HouseholdMember, household: Household) in
             member.household = household
+            member.setValue(household.id, forKey: "householdId")
         }
         retry(ownerEntityName: "Movie", relationshipKey: "household", recordNameKey: "householdRecordName", targetEntityName: "Household") { (movie: Movie, household: Household) in
             movie.household = household
+            movie.householdID = household.id
         }
         retry(ownerEntityName: "MovieFeedback", relationshipKey: "household", recordNameKey: "householdRecordName", targetEntityName: "Household") { (feedback: MovieFeedback, household: Household) in
             feedback.household = household
@@ -170,31 +239,31 @@ final class InboundChangeApplier {
 
     // MARK: - Fetch-or-create
 
-    private func fetchOrCreateHousehold(recordName: String) -> Household {
+    private func fetchOrCreateHousehold(recordName: String) -> (household: Household, isNew: Bool) {
         if let existing: Household = SyncRecordMapping.fetchByRecordName(entityName: "Household", recordName: recordName, context: context) {
-            return existing
+            return (existing, false)
         }
         let household = Household(context: context)
         household.recordName = recordName
-        return household
+        return (household, true)
     }
 
-    private func fetchOrCreateMember(recordName: String) -> HouseholdMember {
+    private func fetchOrCreateMember(recordName: String) -> (member: HouseholdMember, isNew: Bool) {
         if let existing: HouseholdMember = SyncRecordMapping.fetchByRecordName(entityName: "HouseholdMember", recordName: recordName, context: context) {
-            return existing
+            return (existing, false)
         }
         let member = HouseholdMember(context: context)
         member.recordName = recordName
-        return member
+        return (member, true)
     }
 
-    private func fetchOrCreateMovie(recordName: String) -> Movie {
+    private func fetchOrCreateMovie(recordName: String) -> (movie: Movie, isNew: Bool) {
         if let existing: Movie = SyncRecordMapping.fetchByRecordName(entityName: "Movie", recordName: recordName, context: context) {
-            return existing
+            return (existing, false)
         }
         let movie = Movie(context: context)
         movie.recordName = recordName
-        return movie
+        return (movie, true)
     }
 
     private func fetchOrCreateFeedback(recordName: String) -> MovieFeedback {
@@ -243,8 +312,8 @@ final class InboundChangeApplier {
     }
 
     private func applyDeletion(recordName: String) {
-        let entityNames = ["Household", "HouseholdMember", "Movie", "MovieFeedback", "Viewing"]
-        for entityName in entityNames {
+        // Registry order (parents first), same order as the hand-written list this replaced.
+        for entityName in SyncRecordMapping.entities.map(\.entityName) {
             let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
             request.predicate = NSPredicate(format: "recordName == %@", recordName)
             request.fetchLimit = 1

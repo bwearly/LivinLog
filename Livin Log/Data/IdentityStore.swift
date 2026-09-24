@@ -225,18 +225,48 @@ enum IdentityStore {
         }
     }
 
-    static func canAct(as member: HouseholdMember?, appUser: AppUser?, context: NSManagedObjectContext) -> Bool {
-        guard let member, let appUser, let household = member.household else { return false }
-        if let claimed = member.value(forKey: "claimedByAppUserId") as? String,
-           let durableId = durableUserId(for: appUser),
-           !claimed.isEmpty,
-           claimed != durableId {
-            debug("book/member authorization denied claimedBy mismatch")
-            return false
+    /// Phase 3a authorization rule, based purely on `member`'s own data -- no `AppUser`/
+    /// `HouseholdMembership` lookup, no device-local state. Allowed if the member is linked to
+    /// the signed-in iCloud user, or if the member has no linked user at all (a no-phone member
+    /// anyone in the household can act on behalf of). Denied only when the member is linked to a
+    /// *different* account than the one currently signed in.
+    static func canAct(as member: HouseholdMember?, currentUserRecordName: String?) -> Bool {
+        guard let member else { return false }
+        guard let linked = member.value(forKey: "linkedUserRecordName") as? String, !linked.isEmpty else {
+            return true
         }
-        let allowed = membership(for: appUser, household: household, member: member, context: context) != nil
-        debug("authorization canAct=\(allowed) household=\(household.name ?? "Household") member=\(member.displayName ?? "Member")")
+        let allowed = linked == currentUserRecordName
+        debug("authorization canAct=\(allowed) member=\(member.displayName ?? "Member") linked=\(!linked.isEmpty)")
         return allowed
+    }
+
+    /// The `HouseholdMember` rows this iCloud user is the linked owner of, across every
+    /// household synced to this device. Drives `AppState.start()`'s Phase 3a routing: 0 rows ->
+    /// onboarding, 1 -> that household, >1 -> a picker.
+    static func members(linkedTo userRecordName: String, context: NSManagedObjectContext) -> [HouseholdMember] {
+        let request = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
+        request.predicate = NSPredicate(format: "linkedUserRecordName == %@", userRecordName)
+        request.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: true)]
+        return (try? context.fetch(request)) ?? []
+    }
+
+    /// Phase 3b joiner flow ("Which one are you?"): active members of `household` with no
+    /// linked iCloud user yet, `hasOwnIPhone` members first per the Phase 3b plan.
+    static func membersAwaitingLink(in household: Household, context: NSManagedObjectContext) -> [HouseholdMember] {
+        let request = NSFetchRequest<HouseholdMember>(entityName: "HouseholdMember")
+        request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            NSPredicate(format: "household == %@", household),
+            NSPredicate(format: "isActive == YES"),
+            NSCompoundPredicate(orPredicateWithSubpredicates: [
+                NSPredicate(format: "linkedUserRecordName == nil"),
+                NSPredicate(format: "linkedUserRecordName == %@", "")
+            ])
+        ])
+        request.sortDescriptors = [
+            NSSortDescriptor(key: "hasOwnIPhone", ascending: false),
+            NSSortDescriptor(key: "createdAt", ascending: true)
+        ]
+        return (try? context.fetch(request)) ?? []
     }
 
     static func backfillMembershipIfPossible(_ membership: HouseholdMembership) {

@@ -32,13 +32,7 @@ struct ChildrenManagerView: View {
             childrenSection
         }
         .scrollContentBackground(.hidden)
-        .background(
-            LinearGradient(
-                colors: [Color.pink.opacity(0.10), Color.orange.opacity(0.06), Color.clear],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Children")
         .navigationBarItems(trailing: addButton)
         .sheet(isPresented: $showingAdd, content: addSheet)
@@ -326,13 +320,7 @@ private struct AddEditChildView: View {
             }
             .listRowBackground(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.pink.opacity(0.16), Color.orange.opacity(0.10)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                    .fill(.thinMaterial)
             )
 
             Section("Child") {
@@ -350,13 +338,7 @@ private struct AddEditChildView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(
-            LinearGradient(
-                colors: [Color.pink.opacity(0.10), Color.orange.opacity(0.05), Color.clear],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
+        .background(Color(.systemGroupedBackground))
         .navigationTitle(isEditing ? "Edit Child" : "Add Child")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarItems(

@@ -268,7 +268,7 @@ struct MovieDetailView: View {
 
     private var authorizedActingMember: HouseholdMember? {
         guard let member else { return nil }
-        return IdentityStore.canAct(as: member, appUser: appState.appUser, context: context) ? member : nil
+        return IdentityStore.canAct(as: member, currentUserRecordName: appState.currentUserRecordName) ? member : nil
     }
 
     private var canEdit: Bool {

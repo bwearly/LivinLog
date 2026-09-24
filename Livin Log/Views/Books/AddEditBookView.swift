@@ -49,7 +49,7 @@ struct AddEditBookView: View {
 
     private var canEdit: Bool {
         guard let selectedMember else { return false }
-        return IdentityStore.canAct(as: selectedMember, appUser: appState.appUser, context: context)
+        return IdentityStore.canAct(as: selectedMember, currentUserRecordName: appState.currentUserRecordName)
     }
 
     private var parsedRating: Double? {
@@ -141,7 +141,7 @@ struct AddEditBookView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(AppCategoryStyle.books.gradient.opacity(0.18))
+        .background(Color(.systemGroupedBackground))
         .navigationTitle(editingBook == nil ? "Add Book" : "Edit Book")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -263,10 +263,6 @@ struct AddEditBookView: View {
             errorMessage = "Choose your member profile before saving a book."
             return
         }
-        guard let appUser = appState.appUser else {
-            errorMessage = "Sign in is required before saving a book."
-            return
-        }
         guard let rating = parsedRating else {
             errorMessage = "Enter a rating between 0 and 10."
             return
@@ -280,7 +276,7 @@ struct AddEditBookView: View {
             errorMessage = "That member profile does not belong to this household."
             return
         }
-        guard IdentityStore.canAct(as: scopedMember, appUser: appUser, context: context) else {
+        guard IdentityStore.canAct(as: scopedMember, currentUserRecordName: appState.currentUserRecordName) else {
             errorMessage = "You can add books only to your own claimed member profile."
             print("🚫 [BookSave] denied: unresolved actor/member or attempted write to another member")
             return
@@ -295,7 +291,6 @@ struct AddEditBookView: View {
         }
 
         do {
-            let scopedUser = try IdentityStore.storeScopedAppUser(matching: appUser, household: scopedHousehold, context: context)
             let entry: BookEntry
             if let editingBook {
                 guard let existing = try context.existingObject(with: editingBook.objectID) as? BookEntry else {
@@ -321,16 +316,13 @@ struct AddEditBookView: View {
             entry.setValue(firstPublishYear.map { NSNumber(value: $0) }, forKey: "firstPublishYear")
             entry.household = scopedHousehold
             entry.ownerMember = scopedMember
-            entry.ownerAppUser = scopedUser
             entry.setValue(scopedHousehold.id, forKey: "householdId")
             entry.setValue(scopedMember.id, forKey: "ownerMemberId")
-            entry.setValue(IdentityStore.durableUserId(for: scopedUser), forKey: "ownerAppUserId")
 
             let objectsToValidate: [(String, NSManagedObject?)] = [
                 ("book", entry),
                 ("household", scopedHousehold),
-                ("ownerMember", scopedMember),
-                ("ownerAppUser", scopedUser)
+                ("ownerMember", scopedMember)
             ]
             context.debugLogStoreSafeSave(entityName: "BookEntry", household: scopedHousehold, member: scopedMember, objects: objectsToValidate)
             try context.validateSamePersistentStore(objectsToValidate)

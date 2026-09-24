@@ -34,46 +34,45 @@ struct SettingsView: View {
     @AppStorage("ll_notify_enabled") private var notificationsEnabled = false
     @State private var showNotificationsDeniedAlert = false
     @State private var showConfirmDeleteAll = false
-    @State private var memberPendingRemoval: HouseholdMember?
-
-    // Presented right after a member is removed: this app has no reliable way to pick out
-    // which CKShare.Participant corresponds to the just-removed HouseholdMembership (see
-    // CloudShareManagementSheet's doc comment), so it hands the owner off to Apple's own
-    // participant-management UI to finish revoking that person's CloudKit access.
-    @State private var showingShareManagementForRemoval = false
-
-    // Presents Apple's official CloudKit sharing UI.
-    @State private var showingInviteShareSheet = false
-
-    // Bulletproof join flow (paste link)
-    @State private var showingPasteInviteSheet = false
-    @State private var pendingInvite: PendingShareInvite?
-    @State private var sharedHouseholdNeedingProfile: Household?
 
     @AppStorage(CloudSharing.lastShareErrorDefaultsKey) private var persistedLastShareError = ""
     @AppStorage(CloudSharing.lastShareStatusDefaultsKey) private var persistedLastShareStatus = ""
+
+    /// nil until `loadAccountStatus()` returns -- keeps SyncStatusRow from flashing
+    /// "iCloud unavailable" before the check has actually run.
+    @State private var loadedAccountStatus: CKAccountStatus?
+
+    @State private var householdNameDraft = ""
+    @FocusState private var isHouseholdNameFocused: Bool
+    @State private var showingAddMember = false
+
+    @State private var showingLeaveConfirm = false
+    @State private var isLeaving = false
+    @State private var showingDeleteSheet = false
+    @State private var deleteOtherMemberNames: [String] = []
+    @State private var actionErrorText: String?
 
     private let persistentContainer = PersistenceController.shared.container
 
     var body: some View {
         Form {
-            householdSection
-            joinHouseholdSection
+            // Settings cleanup: householdSection, joinHouseholdSection, membersSection,
+            // profilesSection, and the sharing issue/success banners are disabled, not deleted --
+            // kept below, no longer shown.
+            householdOverviewSection
+            youSection
             notificationsSection
-            membersSection
-            profilesSection
+            syncSection
+            aboutSection
 
-            if hasSharingIssue {
-                sharingIssueSection
-            } else if hasSharingSuccess {
-                sharingSuccessSection
+            if household != nil {
+                dangerZoneSection
             }
 
 #if DEBUG
             developerDiagnosticsSection
-#endif
-
             advancedSection
+#endif
 
             if let errorText {
                 Section {
@@ -91,88 +90,58 @@ struct SettingsView: View {
             if let hh = household { ensureDefaultMemberExists(in: hh) }
             reloadShareStatus()
             loadAccountStatus()
+            householdNameDraft = household?.name ?? ""
         }
         .onChange(of: household?.objectID) { _, _ in
             if let hh = household { ensureDefaultMemberExists(in: hh) }
             reloadShareStatus()
+            householdNameDraft = household?.name ?? ""
         }
-        // Invite sheet (owner sharing)
-        .sheet(isPresented: $showingInviteShareSheet, onDismiss: {
-            isSharing = false
-            reloadShareStatus()
-        }) {
+        .onChange(of: household?.name) { _, newName in
+            // Pick up a rename synced in from another device, unless mid-edit here.
+            if !isHouseholdNameFocused { householdNameDraft = newName ?? "" }
+        }
+        .onChange(of: isHouseholdNameFocused) { _, focused in
+            if !focused { commitHouseholdRename() }
+        }
+        .onDisappear {
+            // Covers closing Settings mid-edit, where focus loss isn't guaranteed to fire first.
+            commitHouseholdRename()
+        }
+        .sheet(isPresented: $showingAddMember) {
             if let household {
-                CloudKitHouseholdSharingSheet(
-                    household: household,
-                    onDone: { showingInviteShareSheet = false },
-                    onShareReady: { readyShare in
-                        handleShareAttemptSucceeded(readyShare)
-                    },
-                    onError: { error in
-                        handleShareAttemptFailed(error)
-                        showingInviteShareSheet = false
-                        isSharing = false
-                    }
-                )
-                .ignoresSafeArea()
+                AddMemberSheet(household: household) { _ in }
+                    .environmentObject(appState)
             }
         }
-
-        // Paste link sheet (bulletproof join)
-        .sheet(isPresented: $showingPasteInviteSheet) {
-            PasteInviteLinkSheet(
-                isSignedIn: appState.appUser != nil,
-                onInviteReady: { invite in
-                    Task { @MainActor in
-                        pendingInvite = invite
-                    }
-                },
-                onInviteDeferred: { _ in
-                    setUserFacingShareError("Sign in with Apple to finish joining this household invite.")
+        .sheet(isPresented: $showingDeleteSheet) {
+            DeleteHouseholdSheet(
+                householdName: household?.name ?? "Household",
+                otherLinkedMemberNames: deleteOtherMemberNames
+            ) {
+                do {
+                    try await appState.deleteHousehold()
+                    return nil
+                } catch {
+                    return error.localizedDescription
                 }
-            )
-        }
-
-        // Accept invite sheet
-        .sheet(item: $pendingInvite) { invite in
-            AcceptHouseholdInviteSheet(
-                pendingInvite: invite,
-                onAccepted: {
-                    NotificationCenter.default.post(name: .didAcceptCloudKitShare, object: nil)
-                    await MainActor.run {
-                        reloadShareStatus()
-                        resolveSharedMemberPromptNeed()
-                    }
-                },
-                onCancelInvite: {
-                    PendingInviteStore.clear(reason: "cancelled from settings accept sheet")
-                    pendingInvite = nil
-                },
-                isSignedIn: appState.appUser != nil
-            )
-        }
-        .sheet(item: $sharedHouseholdNeedingProfile) { sharedHousehold in
-            CreateMemberProfileSheet(household: sharedHousehold) { createdMember in
-                household = sharedHousehold
-                member = createdMember
-                SelectionStore.save(household: sharedHousehold, member: createdMember)
-                SelectionStore.saveDeviceMember(createdMember, for: sharedHousehold)
             }
         }
-        .sheet(isPresented: $showingShareManagementForRemoval, onDismiss: {
-            reloadShareStatus()
-        }) {
-            if let share {
-                CloudShareManagementSheet(
-                    share: share,
-                    container: CloudSharing.cloudKitContainer(from: persistentContainer),
-                    onDismiss: { showingShareManagementForRemoval = false }
-                )
-                .ignoresSafeArea()
-            }
+        .confirmationDialog(
+            "Leave \(household?.name ?? "Household")?",
+            isPresented: $showingLeaveConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Leave Household", role: .destructive) { performLeave() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You'll lose access to this household on all your devices. Your past ratings stay in the household. To come back, the leader will need to invite you again.")
         }
-
-
+        .alert("Couldn’t Complete", isPresented: Binding(get: { actionErrorText != nil }, set: { if !$0 { actionErrorText = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(actionErrorText ?? "")
+        }
         .alert("Delete All Data?", isPresented: $showConfirmDeleteAll) {
             Button("Cancel", role: .cancel) {}
             Button("Delete & Restart", role: .destructive) {
@@ -180,17 +149,6 @@ struct SettingsView: View {
             }
         } message: {
             Text("This will delete local household data on this device and reset your selection. Shared iCloud data for other members may still exist.")
-        }
-
-        .alert("Remove Household Member?", isPresented: Binding(get: { memberPendingRemoval != nil }, set: { if !$0 { memberPendingRemoval = nil } })) {
-            Button("Cancel", role: .cancel) { memberPendingRemoval = nil }
-            Button("Remove", role: .destructive) {
-                if let memberPendingRemoval {
-                    removeMember(memberPendingRemoval)
-                }
-            }
-        } message: {
-            Text("This removes \(memberPendingRemoval?.displayName ?? "this member") from the household's active roster. Their past ratings and other household content are preserved and stay attributed to them. You'll be asked next to finish revoking their iCloud access.")
         }
 
         .alert("Notifications Disabled", isPresented: $showNotificationsDeniedAlert) {
@@ -202,6 +160,103 @@ struct SettingsView: View {
 
     // MARK: - Top-level Sections (User-facing)
 
+    private var householdOverviewSection: some View {
+        Section {
+            if let household {
+                if appState.isCurrentHouseholdOwner {
+                    TextField("Household name", text: $householdNameDraft)
+                        .font(.headline)
+                        .focused($isHouseholdNameFocused)
+                        .submitLabel(.done)
+                        .onSubmit { isHouseholdNameFocused = false }
+                } else {
+                    HouseholdNameText(household: household)
+                }
+
+                MembersRosterSection(household: household)
+
+                Button {
+                    showingAddMember = true
+                } label: {
+                    Label("Add Member", systemImage: "person.badge.plus")
+                }
+            }
+        } header: {
+            Text("Household")
+        } footer: {
+            if household != nil, appState.isCurrentHouseholdOwner {
+                Text("Tap the name to rename your household.")
+            }
+        }
+    }
+
+    private var youSection: some View {
+        Section("You") {
+            if let me = appState.member {
+                NavigationLink {
+                    EditProfileView(member: me)
+                } label: {
+                    ProfileRowLabel(member: me)
+                }
+            }
+        }
+    }
+
+    private var syncSection: some View {
+        Section("iCloud & Sync") {
+            SyncStatusRow(accountStatus: loadedAccountStatus)
+        }
+    }
+
+    private var aboutSection: some View {
+        Section("About") {
+            LabeledContent("Version", value: appVersionText)
+            Text("To join another household, open the invite link you were sent.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var dangerZoneSection: some View {
+        Section {
+            if appState.isCurrentHouseholdOwner {
+                Button("Delete Household", role: .destructive) {
+                    deleteOtherMemberNames = appState.otherLinkedMembers().compactMap(\.displayName)
+                    showingDeleteSheet = true
+                }
+            } else {
+                Button(role: .destructive) {
+                    showingLeaveConfirm = true
+                } label: {
+                    HStack {
+                        Text("Leave Household")
+                        if isLeaving {
+                            Spacer()
+                            ProgressView()
+                        }
+                    }
+                }
+                .disabled(isLeaving)
+            }
+        } header: {
+            Text("Danger Zone")
+                .foregroundStyle(.red)
+        } footer: {
+            Text(appState.isCurrentHouseholdOwner
+                 ? "Deleting removes the household and everything in it for every member."
+                 : "Leaving removes this household from your devices. The household itself stays for everyone else.")
+        }
+    }
+
+    private var appVersionText: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(version) (\(build))"
+    }
+
+    // Settings cleanup: disabled, not deleted -- no longer shown (see body). Its "Create
+    // Household" branch was unreachable anyway: Settings is only presented on `.main`.
     private var householdSection: some View {
         Section("Household") {
             if let household {
@@ -211,35 +266,6 @@ struct SettingsView: View {
                     Text("Shared household syncs through iCloud.")
                         .foregroundStyle(.secondary)
                         .font(.subheadline)
-                }
-
-                Button {
-                    inviteMember()
-                } label: {
-                    HStack {
-                        Text(isSharing ? "Preparing invite…" : "Invite Someone")
-                        Spacer()
-                        if isSharing {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "person.badge.plus")
-                        }
-                    }
-                }
-                 .disabled(isSharing || shareActionsDisabled || appState.appUser == nil || !appState.isCurrentMemberAuthorized())
-                if appState.appUser == nil {
-                    Text("Sign in with Apple before sharing this household.")
-                        .foregroundStyle(.secondary)
-                        .font(.footnote)
-                } else if !appState.isCurrentMemberAuthorized() {
-                    Text("Select or create your claimed member profile before sharing this household.")
-                        .foregroundStyle(.secondary)
-                        .font(.footnote)
-                }
-                if shareActionsDisabled {
-                    Text(accountUnavailableFriendlyMessage)
-                        .foregroundStyle(.secondary)
-                        .font(.footnote)
                 }
             } else {
                 Text("Create a household to begin.")
@@ -251,23 +277,17 @@ struct SettingsView: View {
                 Button("Create Household") {
                     createHousehold()
                 }
-                .disabled(householdName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || appState.appUser == nil)
+                .disabled(householdName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
     }
 
+    // Settings cleanup: disabled, not deleted -- its note now lives in the About section.
     private var joinHouseholdSection: some View {
         Section("Join Household") {
-            Button {
-                showingPasteInviteSheet = true
-            } label: {
-                Label("Join with Invite Link", systemImage: "link")
-            }
-            if appState.appUser == nil {
-                Text("Sign in with Apple before joining so your invite membership can be tied to your durable identity.")
-                    .foregroundStyle(.secondary)
-                    .font(.footnote)
-            }
+            Text("To join a household, open the invite link you were sent.")
+                .foregroundStyle(.secondary)
+                .font(.footnote)
         }
     }
 
@@ -290,19 +310,15 @@ struct SettingsView: View {
         }
     }
 
+    // Settings cleanup: disabled, not deleted -- MembersRosterSection now renders inside
+    // householdOverviewSection.
     private var membersSection: some View {
         Section("Members") {
             if let household {
-                // Reactive: @FetchRequest re-runs automatically when a member's row (e.g. an
-                // accepted invitee's HouseholdMember) merges in via CloudKit import, instead of
-                // needing a manual NSManagedObjectContextObjectsDidChange listener to force a
-                // full re-fetch on every unrelated Core Data change (see MembersRosterSection).
-                MembersRosterSection(
-                    household: household,
-                    currentMember: member,
-                    canManage: canCurrentUserManageMembers,
-                    onRequestRemoval: { memberPendingRemoval = $0 }
-                )
+                // Reactive: @FetchRequest re-runs automatically when a member's row (e.g. a
+                // just-accepted invitee's HouseholdMember) merges in via CloudKit import, instead
+                // of needing a manual re-fetch trigger. See MembersRosterSection.
+                MembersRosterSection(household: household)
             } else {
                 Text("Create a household to add members.")
                     .foregroundStyle(.secondary)
@@ -333,6 +349,9 @@ struct SettingsView: View {
         }
     }
 
+    // Settings cleanup: the sharing issue/success banners below are disabled, not deleted. They
+    // read CloudSharing's persisted status keys, which only the old UICloudSharingController
+    // flow wrote, so they could only ever show stale values now.
     private var hasSharingIssue: Bool {
         if let shareErrorText, !shareErrorText.isEmpty { return true }
         if !persistedLastShareError.isEmpty { return true }
@@ -420,6 +439,7 @@ struct SettingsView: View {
     }
 #endif
 
+    // Settings cleanup: shown only in DEBUG builds now (see body), together with Delete All Data.
     private var advancedSection: some View {
         Section {
             NavigationLink {
@@ -464,46 +484,35 @@ struct SettingsView: View {
     }
 
 
-    private func resolveSharedMemberPromptNeed() {
-        let (selectedHousehold, selectedMember) = SelectionStore.load(context: context)
-        guard let selectedHousehold else {
-            sharedHouseholdNeedingProfile = nil
+    // MARK: - Actions
+
+    private func commitHouseholdRename() {
+        guard let household, appState.isCurrentHouseholdOwner else { return }
+        let trimmed = householdNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            householdNameDraft = household.name ?? ""
             return
         }
-
-        household = selectedHousehold
-
-        let isShared = selectedHousehold.objectID.persistentStore == PersistenceController.shared.sharedStore
-        let selectedMatches = selectedMember?.household?.objectID == selectedHousehold.objectID
-
-        if selectedMatches, let selectedMember, isAuthorized(selectedMember) {
-            member = selectedMember
-            print("✅ Using authorized selected member for this household")
-            SelectionStore.saveDeviceMember(selectedMember, for: selectedHousehold)
-            sharedHouseholdNeedingProfile = nil
-            return
-        }
-
-        if let deviceMember = SelectionStore.loadDeviceMember(for: selectedHousehold, context: context),
-           isAuthorized(deviceMember) {
-            member = deviceMember
-            SelectionStore.save(household: selectedHousehold, member: deviceMember)
-            print("✅ Using authorized cached member for this household")
-            sharedHouseholdNeedingProfile = nil
-            return
-        }
-
-        member = nil
-
-        if isShared {
-            print("ℹ️ Selected household is shared; no local member found; prompting for name")
-            sharedHouseholdNeedingProfile = selectedHousehold
-        } else {
-            sharedHouseholdNeedingProfile = nil
+        do {
+            try appState.renameHousehold(trimmed)
+            householdNameDraft = trimmed
+        } catch {
+            householdNameDraft = household.name ?? ""
+            actionErrorText = error.localizedDescription
         }
     }
 
-    // MARK: - Actions
+    private func performLeave() {
+        isLeaving = true
+        Task {
+            defer { isLeaving = false }
+            do {
+                try await appState.leaveHousehold()
+            } catch {
+                actionErrorText = error.localizedDescription
+            }
+        }
+    }
 
     private func setUserFacingShareError(_ message: String) {
         shareErrorText = message
@@ -541,27 +550,6 @@ struct SettingsView: View {
         CloudSharing.saveLastShareStatus("Share attempt failed")
     }
 
-    private func inviteMember() {
-        guard household != nil else { return }
-        guard appState.appUser != nil, appState.isCurrentMemberAuthorized() else {
-            setUserFacingShareError("Select or create your claimed member profile before sharing this household.")
-            return
-        }
-        guard !shareActionsDisabled else {
-            setUserFacingShareError(accountUnavailableFriendlyMessage)
-            return
-        }
-
-        clearSharingIssue()
-        persistedLastShareStatus = "Preparing invite link…"
-        CloudSharing.saveLastShareStatus("Preparing invite link…")
-        CloudSharing.saveLastShareError(nil)
-
-        isSharing = true
-        showingInviteShareSheet = true
-        print("ℹ️ [CloudSharing] Share attempt started for household invite")
-    }
-
     private func reloadShareStatus() {
         guard let household else {
             share = nil
@@ -583,6 +571,7 @@ struct SettingsView: View {
             let status = await CloudSharing.accountStatus(using: persistentContainer)
             await MainActor.run {
                 accountStatus = status
+                loadedAccountStatus = status
                 if status == .couldNotDetermine {
                     accountStatusMessage = "iCloud account is temporarily unavailable. Sharing actions are disabled until iCloud responds."
                 } else {
@@ -611,74 +600,7 @@ struct SettingsView: View {
     }
 
     private func isAuthorized(_ member: HouseholdMember) -> Bool {
-        IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
-    }
-
-    // activeMembership(for:)/isOwner(_:)/canRemoveMember(_:) below are kept here — separate
-    // from MembersRosterSection's own copies — purely to guard the one-shot removeMember(_:)
-    // mutation below, which runs once per explicit user action (confirming the "Remove
-    // Household Member?" alert), not per row render. They are intentionally NOT used by the
-    // roster's row-rendering path anymore; see MembersRosterSection for that (a single
-    // activeMembership fetch per row instead of up to four).
-    private func activeMembership(for managedMember: HouseholdMember) -> HouseholdMembership? {
-        guard let household = managedMember.household else { return nil }
-        let req = NSFetchRequest<HouseholdMembership>(entityName: "HouseholdMembership")
-        req.fetchLimit = 1
-        req.predicate = NSPredicate(format: "household == %@ AND memberProfile == %@ AND status == %@", household, managedMember, "active")
-        req.sortDescriptors = [NSSortDescriptor(key: "joinedAt", ascending: true), NSSortDescriptor(key: "createdAt", ascending: true)]
-        return try? context.fetch(req).first
-    }
-
-    private var canCurrentUserManageMembers: Bool {
-        guard let role = appState.currentMembership?.role?.lowercased() else { return false }
-        return ["leader", "owner", "admin"].contains(role)
-    }
-
-    private func canRemoveMember(_ managedMember: HouseholdMember) -> Bool {
-        guard canCurrentUserManageMembers else { return false }
-        guard managedMember.objectID != member?.objectID else { return false }
-        guard !isOwner(managedMember) else { return false }
-        return activeMembership(for: managedMember) != nil
-    }
-
-    private func isOwner(_ managedMember: HouseholdMember) -> Bool {
-        if let role = activeMembership(for: managedMember)?.role?.lowercased(), ["leader", "owner"].contains(role) {
-            return true
-        }
-        guard let household = managedMember.household,
-              let creatorId = household.value(forKey: "createdByAppUserId") as? String,
-              !creatorId.isEmpty else { return false }
-        return (managedMember.value(forKey: "claimedByAppUserId") as? String) == creatorId
-    }
-
-    private func removeMember(_ managedMember: HouseholdMember) {
-        errorText = nil
-        defer { memberPendingRemoval = nil }
-        guard canRemoveMember(managedMember) else {
-            errorText = "You do not have permission to remove that member."
-            return
-        }
-
-        do {
-            let scopedMember = try context.existingObject(with: managedMember.objectID) as? HouseholdMember
-            if let scopedMember {
-                // Soft-deactivates: household/feedbacks/bookEntries relationships stay intact,
-                // so this member's past ratings keep resolving. See IdentityStore.departHousehold.
-                try IdentityStore.departHousehold(scopedMember, context: context)
-                NotificationCenter.default.post(name: .didRequestCloudKitResync, object: nil)
-
-                // Data is preserved locally as of this point regardless of what happens next.
-                // CloudKit access revocation is a separate step handed off to Apple's native
-                // share-management UI (see CloudShareManagementSheet) since this app can't
-                // reliably pick out which CKShare.Participant corresponds to `scopedMember`.
-                if share != nil {
-                    showingShareManagementForRemoval = true
-                }
-            }
-        } catch {
-            context.rollback()
-            errorText = "Could not remove member: \(error.localizedDescription)"
-        }
+        IdentityStore.canAct(as: member, currentUserRecordName: appState.currentUserRecordName)
     }
 
 
@@ -767,7 +689,7 @@ struct SettingsView: View {
         let displayName = name.isEmpty ? "Me" : name
 
         do {
-            try appState.createInitialHousehold(name: hhName, memberName: displayName)
+            try appState.createInitialHousehold(householdName: hhName, memberName: displayName, avatar: MemberAvatarColor.default.rawValue)
             self.household = appState.household
             self.member = appState.member
 
@@ -829,40 +751,55 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Members Roster (extracted for a real @FetchRequest)
+// MARK: - Small observing rows
 
-/// Renders the household's active-member roster. Pulled out of SettingsView so it can take a
-/// non-optional `household` and use a proper reactive `@FetchRequest<HouseholdMember>` —
-/// exactly like MoviesListView/PuzzlesListView already do — instead of SettingsView's old
-/// `fetchMembers(for:)`, a plain NSFetchRequest re-run on every body evaluation and forced to
-/// re-run via a manual `NSManagedObjectContextObjectsDidChange` listener that fired (and forced
-/// a full re-fetch) on *any* Core Data change anywhere in the app, not just household-member
-/// ones. That combination was the confirmed cause of a watchdog termination (0x8BADF00D) on
-/// TestFlight: opening Settings could land in the middle of a burst of CloudKit merge
-/// notifications, each one re-triggering this section's fetch, each of which re-resolved
-/// `HouseholdMembership` up to 4 times per row (once directly, once inside the old `isOwner`,
-/// twice inside the old `canRemoveMember`) — M notifications × (1 + 4N) synchronous compound-
-/// predicate fetches on the main thread, easily exceeding the OS's 5-10s watchdog budget.
-///
-/// This view fixes both halves: `@FetchRequest` is already reactive to the CloudKit-merge case
-/// the listener existed for (no manual tick needed), and `activeMembership(for:)` is resolved
-/// once per row here and threaded down as a parameter, instead of being re-fetched by every
-/// helper that needs it.
+/// Observes the member directly so the row updates after EditProfileView saves -- SettingsView
+/// itself only holds a binding, which doesn't re-render on the object's field changes.
+private struct ProfileRowLabel: View {
+    @ObservedObject var member: HouseholdMember
+
+    var body: some View {
+        HStack(spacing: 12) {
+            MemberAvatarBadge(name: member.displayName ?? "", avatar: member.value(forKey: "avatar") as? String)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(member.displayName ?? "Unnamed")
+                Text("Name and color")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// Read-only household name for participants, observed so a leader's rename shows up live.
+private struct HouseholdNameText: View {
+    @ObservedObject var household: Household
+
+    var body: some View {
+        Text(household.name ?? "Household")
+            .font(.headline)
+    }
+}
+
+// MARK: - Members Roster (Phase 3b)
+
+/// Renders the household's active-member roster, entirely from HouseholdMember's own fields
+/// (MemberStatus) -- no HouseholdMembership lookups, which stopped being populated back in
+/// Phase 3a and had made the old role/"View only"/"Invite pending" labels here silently wrong
+/// since then. `@FetchRequest` stays reactive to CloudKit merges the same way it always was.
 private struct MembersRosterSection: View {
-    @Environment(\.managedObjectContext) private var context
+    @EnvironmentObject private var appState: AppState
 
     let household: Household
-    let currentMember: HouseholdMember?
-    let canManage: Bool
-    let onRequestRemoval: (HouseholdMember) -> Void
 
     @FetchRequest private var members: FetchedResults<HouseholdMember>
 
-    init(household: Household, currentMember: HouseholdMember?, canManage: Bool, onRequestRemoval: @escaping (HouseholdMember) -> Void) {
+    @State private var pendingRemoveAccess: HouseholdMember?
+    @State private var isRemovingAccess = false
+    @State private var errorText: String?
+
+    init(household: Household) {
         self.household = household
-        self.currentMember = currentMember
-        self.canManage = canManage
-        self.onRequestRemoval = onRequestRemoval
 
         // Current-roster context: a departed member (isActive == NO) is intentionally excluded
         // here — they still show up wherever their historical ratings/entries are attributed,
@@ -883,114 +820,111 @@ private struct MembersRosterSection: View {
         )
     }
 
+    private var isCurrentUserLeader: Bool {
+        (appState.member?.value(forKey: "role") as? String) == "leader"
+    }
+
     var body: some View {
-        if members.isEmpty {
-            ContentUnavailableView("No members yet", systemImage: "person.3")
-        } else {
-            ForEach(members) { m in
-                // Resolved once per row, then threaded down — this is the fix for the up-to-4x
-                // per-row re-fetch (see the type-level doc comment above).
-                let membership = activeMembership(for: m)
-                memberRow(for: m, membership: membership)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        if canRemoveMember(m, membership: membership) {
-                            Button("Remove", role: .destructive) {
-                                onRequestRemoval(m)
-                            }
-                        }
-                    }
+        Group {
+            if members.isEmpty {
+                ContentUnavailableView("No members yet", systemImage: "person.3")
+            } else {
+                ForEach(Array(members)) { managedMember in
+                    memberRow(managedMember)
+                }
             }
+        }
+        .confirmationDialog(
+            pendingRemoveAccess.map { "Remove \($0.displayName ?? "this member")’s Access?" } ?? "Remove Access?",
+            isPresented: Binding(get: { pendingRemoveAccess != nil }, set: { if !$0 { pendingRemoveAccess = nil } }),
+            titleVisibility: .visible
+        ) {
+            if let pendingRemoveAccess {
+                Button("Remove Access", role: .destructive) {
+                    performRemoveAccess(pendingRemoveAccess)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This revokes their iCloud access to this household. Their profile and past ratings stay in the household.")
+        }
+        .alert("Couldn’t Complete", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorText ?? "")
         }
     }
 
     @ViewBuilder
-    private func memberRow(for managedMember: HouseholdMember, membership: HouseholdMembership?) -> some View {
-        let owner = isOwner(managedMember, membership: membership)
-        HStack(spacing: 12) {
-            Image(systemName: owner ? "crown.fill" : "person.circle.fill")
-                .font(.title3)
-                .foregroundStyle(owner ? .yellow : .secondary)
+    private func memberRow(_ managedMember: HouseholdMember) -> some View {
+        let status = MemberStatus.resolve(for: managedMember, currentUserRecordName: appState.currentUserRecordName)
+        let canEditPhoneToggle = isCurrentUserLeader || managedMember.objectID == appState.member?.objectID
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(managedMember.displayName ?? "Unnamed")
-                    .font(.body)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                Image(systemName: status.isLeader ? "crown.fill" : "person.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(status.isLeader ? .yellow : .secondary)
 
-                HStack(spacing: 6) {
-                    if managedMember.objectID == currentMember?.objectID {
-                        Text("You")
-                    }
-                    Text(roleLabel(for: membership))
-                    if let identity = identityLabel(for: managedMember, membership: membership) {
-                        Text(identity)
-                    }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(managedMember.displayName ?? "Unnamed")
+                        .font(.body)
+                    Text(status.isLeader ? "\(status.label) · Leader" : status.label)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
+                Spacer()
+
+                if MemberStatus.isInviteEligible(managedMember) {
+                    InviteMemberButton(member: managedMember, household: household, isResend: status.kind == .invited)
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                        .disabled(isRemovingAccess)
+                }
             }
 
-            Spacer()
-
-            if canRemoveMember(managedMember, membership: membership) {
-                Button(role: .destructive) {
-                    onRequestRemoval(managedMember)
-                } label: {
-                    Image(systemName: "minus.circle")
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("Remove \(managedMember.displayName ?? "member")")
-            } else if !canManage {
-                Text("View only")
+            if canEditPhoneToggle {
+                Toggle("Has own iPhone", isOn: hasOwnIPhoneBinding(for: managedMember))
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .disabled(isRemovingAccess)
+            }
+        }
+        .padding(.vertical, 2)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if isCurrentUserLeader, status.kind == .joined {
+                Button("Remove Access", role: .destructive) {
+                    pendingRemoveAccess = managedMember
+                }
+                .disabled(isRemovingAccess)
             }
         }
     }
 
-    // MARK: - Row helpers (all take an already-resolved membership; none re-fetch)
-
-    private func activeMembership(for managedMember: HouseholdMember) -> HouseholdMembership? {
-        guard let household = managedMember.household else { return nil }
-        let req = NSFetchRequest<HouseholdMembership>(entityName: "HouseholdMembership")
-        req.fetchLimit = 1
-        req.predicate = NSPredicate(format: "household == %@ AND memberProfile == %@ AND status == %@", household, managedMember, "active")
-        req.sortDescriptors = [NSSortDescriptor(key: "joinedAt", ascending: true), NSSortDescriptor(key: "createdAt", ascending: true)]
-        return try? context.fetch(req).first
+    private func hasOwnIPhoneBinding(for managedMember: HouseholdMember) -> Binding<Bool> {
+        Binding(
+            get: { (managedMember.value(forKey: "hasOwnIPhone") as? Bool) ?? false },
+            set: { newValue in
+                do {
+                    try appState.setHasOwnIPhone(newValue, for: managedMember)
+                } catch {
+                    errorText = error.localizedDescription
+                }
+            }
+        )
     }
 
-    private func canRemoveMember(_ managedMember: HouseholdMember, membership: HouseholdMembership?) -> Bool {
-        guard canManage else { return false }
-        guard managedMember.objectID != currentMember?.objectID else { return false }
-        guard !isOwner(managedMember, membership: membership) else { return false }
-        return membership != nil
-    }
-
-    private func isOwner(_ managedMember: HouseholdMember, membership: HouseholdMembership?) -> Bool {
-        if let role = membership?.role?.lowercased(), ["leader", "owner"].contains(role) {
-            return true
+    private func performRemoveAccess(_ managedMember: HouseholdMember) {
+        pendingRemoveAccess = nil
+        isRemovingAccess = true
+        Task {
+            defer { isRemovingAccess = false }
+            do {
+                try await appState.removeAccess(for: managedMember, household: household)
+            } catch {
+                errorText = error.localizedDescription
+            }
         }
-        guard let household = managedMember.household,
-              let creatorId = household.value(forKey: "createdByAppUserId") as? String,
-              !creatorId.isEmpty else { return false }
-        return (managedMember.value(forKey: "claimedByAppUserId") as? String) == creatorId
-    }
-
-    private func roleLabel(for membership: HouseholdMembership?) -> String {
-        let rawRole = membership?.role?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let role = rawRole?.isEmpty == false ? rawRole! : "member"
-        return role.prefix(1).uppercased() + role.dropFirst()
-    }
-
-    private func identityLabel(for managedMember: HouseholdMember, membership: HouseholdMembership?) -> String? {
-        if let displayName = membership?.appUser?.displayName, !displayName.isEmpty, displayName != managedMember.displayName {
-            return displayName
-        }
-        if let appUserId = membership?.value(forKey: "appUserId") as? String, !appUserId.isEmpty {
-            return appUserId.hasPrefix("apple:") ? "Apple ID linked" : "Identity linked"
-        }
-        if let claimed = managedMember.value(forKey: "claimedByAppUserId") as? String, !claimed.isEmpty {
-            return claimed.hasPrefix("apple:") ? "Apple ID linked" : "Identity linked"
-        }
-        return "Invite pending"
     }
 }
 

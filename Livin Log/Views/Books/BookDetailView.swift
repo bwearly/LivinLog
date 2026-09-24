@@ -18,7 +18,7 @@ struct BookDetailView: View {
     }
 
     private var canEdit: Bool {
-        IdentityStore.canAct(as: ownerMember, appUser: appState.appUser, context: context)
+        IdentityStore.canAct(as: ownerMember, currentUserRecordName: appState.currentUserRecordName)
     }
 
     var body: some View {

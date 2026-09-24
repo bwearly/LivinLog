@@ -43,7 +43,7 @@ struct BooksListView: View {
 
     private var canEditSelectedMember: Bool {
         guard let selectedMember else { return false }
-        return IdentityStore.canAct(as: selectedMember, appUser: appState.appUser, context: context)
+        return IdentityStore.canAct(as: selectedMember, currentUserRecordName: appState.currentUserRecordName)
     }
 
     // ✅ Now derived from the live FetchRequest above instead of a one-off
@@ -167,7 +167,7 @@ struct BooksListView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(AppCategoryStyle.books.gradient.opacity(0.12))
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Books Read")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

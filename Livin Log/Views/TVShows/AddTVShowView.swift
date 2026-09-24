@@ -51,7 +51,7 @@ struct AddTVShowView: View {
 
     private let persistentContainer = PersistenceController.shared.container
     private var canWrite: Bool {
-        IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
+        IdentityStore.canAct(as: member, currentUserRecordName: appState.currentUserRecordName)
     }
 
     var body: some View {
@@ -136,7 +136,7 @@ struct AddTVShowView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(AppCategoryStyle.tvShows.gradient.opacity(0.18))
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Add TV Show")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: "\(title)|\(yearText)|\(focusedMediaField?.rawValue ?? "none")") {

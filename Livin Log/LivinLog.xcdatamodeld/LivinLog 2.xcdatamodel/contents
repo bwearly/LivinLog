@@ -32,6 +32,12 @@
         <attribute name="recordName" optional="YES" attributeType="String" />
         <attribute name="ckSystemFields" optional="YES" attributeType="Binary" />
         <attribute name="householdRecordName" optional="YES" attributeType="String" />
+        <attribute name="avatar" optional="YES" attributeType="String" />
+        <attribute name="linkedUserRecordName" optional="YES" attributeType="String" />
+        <attribute name="role" optional="YES" attributeType="String" />
+        <attribute name="hasOwnIPhone" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES" />
+        <attribute name="invitedAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
+        <attribute name="inviteParticipantID" optional="YES" attributeType="String" />
         <relationship name="feedbacks" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="MovieFeedback" inverseName="member" inverseEntity="MovieFeedback" />
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="members" inverseEntity="Household" />
         <relationship name="memberships" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="HouseholdMembership" inverseName="memberProfile" inverseEntity="HouseholdMembership" />
@@ -98,9 +104,9 @@
         <attribute name="recordName" optional="YES" attributeType="String" />
         <attribute name="ckSystemFields" optional="YES" attributeType="Binary" />
         <attribute name="householdRecordName" optional="YES" attributeType="String" />
-        <relationship name="feedbacks" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="MovieFeedback" inverseName="movie" inverseEntity="MovieFeedback" />
+        <relationship name="feedbacks" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="MovieFeedback" inverseName="movie" inverseEntity="MovieFeedback" />
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="movies" inverseEntity="Household" />
-        <relationship name="viewing" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Viewing" inverseName="movie" inverseEntity="Viewing" />
+        <relationship name="viewing" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Viewing" inverseName="movie" inverseEntity="Viewing" />
     </entity>
     <entity name="MovieFeedback" representedClassName="MovieFeedback" syncable="YES" codeGenerationType="class">
         <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO" />

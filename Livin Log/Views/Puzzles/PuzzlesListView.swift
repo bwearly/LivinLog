@@ -13,7 +13,7 @@ struct PuzzlesListView: View {
     @State private var showingAddPuzzle = false
     @State private var searchText = ""
     private var canWrite: Bool {
-        IdentityStore.canAct(as: member, appUser: appState.appUser, context: context)
+        IdentityStore.canAct(as: member, currentUserRecordName: appState.currentUserRecordName)
     }
 
     init(household: Household, member: HouseholdMember?) {
@@ -81,7 +81,7 @@ struct PuzzlesListView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(AppCategoryStyle.puzzles.gradient.opacity(0.10))
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Puzzles")
         .searchable(text: $searchText, prompt: "Search by name or brand")
         .toolbar {
