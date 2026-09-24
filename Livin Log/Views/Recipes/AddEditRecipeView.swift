@@ -111,7 +111,8 @@ struct AddEditRecipeView: View {
         )
         .sheet(isPresented: $showingCamera) {
             CameraPicker { image in
-                guard let image, let jpeg = image.jpegData(compressionQuality: 0.75) else { return }
+                // Phase 4a: stored at the synced size (1600px / JPEG 0.7), see SyncImageAsset.
+                guard let image, let jpeg = image.jpegData(compressionQuality: 1.0).flatMap(SyncImageAsset.downscaledJPEG) else { return }
                 appendPhoto(jpeg)
             }
         }
@@ -119,8 +120,7 @@ struct AddEditRecipeView: View {
             guard let newItem else { return }
             Task {
                 if let data = try? await newItem.loadTransferable(type: Data.self),
-                   let image = UIImage(data: data),
-                   let jpeg = image.jpegData(compressionQuality: 0.75) {
+                   let jpeg = SyncImageAsset.downscaledJPEG(data) {
                     await MainActor.run {
                         appendPhoto(jpeg)
                         selectedPhotoItem = nil
@@ -158,7 +158,7 @@ struct AddEditRecipeView: View {
             guard let newItem else { return }
             Task {
                 // Load the original picked image for OCR — deliberately not recompressed the
-                // way appendPhoto's jpegData(compressionQuality: 0.75) path is, since Vision
+                // way appendPhoto's downscaled (SyncImageAsset) path is, since Vision
                 // does better against the source image than a requantized storage copy.
                 if let data = try? await newItem.loadTransferable(type: Data.self),
                    let image = UIImage(data: data) {

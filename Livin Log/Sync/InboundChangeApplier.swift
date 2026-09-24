@@ -11,14 +11,15 @@
 //  SyncController's viewContext observer merges them in (see SyncController.swift).
 //
 //  Records are applied in dependency order -- Household, then HouseholdMember, then Movie, then
-//  TVShow, BookEntry, LLQuote, LLPuzzle, LLCalendarEvent (Phase 4a), then MovieFeedback, then
-//  Viewing -- rather than a single generic "upsert everything, then link everything" pass. This
-//  satisfies the same requirement the Phase 1 plan describes ("upsert first, link in a second
-//  pass, because arrival order isn't guaranteed"): a fetch against this
-//  context sees its own uncommitted pending inserts/edits, so by the time MovieFeedback (which
-//  can reference all three of Household/HouseholdMember/Movie) is processed, every type it can
-//  link to has already been upserted in this same batch, however CloudKit ordered the raw
-//  records within event.modifications.
+//  TVShow, BookEntry, LLQuote, LLPuzzle, LLCalendarEvent, RecipeCategory, Recipe, then its
+//  ingredients/steps/photos (Phase 4a), then MovieFeedback, then Viewing -- rather than a
+//  single generic "upsert everything, then link everything" pass. This satisfies the same
+//  requirement the Phase 1 plan describes ("upsert first, link in a second pass, because arrival
+//  order isn't guaranteed"): a fetch against this context sees its own uncommitted pending
+//  inserts/edits, so by the time MovieFeedback (which can reference all three of
+//  Household/HouseholdMember/Movie) is processed, every type it can link to has already been
+//  upserted in this same batch, however CloudKit ordered the raw records within
+//  event.modifications.
 //
 //  Known Phase 1 limitation: a link whose target isn't present anywhere in this fetch batch (or
 //  already synced from an earlier one) is left nil rather than retried on a later batch. In
@@ -148,6 +149,45 @@ final class InboundChangeApplier {
                 indexAfterApply(recordType: SyncRecordMapping.RecordType.calendarEvent, record: record, object: calendarEvent)
             }
             var calendarEventsTouched = !calendarRecords.isEmpty
+
+            // Recipes: categories before recipes (a recipe links whichever of its categories
+            // exist), recipes before their children.
+            for record in recordsByType[SyncRecordMapping.RecordType.recipeCategory] ?? [] {
+                let (category, isNew): (RecipeCategory, Bool) = fetchOrCreate(entityName: "RecipeCategory", recordName: record.recordID.recordName)
+                if isNew { newlyInsertedEntityTypes.insert("RecipeCategory") }
+                let household = (record["householdRecordName"] as? String).flatMap(fetchHousehold)
+                SyncRecordMapping.apply(record, to: category, household: household)
+                indexAfterApply(recordType: SyncRecordMapping.RecordType.recipeCategory, record: record, object: category)
+            }
+
+            for record in recordsByType[SyncRecordMapping.RecordType.recipe] ?? [] {
+                let (recipe, isNew): (Recipe, Bool) = fetchOrCreate(entityName: "Recipe", recordName: record.recordID.recordName)
+                if isNew { newlyInsertedEntityTypes.insert("Recipe") }
+                let household = (record["householdRecordName"] as? String).flatMap(fetchHousehold)
+                SyncRecordMapping.apply(record, to: recipe, household: household, context: context)
+                indexAfterApply(recordType: SyncRecordMapping.RecordType.recipe, record: record, object: recipe)
+            }
+
+            for record in recordsByType[SyncRecordMapping.RecordType.recipeIngredient] ?? [] {
+                let (ingredient, _): (RecipeIngredient, Bool) = fetchOrCreate(entityName: "RecipeIngredient", recordName: record.recordID.recordName)
+                let recipe = (record["recipeRecordName"] as? String).flatMap(fetchRecipe)
+                SyncRecordMapping.apply(record, to: ingredient, recipe: recipe)
+                indexAfterApply(recordType: SyncRecordMapping.RecordType.recipeIngredient, record: record, object: ingredient)
+            }
+
+            for record in recordsByType[SyncRecordMapping.RecordType.recipeStep] ?? [] {
+                let (step, _): (RecipeStep, Bool) = fetchOrCreate(entityName: "RecipeStep", recordName: record.recordID.recordName)
+                let recipe = (record["recipeRecordName"] as? String).flatMap(fetchRecipe)
+                SyncRecordMapping.apply(record, to: step, recipe: recipe)
+                indexAfterApply(recordType: SyncRecordMapping.RecordType.recipeStep, record: record, object: step)
+            }
+
+            for record in recordsByType[SyncRecordMapping.RecordType.recipePhoto] ?? [] {
+                let (photo, _): (RecipePhoto, Bool) = fetchOrCreate(entityName: "RecipePhoto", recordName: record.recordID.recordName)
+                let recipe = (record["recipeRecordName"] as? String).flatMap(fetchRecipe)
+                SyncRecordMapping.apply(record, to: photo, recipe: recipe)
+                indexAfterApply(recordType: SyncRecordMapping.RecordType.recipePhoto, record: record, object: photo)
+            }
 
             for record in recordsByType[SyncRecordMapping.RecordType.feedback] ?? [] {
                 let feedback = fetchOrCreateFeedback(recordName: record.recordID.recordName)
@@ -312,6 +352,50 @@ final class InboundChangeApplier {
             calendarEvent.household = household
         }
 
+        retry(ownerEntityName: "RecipeCategory", relationshipKey: "household", recordNameKey: "householdRecordName", targetEntityName: "Household") { (category: RecipeCategory, household: Household) in
+            category.household = household
+            category.householdId = household.id
+        }
+        retry(ownerEntityName: "Recipe", relationshipKey: "household", recordNameKey: "householdRecordName", targetEntityName: "Household") { (recipe: Recipe, household: Household) in
+            recipe.household = household
+            recipe.householdId = household.id
+        }
+        retry(ownerEntityName: "RecipeIngredient", relationshipKey: "recipe", recordNameKey: "recipeRecordName", targetEntityName: "Recipe") { (ingredient: RecipeIngredient, recipe: Recipe) in
+            ingredient.recipe = recipe
+        }
+        retry(ownerEntityName: "RecipeStep", relationshipKey: "recipe", recordNameKey: "recipeRecordName", targetEntityName: "Recipe") { (step: RecipeStep, recipe: Recipe) in
+            step.recipe = recipe
+        }
+        retry(ownerEntityName: "RecipePhoto", relationshipKey: "recipe", recordNameKey: "recipeRecordName", targetEntityName: "Recipe") { (photo: RecipePhoto, recipe: Recipe) in
+            photo.recipe = recipe
+        }
+
+        // Recipe <-> RecipeCategory is many-to-many, so it can't use the to-one helper above:
+        // link any categories named in categoryRecordNamesRaw that have arrived since. Only
+        // assigns when something new resolved, so a settled recipe is never touched.
+        let recipeRequest = NSFetchRequest<Recipe>(entityName: "Recipe")
+        recipeRequest.predicate = NSPredicate(format: "categoryRecordNamesRaw != nil")
+        var recipesAwaitingCategories = 0
+        for recipe in (try? context.fetch(recipeRequest)) ?? [] {
+            let wanted = Set(SyncRecordMapping.decodeCategoryRecordNames(recipe.categoryRecordNamesRaw))
+            let current = (recipe.categories as? Set<RecipeCategory>) ?? []
+            let linkedNames = Set(current.compactMap(\.recordName))
+            let missing = wanted.subtracting(linkedNames)
+            guard !missing.isEmpty else { continue }
+            let found: [RecipeCategory] = missing.compactMap {
+                SyncRecordMapping.fetchByRecordName(entityName: "RecipeCategory", recordName: $0, context: context)
+            }
+            if !found.isEmpty {
+                recipe.categories = NSSet(set: current.union(found))
+            }
+            if found.count < missing.count {
+                recipesAwaitingCategories += 1
+            }
+        }
+        if recipesAwaitingCategories > 0 {
+            unresolvedCounts["Recipe.categories"] = recipesAwaitingCategories
+        }
+
         if !unresolvedCounts.isEmpty {
             SyncLogger.log(SyncLogger.inbound, "unresolved links after retry: \(unresolvedCounts)")
         }
@@ -409,6 +493,17 @@ final class InboundChangeApplier {
         return calendarEvent
     }
 
+    /// Generic fetch-or-create by recordName (Phase 4a Batch 3 onward), same shape as the
+    /// per-type helpers above.
+    private func fetchOrCreate<T: NSManagedObject>(entityName: String, recordName: String) -> (T, Bool) {
+        if let existing: T = SyncRecordMapping.fetchByRecordName(entityName: entityName, recordName: recordName, context: context) {
+            return (existing, false)
+        }
+        let object = T(context: context)
+        object.setValue(recordName, forKey: "recordName")
+        return (object, true)
+    }
+
     // MARK: - Link resolution (falls back to already-synced rows outside this batch)
 
     private func fetchHousehold(recordName: String) -> Household? {
@@ -417,6 +512,10 @@ final class InboundChangeApplier {
 
     private func fetchMember(recordName: String) -> HouseholdMember? {
         SyncRecordMapping.fetchByRecordName(entityName: "HouseholdMember", recordName: recordName, context: context)
+    }
+
+    private func fetchRecipe(recordName: String) -> Recipe? {
+        SyncRecordMapping.fetchByRecordName(entityName: "Recipe", recordName: recordName, context: context)
     }
 
     private func fetchMovie(recordName: String) -> Movie? {

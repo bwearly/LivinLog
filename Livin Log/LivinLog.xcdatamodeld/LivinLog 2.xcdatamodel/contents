@@ -21,6 +21,7 @@
         <relationship name="bookEntries" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="BookEntry" inverseName="household" inverseEntity="BookEntry" />
         <relationship name="invites" optional="YES" deletionRule="Cascade" destinationEntity="Invite" inverseName="household" inverseEntity="Invite" toMany="YES" />
         <relationship name="recipes" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Recipe" inverseName="household" inverseEntity="Recipe" />
+        <relationship name="recipeCategories" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="RecipeCategory" inverseName="household" inverseEntity="RecipeCategory" />
     </entity>
     <entity name="HouseholdMember" representedClassName="HouseholdMember" syncable="YES" codeGenerationType="class">
         <attribute name="claimedByAppUserId" optional="YES" attributeType="String" />
@@ -236,6 +237,10 @@
         <attribute name="servings" attributeType="Integer 16" defaultValueString="4" usesScalarValueType="YES" />
         <attribute name="title" optional="YES" attributeType="String" />
         <attribute name="updatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
+        <attribute name="recordName" optional="YES" attributeType="String" />
+        <attribute name="ckSystemFields" optional="YES" attributeType="Binary" />
+        <attribute name="householdRecordName" optional="YES" attributeType="String" />
+        <attribute name="categoryRecordNamesRaw" optional="YES" attributeType="String" />
         <relationship name="categories" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="RecipeCategory" inverseName="recipes" inverseEntity="RecipeCategory" />
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="recipes" inverseEntity="Household" />
         <relationship name="ingredients" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="RecipeIngredient" inverseName="recipe" inverseEntity="RecipeIngredient" />
@@ -246,6 +251,10 @@
         <attribute name="householdId" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
         <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
         <attribute name="name" optional="YES" attributeType="String" />
+        <attribute name="recordName" optional="YES" attributeType="String" />
+        <attribute name="ckSystemFields" optional="YES" attributeType="Binary" />
+        <attribute name="householdRecordName" optional="YES" attributeType="String" />
+        <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="recipeCategories" inverseEntity="Household" />
         <relationship name="recipes" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Recipe" inverseName="categories" inverseEntity="Recipe" />
     </entity>
     <entity name="RecipeIngredient" representedClassName="RecipeIngredient" syncable="YES" codeGenerationType="class">
@@ -254,6 +263,10 @@
         <attribute name="name" optional="YES" attributeType="String" />
         <attribute name="position" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES" />
         <attribute name="unit" optional="YES" attributeType="String" />
+        <attribute name="recordName" optional="YES" attributeType="String" />
+        <attribute name="ckSystemFields" optional="YES" attributeType="Binary" />
+        <attribute name="householdRecordName" optional="YES" attributeType="String" />
+        <attribute name="recipeRecordName" optional="YES" attributeType="String" />
         <relationship name="recipe" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Recipe" inverseName="ingredients" inverseEntity="Recipe" />
     </entity>
     <entity name="RecipeStep" representedClassName="RecipeStep" syncable="YES" codeGenerationType="class">
@@ -261,12 +274,21 @@
         <attribute name="position" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES" />
         <attribute name="sectionTitle" optional="YES" attributeType="String" />
         <attribute name="text" optional="YES" attributeType="String" />
+        <attribute name="recordName" optional="YES" attributeType="String" />
+        <attribute name="ckSystemFields" optional="YES" attributeType="Binary" />
+        <attribute name="householdRecordName" optional="YES" attributeType="String" />
+        <attribute name="recipeRecordName" optional="YES" attributeType="String" />
         <relationship name="recipe" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Recipe" inverseName="steps" inverseEntity="Recipe" />
     </entity>
     <entity name="RecipePhoto" representedClassName="RecipePhoto" syncable="YES" codeGenerationType="class">
         <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO" />
         <attribute name="photoData" optional="YES" attributeType="Binary" allowsExternalBinaryDataStorage="YES" />
         <attribute name="position" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES" />
+        <attribute name="recordName" optional="YES" attributeType="String" />
+        <attribute name="ckSystemFields" optional="YES" attributeType="Binary" />
+        <attribute name="householdRecordName" optional="YES" attributeType="String" />
+        <attribute name="recipeRecordName" optional="YES" attributeType="String" />
+        <attribute name="photoUploadedHash" optional="YES" attributeType="String" />
         <relationship name="recipe" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Recipe" inverseName="photos" inverseEntity="Recipe" />
     </entity>
 </model>

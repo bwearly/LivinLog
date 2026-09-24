@@ -95,6 +95,48 @@ extension LLCalendarEvent {
     }
 }
 
+// Phase 4a (Batch 3): stable CloudKit record name (and id) stamped at insert, like Movie.
+// RecipeStore's own `x.id = UUID()` after insert is unaffected.
+extension Recipe {
+    public override nonisolated func awakeFromInsert() {
+        super.awakeFromInsert()
+        setPrimitiveValue(UUID(), forKey: "id")
+        setPrimitiveValue(UUID().uuidString, forKey: "recordName")
+    }
+}
+
+extension RecipeCategory {
+    public override nonisolated func awakeFromInsert() {
+        super.awakeFromInsert()
+        setPrimitiveValue(UUID(), forKey: "id")
+        setPrimitiveValue(UUID().uuidString, forKey: "recordName")
+    }
+}
+
+extension RecipeIngredient {
+    public override nonisolated func awakeFromInsert() {
+        super.awakeFromInsert()
+        setPrimitiveValue(UUID(), forKey: "id")
+        setPrimitiveValue(UUID().uuidString, forKey: "recordName")
+    }
+}
+
+extension RecipeStep {
+    public override nonisolated func awakeFromInsert() {
+        super.awakeFromInsert()
+        setPrimitiveValue(UUID(), forKey: "id")
+        setPrimitiveValue(UUID().uuidString, forKey: "recordName")
+    }
+}
+
+extension RecipePhoto {
+    public override nonisolated func awakeFromInsert() {
+        super.awakeFromInsert()
+        setPrimitiveValue(UUID(), forKey: "id")
+        setPrimitiveValue(UUID().uuidString, forKey: "recordName")
+    }
+}
+
 extension AppUser {
     public override nonisolated func awakeFromInsert() {
         super.awakeFromInsert()

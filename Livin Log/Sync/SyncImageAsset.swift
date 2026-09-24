@@ -131,6 +131,49 @@ enum SyncImageAsset {
 
     nonisolated static let pendingPhotoUploads = PendingPhotoUploads()
 
+    // MARK: - Record field helpers (LLPuzzle, RecipePhoto)
+
+    /// Outbound: sets `record[key]` only when the photo changed since the last confirmed upload
+    /// (`uploadedHash`, the row's local unsynced photoUploadedHash). Unchanged, the key is
+    /// omitted entirely so the server keeps its photo -- confirmed on device in Batch 2 (a
+    /// notes-only puzzle edit preserved the photo). A removed photo sends the clear. The new
+    /// hash is committed to the row only when the save succeeds
+    /// (SyncController.handleSentRecordZoneChanges).
+    static func setPhotoField(_ key: String, on record: CKRecord, photoData: Data?, uploadedHash: String?, recordName: String) {
+        let currentHash = photoData.map(contentHash)
+        guard currentHash != uploadedHash else { return }
+        if let photoData, let currentHash {
+            // Staging failure leaves the key unset, so the server keeps its current photo.
+            if let asset = stagedAsset(for: photoData, recordName: recordName) {
+                record[key] = asset
+                pendingPhotoUploads.set(.uploaded(hash: currentHash), for: recordName)
+            }
+        } else {
+            record[key] = nil
+            pendingPhotoUploads.set(.cleared, for: recordName)
+        }
+    }
+
+    enum InboundPhoto {
+        /// Copied out of the asset; `hash` becomes the row's photoUploadedHash.
+        case photo(Data, hash: String)
+        /// The record has no photo: clear the local one (and its hash).
+        case none
+        /// An asset is present but its file isn't readable: keep the local photo and hash.
+        case unreadable
+    }
+
+    /// Inbound: reads `record[key]`, copying asset data out of CloudKit's temporary staging area
+    /// immediately.
+    static func inboundPhoto(_ key: String, from record: CKRecord) -> InboundPhoto {
+        guard let asset = record[key] as? CKAsset else { return .none }
+        guard let data = data(from: asset) else {
+            SyncLogger.error(SyncLogger.inbound, "\(record.recordType) \(record.recordID.recordName): \(key) asset had no readable file; kept local photo")
+            return .unreadable
+        }
+        return .photo(data, hash: contentHash(data))
+    }
+
     // MARK: - Inbound
 
     /// Copies an inbound asset's data out of CloudKit's temporary staging area. nil if the file

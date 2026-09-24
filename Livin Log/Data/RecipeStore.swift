@@ -30,11 +30,13 @@ enum RecipeStore {
     /// `AddEditPuzzleView.savePuzzle()` (`activeHouseholdInContext` → `assignIfInserted` →
     /// `storeForParent`).
     ///
-    /// Child rows (ingredients/steps/photos) are deleted and recreated from the passed-in
-    /// arrays on every save rather than diffed against existing rows. That's simpler and
-    /// correctness-safe for the list sizes involved (a recipe's ingredient/step/photo counts
-    /// are small), at the cost of each edit generating fresh CKRecord IDs for those children
-    /// rather than reusing existing ones. `position` is reassigned sequentially from each
+    /// Ingredient and step rows are deleted and recreated from the passed-in arrays on every
+    /// save rather than diffed against existing rows. That's simpler and correctness-safe for
+    /// the list sizes involved, at the cost of each edit generating fresh CKRecord IDs for them.
+    /// Photos are the exception (Phase 4a): an existing `RecipePhoto` whose bytes are unchanged
+    /// is reused (only its `position` may change), so editing a recipe never re-uploads its
+    /// photo assets; only added photos are created and removed ones deleted. `position` is
+    /// reassigned sequentially from each
     /// array's order, since this model — like the rest of the app — uses a manual position
     /// attribute instead of Core Data ordered relationships (unsupported under
     /// `NSPersistentCloudKitContainer`).
@@ -98,7 +100,19 @@ enum RecipeStore {
             }
             try context.validateSamePersistentStore([("recipe", recipe)] + labeledCategories)
         }
-        recipe.categories = NSSet(array: categories)
+        // Only reassign when the set actually changed, so an unchanged edit doesn't touch it.
+        let newCategories = Set(categories)
+        if ((recipe.categories as? Set<RecipeCategory>) ?? []) != newCategories {
+            recipe.categories = NSSet(set: newCategories)
+        }
+        // Keep the synced category list (linked + any still in flight from another device)
+        // current, so a category removed here isn't re-added by inbound link retry.
+        let categoryNamesRaw = SyncRecordMapping.encodeCategoryRecordNames(
+            SyncRecordMapping.effectiveCategoryRecordNames(for: recipe, context: context)
+        )
+        if recipe.categoryRecordNamesRaw != categoryNamesRaw {
+            recipe.categoryRecordNamesRaw = categoryNamesRaw
+        }
 
         if let existingIngredients = recipe.ingredients as? Set<RecipeIngredient> {
             existingIngredients.forEach(context.delete)
@@ -139,17 +153,24 @@ enum RecipeStore {
             stepPosition += 1
         }
 
-        if let existingPhotos = recipe.photos as? Set<RecipePhoto> {
-            existingPhotos.forEach(context.delete)
-        }
+        // Reuse unchanged photos (matched by bytes), create rows only for new ones, delete
+        // rows for removed ones -- see the doc comment above.
+        var unmatchedPhotos = Array((recipe.photos as? Set<RecipePhoto>) ?? [])
         for (index, data) in photoData.enumerated() {
+            let position = Int32(index)
+            if let matchIndex = unmatchedPhotos.firstIndex(where: { $0.photoData == data }) {
+                let existing = unmatchedPhotos.remove(at: matchIndex)
+                if existing.position != position { existing.position = position }
+                continue
+            }
             let photo = RecipePhoto(context: context)
             assignIfInserted(photo, to: store, in: context)
             photo.id = UUID()
             photo.photoData = data
-            photo.position = Int32(index)
+            photo.position = position
             photo.recipe = recipe
         }
+        unmatchedPhotos.forEach(context.delete)
 
         try context.save()
 
@@ -170,10 +191,9 @@ enum RecipeStore {
     /// category inline while editing a recipe (no separate management screen). Matching is
     /// case-insensitive so "breakfast" and "Breakfast" don't produce duplicate categories.
     ///
-    /// `RecipeCategory` deliberately has no `household` relationship — only the scalar
-    /// `householdId` — so this fetches directly on `householdId` rather than reusing
-    /// `householdScopedPredicate(_:idKey:)`, which assumes a `household` relationship exists
-    /// on the fetched entity.
+    /// Fetches directly on the scalar `householdId`. (Phase 4a added a `household`
+    /// relationship for sync zone + cascade, set below on create and by inbound sync, but
+    /// `householdId` is set in both places too, so this lookup is unchanged.)
     static func fetchOrCreateCategory(
         named rawName: String,
         household: Household,
@@ -199,6 +219,9 @@ enum RecipeStore {
         category.id = UUID()
         category.name = trimmed
         category.householdId = householdID
+        // Phase 4a: the household link gives the category its CloudKit zone and makes it
+        // cascade-delete with the household.
+        category.household = scopedHousehold
         return category
     }
 

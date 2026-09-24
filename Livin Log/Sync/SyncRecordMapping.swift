@@ -30,6 +30,11 @@ enum SyncRecordMapping {
         static let quote = "LLQuote"
         static let puzzle = "LLPuzzle"
         static let calendarEvent = "LLCalendarEvent"
+        static let recipeCategory = "RecipeCategory"
+        static let recipe = "Recipe"
+        static let recipeIngredient = "RecipeIngredient"
+        static let recipeStep = "RecipeStep"
+        static let recipePhoto = "RecipePhoto"
     }
 
     // MARK: - Synced entity registry (single source of truth)
@@ -94,6 +99,34 @@ enum SyncRecordMapping {
             entityName: "LLCalendarEvent",
             recordType: RecordType.calendarEvent,
             syncedProperties: ["name", "tag", "day", "month", "year", "createdAt", "updatedAt", "household"]
+        ),
+        EntitySpec(
+            entityName: "RecipeCategory",
+            recordType: RecordType.recipeCategory,
+            syncedProperties: ["name", "household"]
+        ),
+        // Recipe: `categories` is a to-many but it's the recipe's own field here -- it feeds the
+        // record's `categoryRecordNames` list (the many-to-many mapping), so it must trigger a
+        // resend. The inverse RecipeCategory.recipes is deliberately not synced.
+        EntitySpec(
+            entityName: "Recipe",
+            recordType: RecordType.recipe,
+            syncedProperties: ["title", "servings", "authorSource", "notes", "createdAt", "updatedAt", "household", "categories"]
+        ),
+        EntitySpec(
+            entityName: "RecipeIngredient",
+            recordType: RecordType.recipeIngredient,
+            syncedProperties: ["name", "amount", "unit", "position", "recipe"]
+        ),
+        EntitySpec(
+            entityName: "RecipeStep",
+            recordType: RecordType.recipeStep,
+            syncedProperties: ["text", "sectionTitle", "position", "recipe"]
+        ),
+        EntitySpec(
+            entityName: "RecipePhoto",
+            recordType: RecordType.recipePhoto,
+            syncedProperties: ["photoData", "position", "recipe"]
         ),
         EntitySpec(
             entityName: "MovieFeedback",
@@ -509,25 +542,8 @@ enum SyncRecordMapping {
         record["updatedAt"] = puzzle.updatedAt
         record["householdRecordName"] = household.recordName
         record["id"] = puzzle.id?.uuidString
-        // The photo goes out only when it changed since the last confirmed upload
-        // (photoUploadedHash, local + unsynced). Otherwise the "photo" key is omitted entirely,
-        // so an edit to name/notes sends only those fields and the server keeps its photo.
-        // Removing a photo still sends the clear (nil hash != uploaded hash). The new hash is
-        // committed to the row only once this save succeeds -- see
-        // SyncController.handleSentRecordZoneChanges.
-        let currentHash = puzzle.photoData.map(SyncImageAsset.contentHash)
-        if currentHash != puzzle.photoUploadedHash {
-            if let photoData = puzzle.photoData, let currentHash {
-                // Staging failure leaves "photo" unset, so the server keeps its current photo.
-                if let asset = SyncImageAsset.stagedAsset(for: photoData, recordName: recordName) {
-                    record["photo"] = asset
-                    SyncImageAsset.pendingPhotoUploads.set(.uploaded(hash: currentHash), for: recordName)
-                }
-            } else {
-                record["photo"] = nil
-                SyncImageAsset.pendingPhotoUploads.set(.cleared, for: recordName)
-            }
-        }
+        // Sent only when changed since the last confirmed upload; see SyncImageAsset.setPhotoField.
+        SyncImageAsset.setPhotoField("photo", on: record, photoData: puzzle.photoData, uploadedHash: puzzle.photoUploadedHash, recordName: recordName)
         return record
     }
 
@@ -542,18 +558,15 @@ enum SyncRecordMapping {
         puzzle.updatedAt = record["updatedAt"] as? Date
         // photoUploadedHash tracks what the server holds, so the next local edit only re-sends
         // the photo if it has changed since.
-        if let asset = record["photo"] as? CKAsset {
-            if let data = SyncImageAsset.data(from: asset) {
-                puzzle.photoData = data
-                puzzle.photoUploadedHash = SyncImageAsset.contentHash(data)
-            } else {
-                // Asset present but its file isn't readable: keep the local photo rather than
-                // clearing it on a download hiccup.
-                SyncLogger.error(SyncLogger.inbound, "puzzle \(record.recordID.recordName): photo asset had no readable file; kept local photo")
-            }
-        } else {
+        switch SyncImageAsset.inboundPhoto("photo", from: record) {
+        case .photo(let data, let hash):
+            puzzle.photoData = data
+            puzzle.photoUploadedHash = hash
+        case .none:
             puzzle.photoData = nil
             puzzle.photoUploadedHash = nil
+        case .unreadable:
+            break
         }
         puzzle.ckSystemFields = encodeSystemFields(record)
         if let parsedID = parsedID(from: record) { puzzle.id = parsedID }
@@ -596,6 +609,185 @@ enum SyncRecordMapping {
         if let household { event.household = household }
     }
 
+    // MARK: - RecipeCategory
+
+    static func makeRecord(for category: RecipeCategory) -> CKRecord? {
+        guard let household = category.household, let zoneID = zoneID(for: household), let recordName = category.recordName else { return nil }
+        let record = baseRecord(recordType: RecordType.recipeCategory, recordName: recordName, zoneID: zoneID, existingSystemFields: category.ckSystemFields)
+        record["name"] = category.name
+        record["householdRecordName"] = household.recordName
+        record["id"] = category.id?.uuidString
+        return record
+    }
+
+    static func apply(_ record: CKRecord, to category: RecipeCategory, household: Household?) {
+        category.recordName = record.recordID.recordName
+        category.name = record["name"] as? String
+        category.ckSystemFields = encodeSystemFields(record)
+        if let parsedID = parsedID(from: record) { category.id = parsedID }
+        category.householdRecordName = record["householdRecordName"] as? String
+        if let household {
+            category.household = household
+            category.householdId = household.id
+        }
+    }
+
+    // MARK: - Recipe
+
+    /// Local storage format for Recipe.categoryRecordNamesRaw (recordNames are UUID strings, so
+    /// a newline never appears inside one).
+    static func decodeCategoryRecordNames(_ raw: String?) -> [String] {
+        (raw ?? "").split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+    }
+
+    static func encodeCategoryRecordNames(_ names: [String]) -> String? {
+        names.isEmpty ? nil : names.sorted().joined(separator: "\n")
+    }
+
+    /// The recipe's category list for CloudKit: its linked categories plus any names from
+    /// `categoryRecordNamesRaw` that don't match a local category yet (still in flight), so a
+    /// local edit made before a category arrives doesn't drop it from the server's list. A
+    /// category the user removed locally *does* match a local row, so it's dropped. Sorted.
+    static func effectiveCategoryRecordNames(for recipe: Recipe, context: NSManagedObjectContext) -> [String] {
+        let linked = ((recipe.categories as? Set<RecipeCategory>) ?? []).compactMap(\.recordName)
+        let pending = decodeCategoryRecordNames(recipe.categoryRecordNamesRaw).filter { name in
+            !linked.contains(name) && fetchOne(entityName: "RecipeCategory", recordName: name, context: context) as RecipeCategory? == nil
+        }
+        return Array(Set(linked + pending)).sorted()
+    }
+
+    static func makeRecord(for recipe: Recipe) -> CKRecord? {
+        guard let household = recipe.household, let zoneID = zoneID(for: household), let recordName = recipe.recordName,
+              let context = recipe.managedObjectContext else { return nil }
+        let record = baseRecord(recordType: RecordType.recipe, recordName: recordName, zoneID: zoneID, existingSystemFields: recipe.ckSystemFields)
+        record["title"] = recipe.title
+        record["servings"] = Int(recipe.servings)
+        record["authorSource"] = recipe.authorSource
+        record["notes"] = recipe.notes
+        record["createdAt"] = recipe.createdAt
+        record["updatedAt"] = recipe.updatedAt
+        record["householdRecordName"] = household.recordName
+
+        // Many-to-many as a string list on the recipe (see effectiveCategoryRecordNames). An
+        // empty list is sent as nil, the unambiguous "no categories".
+        let names = effectiveCategoryRecordNames(for: recipe, context: context)
+        record["categoryRecordNames"] = names.isEmpty ? nil : names
+
+        record["id"] = recipe.id?.uuidString
+        return record
+    }
+
+    /// Links whichever categories already exist locally; the rest are resolved later by
+    /// InboundChangeApplier's category retry from `categoryRecordNamesRaw`.
+    static func apply(_ record: CKRecord, to recipe: Recipe, household: Household?, context: NSManagedObjectContext) {
+        recipe.recordName = record.recordID.recordName
+        recipe.title = record["title"] as? String
+        recipe.servings = Int16((record["servings"] as? Int) ?? 4)
+        recipe.authorSource = record["authorSource"] as? String
+        recipe.notes = record["notes"] as? String
+        recipe.createdAt = record["createdAt"] as? Date
+        recipe.updatedAt = record["updatedAt"] as? Date
+        recipe.ckSystemFields = encodeSystemFields(record)
+        if let parsedID = parsedID(from: record) { recipe.id = parsedID }
+        recipe.householdRecordName = record["householdRecordName"] as? String
+        if let household {
+            recipe.household = household
+            recipe.householdId = household.id
+        }
+
+        let names = (record["categoryRecordNames"] as? [String]) ?? []
+        recipe.categoryRecordNamesRaw = encodeCategoryRecordNames(names)
+        let resolved = names.compactMap { fetchOne(entityName: "RecipeCategory", recordName: $0, context: context) as RecipeCategory? }
+        recipe.categories = NSSet(array: resolved)
+    }
+
+    // MARK: - Recipe children (ingredients, steps, photos)
+    //
+    // Each child is its own record carrying `recipeRecordName` (+ `householdRecordName`), never a
+    // CKRecord.Reference. Its zone comes from its recipe's household.
+
+    static func makeRecord(for ingredient: RecipeIngredient) -> CKRecord? {
+        guard let recipe = ingredient.recipe, let household = recipe.household, let zoneID = zoneID(for: household), let recordName = ingredient.recordName else { return nil }
+        let record = baseRecord(recordType: RecordType.recipeIngredient, recordName: recordName, zoneID: zoneID, existingSystemFields: ingredient.ckSystemFields)
+        record["name"] = ingredient.name
+        record["amount"] = ingredient.amount
+        record["unit"] = ingredient.unit
+        record["position"] = Int(ingredient.position)
+        record["recipeRecordName"] = recipe.recordName
+        record["householdRecordName"] = household.recordName
+        record["id"] = ingredient.id?.uuidString
+        return record
+    }
+
+    static func apply(_ record: CKRecord, to ingredient: RecipeIngredient, recipe: Recipe?) {
+        ingredient.recordName = record.recordID.recordName
+        ingredient.name = record["name"] as? String
+        ingredient.amount = (record["amount"] as? Double) ?? 0
+        ingredient.unit = record["unit"] as? String
+        ingredient.position = Int32((record["position"] as? Int) ?? 0)
+        ingredient.ckSystemFields = encodeSystemFields(record)
+        if let parsedID = parsedID(from: record) { ingredient.id = parsedID }
+        ingredient.householdRecordName = record["householdRecordName"] as? String
+        ingredient.recipeRecordName = record["recipeRecordName"] as? String
+        if let recipe { ingredient.recipe = recipe }
+    }
+
+    static func makeRecord(for step: RecipeStep) -> CKRecord? {
+        guard let recipe = step.recipe, let household = recipe.household, let zoneID = zoneID(for: household), let recordName = step.recordName else { return nil }
+        let record = baseRecord(recordType: RecordType.recipeStep, recordName: recordName, zoneID: zoneID, existingSystemFields: step.ckSystemFields)
+        record["text"] = step.text
+        record["sectionTitle"] = step.sectionTitle
+        record["position"] = Int(step.position)
+        record["recipeRecordName"] = recipe.recordName
+        record["householdRecordName"] = household.recordName
+        record["id"] = step.id?.uuidString
+        return record
+    }
+
+    static func apply(_ record: CKRecord, to step: RecipeStep, recipe: Recipe?) {
+        step.recordName = record.recordID.recordName
+        step.text = record["text"] as? String
+        step.sectionTitle = record["sectionTitle"] as? String
+        step.position = Int32((record["position"] as? Int) ?? 0)
+        step.ckSystemFields = encodeSystemFields(record)
+        if let parsedID = parsedID(from: record) { step.id = parsedID }
+        step.householdRecordName = record["householdRecordName"] as? String
+        step.recipeRecordName = record["recipeRecordName"] as? String
+        if let recipe { step.recipe = recipe }
+    }
+
+    static func makeRecord(for photo: RecipePhoto) -> CKRecord? {
+        guard let recipe = photo.recipe, let household = recipe.household, let zoneID = zoneID(for: household), let recordName = photo.recordName else { return nil }
+        let record = baseRecord(recordType: RecordType.recipePhoto, recordName: recordName, zoneID: zoneID, existingSystemFields: photo.ckSystemFields)
+        record["position"] = Int(photo.position)
+        record["recipeRecordName"] = recipe.recordName
+        record["householdRecordName"] = household.recordName
+        record["id"] = photo.id?.uuidString
+        // Same upload-once rule as LLPuzzle: a position-only change doesn't re-upload the photo.
+        SyncImageAsset.setPhotoField("photo", on: record, photoData: photo.photoData, uploadedHash: photo.photoUploadedHash, recordName: recordName)
+        return record
+    }
+
+    static func apply(_ record: CKRecord, to photo: RecipePhoto, recipe: Recipe?) {
+        photo.recordName = record.recordID.recordName
+        photo.position = Int32((record["position"] as? Int) ?? 0)
+        switch SyncImageAsset.inboundPhoto("photo", from: record) {
+        case .photo(let data, let hash):
+            photo.photoData = data
+            photo.photoUploadedHash = hash
+        case .none:
+            photo.photoData = nil
+            photo.photoUploadedHash = nil
+        case .unreadable:
+            break
+        }
+        photo.ckSystemFields = encodeSystemFields(record)
+        if let parsedID = parsedID(from: record) { photo.id = parsedID }
+        photo.householdRecordName = record["householdRecordName"] as? String
+        photo.recipeRecordName = record["recipeRecordName"] as? String
+        if let recipe { photo.recipe = recipe }
+    }
+
     // MARK: - Entity-agnostic lookups (nextRecordZoneChangeBatch doesn't know an ID's entity type)
 
     /// Searches each registered entity in `entities` order (the same order as the hand-written
@@ -624,6 +816,11 @@ enum SyncRecordMapping {
         case let quote as LLQuote: return makeRecord(for: quote)
         case let puzzle as LLPuzzle: return makeRecord(for: puzzle)
         case let event as LLCalendarEvent: return makeRecord(for: event)
+        case let category as RecipeCategory: return makeRecord(for: category)
+        case let recipe as Recipe: return makeRecord(for: recipe)
+        case let ingredient as RecipeIngredient: return makeRecord(for: ingredient)
+        case let step as RecipeStep: return makeRecord(for: step)
+        case let photo as RecipePhoto: return makeRecord(for: photo)
         default:
             SyncLogger.error(SyncLogger.engine, "makeRecord: no builder for \(object.entity.name ?? "<unknown entity>")")
             return nil

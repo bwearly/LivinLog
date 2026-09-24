@@ -173,6 +173,17 @@ final class OutboundChangeTracker {
             return ref(recordType: SyncRecordMapping.RecordType.puzzle, recordName: puzzle.recordName, household: puzzle.household)
         case let event as LLCalendarEvent:
             return ref(recordType: SyncRecordMapping.RecordType.calendarEvent, recordName: event.recordName, household: event.household)
+        case let category as RecipeCategory:
+            return ref(recordType: SyncRecordMapping.RecordType.recipeCategory, recordName: category.recordName, household: category.household)
+        case let recipe as Recipe:
+            return ref(recordType: SyncRecordMapping.RecordType.recipe, recordName: recipe.recordName, household: recipe.household)
+        // Recipe children live in their recipe's household zone.
+        case let ingredient as RecipeIngredient:
+            return ref(recordType: SyncRecordMapping.RecordType.recipeIngredient, recordName: ingredient.recordName, household: ingredient.recipe?.household)
+        case let step as RecipeStep:
+            return ref(recordType: SyncRecordMapping.RecordType.recipeStep, recordName: step.recordName, household: step.recipe?.household)
+        case let photo as RecipePhoto:
+            return ref(recordType: SyncRecordMapping.RecordType.recipePhoto, recordName: photo.recordName, household: photo.recipe?.household)
         default:
             return nil
         }

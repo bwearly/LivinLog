@@ -29,9 +29,8 @@ struct RecipesListView: View {
             animation: .default
         )
 
-        // RecipeCategory has no `household` relationship (only the scalar `householdId`), so
-        // this can't reuse `householdScopedPredicate(_:idKey:)` — that helper assumes a
-        // `household` relationship exists on the fetched entity. See RecipeStore.swift.
+        // Fetched on the scalar `householdId`, which both local creates and inbound sync set
+        // (the `household` relationship added in Phase 4a is also set). See RecipeStore.swift.
         if let householdID = household.id {
             _categories = FetchRequest<RecipeCategory>(
                 sortDescriptors: [NSSortDescriptor(keyPath: \RecipeCategory.name, ascending: true)],
