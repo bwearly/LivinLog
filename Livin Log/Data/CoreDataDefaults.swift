@@ -53,6 +53,7 @@ extension TVShow {
         super.awakeFromInsert()
         setPrimitiveValue(UUID(), forKey: "id")
         setPrimitiveValue(Date(), forKey: "createdAt")
+        setPrimitiveValue(UUID().uuidString, forKey: "recordName")
     }
 }
 
@@ -94,6 +95,7 @@ extension BookEntry {
         super.awakeFromInsert()
         setPrimitiveValue(UUID(), forKey: "id")
         setPrimitiveValue(Date(), forKey: "createdAt")
+        setPrimitiveValue(UUID().uuidString, forKey: "recordName")
     }
 }
 

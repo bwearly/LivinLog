@@ -163,6 +163,10 @@ final class OutboundChangeTracker {
             return ref(recordType: SyncRecordMapping.RecordType.feedback, recordName: feedback.recordName, household: feedback.household)
         case let viewing as Viewing:
             return ref(recordType: SyncRecordMapping.RecordType.viewing, recordName: viewing.recordName, household: viewing.household)
+        case let show as TVShow:
+            return ref(recordType: SyncRecordMapping.RecordType.tvShow, recordName: show.recordName, household: show.household)
+        case let book as BookEntry:
+            return ref(recordType: SyncRecordMapping.RecordType.book, recordName: book.recordName, household: book.household)
         default:
             return nil
         }

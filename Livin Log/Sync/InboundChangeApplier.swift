@@ -11,8 +11,8 @@
 //  SyncController's viewContext observer merges them in (see SyncController.swift).
 //
 //  Records are applied in dependency order -- Household, then HouseholdMember, then Movie, then
-//  MovieFeedback, then Viewing -- rather than a single generic "upsert everything, then link
-//  everything" pass. This satisfies the same requirement the Phase 1 plan describes ("upsert
+//  TVShow and BookEntry (Phase 4a), then MovieFeedback, then Viewing -- rather than a single
+//  generic "upsert everything, then link everything" pass. This satisfies the same requirement the Phase 1 plan describes ("upsert
 //  first, link in a second pass, because arrival order isn't guaranteed"): a fetch against this
 //  context sees its own uncommitted pending inserts/edits, so by the time MovieFeedback (which
 //  can reference all three of Household/HouseholdMember/Movie) is processed, every type it can
@@ -103,6 +103,21 @@ final class InboundChangeApplier {
                 let household = (record["householdRecordName"] as? String).flatMap(fetchHousehold)
                 SyncRecordMapping.apply(record, to: movie, household: household)
                 indexAfterApply(recordType: SyncRecordMapping.RecordType.movie, record: record, object: movie)
+            }
+
+            for record in recordsByType[SyncRecordMapping.RecordType.tvShow] ?? [] {
+                let show = fetchOrCreateTVShow(recordName: record.recordID.recordName)
+                let household = (record["householdRecordName"] as? String).flatMap(fetchHousehold)
+                SyncRecordMapping.apply(record, to: show, household: household)
+                indexAfterApply(recordType: SyncRecordMapping.RecordType.tvShow, record: record, object: show)
+            }
+
+            for record in recordsByType[SyncRecordMapping.RecordType.book] ?? [] {
+                let book = fetchOrCreateBook(recordName: record.recordID.recordName)
+                let household = (record["householdRecordName"] as? String).flatMap(fetchHousehold)
+                let member = (record["memberRecordName"] as? String).flatMap(fetchMember)
+                SyncRecordMapping.apply(record, to: book, household: household, member: member)
+                indexAfterApply(recordType: SyncRecordMapping.RecordType.book, record: record, object: book)
             }
 
             for record in recordsByType[SyncRecordMapping.RecordType.feedback] ?? [] {
@@ -232,6 +247,19 @@ final class InboundChangeApplier {
             viewing.movie = movie
         }
 
+        retry(ownerEntityName: "TVShow", relationshipKey: "household", recordNameKey: "householdRecordName", targetEntityName: "Household") { (show: TVShow, household: Household) in
+            show.household = household
+            show.householdID = household.id
+        }
+        retry(ownerEntityName: "BookEntry", relationshipKey: "household", recordNameKey: "householdRecordName", targetEntityName: "Household") { (book: BookEntry, household: Household) in
+            book.household = household
+            book.setValue(household.id, forKey: "householdId")
+        }
+        retry(ownerEntityName: "BookEntry", relationshipKey: "ownerMember", recordNameKey: "memberRecordName", targetEntityName: "HouseholdMember") { (book: BookEntry, member: HouseholdMember) in
+            book.ownerMember = member
+            book.setValue(member.id, forKey: "ownerMemberId")
+        }
+
         if !unresolvedCounts.isEmpty {
             SyncLogger.log(SyncLogger.inbound, "unresolved links after retry: \(unresolvedCounts)")
         }
@@ -282,6 +310,24 @@ final class InboundChangeApplier {
         let viewing = Viewing(context: context)
         viewing.recordName = recordName
         return viewing
+    }
+
+    private func fetchOrCreateTVShow(recordName: String) -> TVShow {
+        if let existing: TVShow = SyncRecordMapping.fetchByRecordName(entityName: "TVShow", recordName: recordName, context: context) {
+            return existing
+        }
+        let show = TVShow(context: context)
+        show.recordName = recordName
+        return show
+    }
+
+    private func fetchOrCreateBook(recordName: String) -> BookEntry {
+        if let existing: BookEntry = SyncRecordMapping.fetchByRecordName(entityName: "BookEntry", recordName: recordName, context: context) {
+            return existing
+        }
+        let book = BookEntry(context: context)
+        book.recordName = recordName
+        return book
     }
 
     // MARK: - Link resolution (falls back to already-synced rows outside this batch)

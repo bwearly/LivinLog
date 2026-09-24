@@ -365,9 +365,14 @@ struct MoviesListView: View {
         guard !updates.isEmpty else { return }
 
         await MainActor.run {
+            var didChange = false
             for (objectID, urlString) in updates {
-                if let movie = try? context.existingObject(with: objectID) as? Movie {
+                // Only fill a poster that's still missing -- it may have arrived via sync during
+                // the network wait. Never a no-op save or a resend.
+                if let movie = try? context.existingObject(with: objectID) as? Movie,
+                   (movie.posterURL ?? "").isEmpty {
                     movie.posterURL = urlString
+                    didChange = true
                     do {
                         try MovieStoreSafety.validateMovieGraph(movie: movie, household: movie.household, context: context, operation: "Movie.posterBackfill")
                     } catch {
@@ -378,6 +383,7 @@ struct MoviesListView: View {
                     }
                 }
             }
+            guard didChange else { return }
             do {
                 try context.save()
             } catch {

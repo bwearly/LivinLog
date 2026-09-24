@@ -256,7 +256,10 @@ struct TVShowsListView: View {
             guard let fetched else { continue }
 
             await MainActor.run {
-                guard let showInContext = (try? context.existingObject(with: snapshot.0)) as? TVShow else { return }
+                // Only fill a poster that's still missing -- it may have arrived via sync (or
+                // been set elsewhere) during the network wait. Never a no-op save or a resend.
+                guard let showInContext = (try? context.existingObject(with: snapshot.0)) as? TVShow,
+                      (showInContext.posterURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                 showInContext.posterURL = fetched.absoluteString
                 do {
                     try TVShowStoreSafety.validateGraph(tvShow: showInContext, context: context, operation: "TVShow.poster.listBackfill")
@@ -279,8 +282,13 @@ struct TVShowsListView: View {
                 return
             }
 
+            // Save only when this repair actually changed something -- previously it also saved
+            // whenever the context had any unrelated pending changes.
+            var didChange = false
+
             if scopedHousehold.id == nil {
                 scopedHousehold.id = UUID()
+                didChange = true
             }
 
             guard let hid = scopedHousehold.id else { return }
@@ -296,23 +304,27 @@ struct TVShowsListView: View {
             do {
                 let missingHouseholdID = try context.fetch(missingHouseholdIDRequest)
                 let orphanedByOldToOne = try context.fetch(orphanedByOldToOneRequest)
-                guard !missingHouseholdID.isEmpty || !orphanedByOldToOne.isEmpty || context.hasChanges else { return }
 
+                // Both fetches only return rows whose field is nil, so each assignment below is
+                // a real change.
                 for show in missingHouseholdID {
                     try TVShowStoreSafety.validateGraph(tvShow: show, context: context, operation: "TVShow.householdIDBackfill.preflight")
                     show.householdID = hid
+                    didChange = true
                     try TVShowStoreSafety.validateGraph(tvShow: show, context: context, operation: "TVShow.householdIDBackfill")
                 }
 
                 for show in orphanedByOldToOne {
                     try context.validateSamePersistentStore([("orphanedTVShow", show), ("household", scopedHousehold)])
                     show.household = scopedHousehold
+                    didChange = true
                     try TVShowStoreSafety.validateGraph(tvShow: show, context: context, operation: "TVShow.householdRelink")
 #if DEBUG
                     print("📺 [TVShowBackfill] relinked orphaned show title=\(show.title ?? "<untitled>") year=\(Int(show.year)) objectID=\(show.objectID.uriRepresentation().absoluteString) householdID=\(hid.uuidString)")
 #endif
                 }
 
+                guard didChange else { return }
                 try context.save()
             } catch {
                 context.rollback()

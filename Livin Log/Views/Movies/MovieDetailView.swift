@@ -1107,7 +1107,10 @@ struct MovieDetailView: View {
         if let fetched {
             await MainActor.run {
                 do {
-                    guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie else { return }
+                    // Only fill a poster that's still missing -- it may have arrived via sync
+                    // during the network wait. Never a no-op save or a resend.
+                    guard let movieInContext = (try? context.existingObject(with: movie.objectID)) as? Movie,
+                          (movieInContext.posterURL ?? "").isEmpty else { return }
                     movieInContext.posterURL = fetched.absoluteString
                     try MovieStoreSafety.validateMovieGraph(movie: movieInContext, household: movieInContext.household, context: context, operation: "Movie.poster.load")
                     try context.save()

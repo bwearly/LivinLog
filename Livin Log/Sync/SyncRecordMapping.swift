@@ -25,6 +25,8 @@ enum SyncRecordMapping {
         static let movie = "Movie"
         static let feedback = "MovieFeedback"
         static let viewing = "Viewing"
+        static let tvShow = "TVShow"
+        static let book = "BookEntry"
     }
 
     // MARK: - Synced entity registry (single source of truth)
@@ -61,6 +63,16 @@ enum SyncRecordMapping {
             entityName: "Movie",
             recordType: RecordType.movie,
             syncedProperties: ["title", "genre", "imdbID", "mediaType", "mpaaRating", "notes", "posterURL", "year", "createdAt", "household"]
+        ),
+        EntitySpec(
+            entityName: "TVShow",
+            recordType: RecordType.tvShow,
+            syncedProperties: ["title", "year", "seasons", "mediaType", "imdbID", "posterURL", "ratingText", "rewatch", "notes", "createdAt", "household"]
+        ),
+        EntitySpec(
+            entityName: "BookEntry",
+            recordType: RecordType.book,
+            syncedProperties: ["title", "author", "rating", "notes", "spiceLevel", "bookLength", "createdAt", "finishedAt", "coverURL", "coverID", "isbn", "firstPublishYear", "household", "ownerMember"]
         ),
         EntitySpec(
             entityName: "MovieFeedback",
@@ -324,6 +336,101 @@ enum SyncRecordMapping {
         if let movie { viewing.movie = movie }
     }
 
+    // MARK: - TVShow
+
+    static func makeRecord(for show: TVShow) -> CKRecord? {
+        guard let household = show.household, let zoneID = zoneID(for: household), let recordName = show.recordName else { return nil }
+        let record = baseRecord(recordType: RecordType.tvShow, recordName: recordName, zoneID: zoneID, existingSystemFields: show.ckSystemFields)
+        record["title"] = show.title
+        record["year"] = Int(show.year)
+        record["seasons"] = Int(show.seasons)
+        record["mediaType"] = show.mediaType
+        record["imdbID"] = show.imdbID
+        record["posterURL"] = show.posterURL
+        record["ratingText"] = show.ratingText
+        // Scalar-typed in the app (`show.rewatch: Bool`), so nil and false already read the
+        // same everywhere -- mapped as a plain Bool, like Viewing.isRewatch.
+        record["rewatch"] = show.rewatch
+        record["notes"] = show.notes
+        record["createdAt"] = show.createdAt
+        record["householdRecordName"] = household.recordName
+        record["id"] = show.id?.uuidString
+        return record
+    }
+
+    static func apply(_ record: CKRecord, to show: TVShow, household: Household?) {
+        show.recordName = record.recordID.recordName
+        show.title = record["title"] as? String
+        show.year = Int16((record["year"] as? Int) ?? 0)
+        show.seasons = Int16((record["seasons"] as? Int) ?? 0)
+        show.mediaType = record["mediaType"] as? String
+        show.imdbID = record["imdbID"] as? String
+        show.posterURL = record["posterURL"] as? String
+        show.ratingText = record["ratingText"] as? String
+        show.rewatch = (record["rewatch"] as? Bool) ?? false
+        show.notes = record["notes"] as? String
+        show.createdAt = record["createdAt"] as? Date
+        show.ckSystemFields = encodeSystemFields(record)
+        if let parsedID = parsedID(from: record) { show.id = parsedID }
+        show.householdRecordName = record["householdRecordName"] as? String
+        if let household {
+            show.household = household
+            show.householdID = household.id
+        }
+    }
+
+    // MARK: - BookEntry
+
+    static func makeRecord(for book: BookEntry) -> CKRecord? {
+        guard let household = book.household, let zoneID = zoneID(for: household), let recordName = book.recordName else { return nil }
+        let record = baseRecord(recordType: RecordType.book, recordName: recordName, zoneID: zoneID, existingSystemFields: book.ckSystemFields)
+        record["title"] = book.title
+        record["author"] = book.author
+        record["rating"] = book.rating
+        record["notes"] = book.notes
+        record["spiceLevel"] = Int(book.spiceLevel)
+        record["bookLength"] = book.bookLength
+        record["createdAt"] = book.createdAt
+        record["finishedAt"] = book.finishedAt
+        record["coverURL"] = book.value(forKey: "coverURL") as? String
+        // Optional non-scalar numbers: nil stays nil (not 0) in both directions.
+        record["coverID"] = book.value(forKey: "coverID") as? NSNumber
+        record["isbn"] = book.value(forKey: "isbn") as? String
+        record["firstPublishYear"] = book.value(forKey: "firstPublishYear") as? NSNumber
+        record["householdRecordName"] = household.recordName
+        record["memberRecordName"] = book.ownerMember?.recordName
+        record["id"] = book.id?.uuidString
+        return record
+    }
+
+    static func apply(_ record: CKRecord, to book: BookEntry, household: Household?, member: HouseholdMember?) {
+        book.recordName = record.recordID.recordName
+        book.title = record["title"] as? String
+        book.author = record["author"] as? String
+        book.rating = (record["rating"] as? Double) ?? 0
+        book.notes = record["notes"] as? String
+        book.spiceLevel = Int16((record["spiceLevel"] as? Int) ?? 0)
+        book.bookLength = record["bookLength"] as? String
+        book.createdAt = record["createdAt"] as? Date
+        book.finishedAt = record["finishedAt"] as? Date
+        book.setValue(record["coverURL"] as? String, forKey: "coverURL")
+        book.setValue(record["coverID"] as? NSNumber, forKey: "coverID")
+        book.setValue(record["isbn"] as? String, forKey: "isbn")
+        book.setValue(record["firstPublishYear"] as? NSNumber, forKey: "firstPublishYear")
+        book.ckSystemFields = encodeSystemFields(record)
+        if let parsedID = parsedID(from: record) { book.id = parsedID }
+        book.householdRecordName = record["householdRecordName"] as? String
+        book.memberRecordName = record["memberRecordName"] as? String
+        if let household {
+            book.household = household
+            book.setValue(household.id, forKey: "householdId")
+        }
+        if let member {
+            book.ownerMember = member
+            book.setValue(member.id, forKey: "ownerMemberId")
+        }
+    }
+
     // MARK: - Entity-agnostic lookups (nextRecordZoneChangeBatch doesn't know an ID's entity type)
 
     /// Searches each registered entity in `entities` order (the same order as the hand-written
@@ -347,6 +454,8 @@ enum SyncRecordMapping {
         case let movie as Movie: return makeRecord(for: movie)
         case let feedback as MovieFeedback: return makeRecord(for: feedback)
         case let viewing as Viewing: return makeRecord(for: viewing)
+        case let show as TVShow: return makeRecord(for: show)
+        case let book as BookEntry: return makeRecord(for: book)
         default:
             SyncLogger.error(SyncLogger.engine, "makeRecord: no builder for \(object.entity.name ?? "<unknown entity>")")
             return nil

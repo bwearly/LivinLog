@@ -419,7 +419,7 @@ struct TVShowDetailView: View {
         let fetched = await OMDbPosterService.posterURL(title: snapshot.1, year: snapshot.2)
         guard let fetched else { return }
 
-        await savePoster(fetched, for: snapshot.0, operation: "TVShow.poster.ensure")
+        await savePoster(fetched, for: snapshot.0, operation: "TVShow.poster.ensure", onlyIfMissing: true)
     }
 
     private func refreshPoster(for objectID: NSManagedObjectID) async {
@@ -433,9 +433,21 @@ struct TVShowDetailView: View {
         await savePoster(fetched, for: objectID, operation: "TVShow.poster.refresh")
     }
 
+    /// `onlyIfMissing`: the on-appear path -- don't overwrite a poster that arrived (e.g. via
+    /// sync) during the network wait. Either way, an unchanged value is never saved, so opening
+    /// a show never produces a no-op save or a resend.
     @MainActor
-    private func savePoster(_ fetched: URL?, for objectID: NSManagedObjectID, operation: String) {
+    private func savePoster(_ fetched: URL?, for objectID: NSManagedObjectID, operation: String, onlyIfMissing: Bool = false) {
         guard let tvShowInContext = (try? context.existingObject(with: objectID)) as? TVShow else { return }
+        let current = (tvShowInContext.posterURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if onlyIfMissing && !current.isEmpty {
+            posterURL = URL(string: current)
+            return
+        }
+        guard tvShowInContext.posterURL != fetched?.absoluteString else {
+            posterURL = fetched
+            return
+        }
         tvShowInContext.posterURL = fetched?.absoluteString
         posterURL = fetched
         do {

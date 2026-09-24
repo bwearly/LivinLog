@@ -15,7 +15,7 @@
         <relationship name="puzzles" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="LLPuzzle" inverseName="household" inverseEntity="LLPuzzle" />
         <relationship name="children" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="LLChild" inverseName="household" inverseEntity="LLChild" />
         <relationship name="quotes" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="LLQuote" inverseName="household" inverseEntity="LLQuote" />
-        <relationship name="tvshows" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="TVShow" inverseName="household" inverseEntity="TVShow" />
+        <relationship name="tvshows" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="TVShow" inverseName="household" inverseEntity="TVShow" />
         <relationship name="viewings" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Viewing" inverseName="household" inverseEntity="Viewing" />
         <relationship name="memberships" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="HouseholdMembership" inverseName="household" inverseEntity="HouseholdMembership" />
         <relationship name="bookEntries" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="BookEntry" inverseName="household" inverseEntity="BookEntry" />
@@ -136,6 +136,9 @@
         <attribute name="seasons" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES" />
         <attribute name="title" optional="YES" attributeType="String" />
         <attribute name="year" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES" />
+        <attribute name="recordName" optional="YES" attributeType="String" />
+        <attribute name="ckSystemFields" optional="YES" attributeType="Binary" />
+        <attribute name="householdRecordName" optional="YES" attributeType="String" />
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="tvshows" inverseEntity="Household" />
     </entity>
     <entity name="Viewing" representedClassName="Viewing" syncable="YES" codeGenerationType="class">
@@ -190,6 +193,10 @@
         <attribute name="coverID" optional="YES" attributeType="Integer 64" usesScalarValueType="NO" />
         <attribute name="isbn" optional="YES" attributeType="String" />
         <attribute name="firstPublishYear" optional="YES" attributeType="Integer 16" usesScalarValueType="NO" />
+        <attribute name="recordName" optional="YES" attributeType="String" />
+        <attribute name="ckSystemFields" optional="YES" attributeType="Binary" />
+        <attribute name="householdRecordName" optional="YES" attributeType="String" />
+        <attribute name="memberRecordName" optional="YES" attributeType="String" />
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="bookEntries" inverseEntity="Household" />
         <relationship name="ownerMember" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="HouseholdMember" inverseName="bookEntries" inverseEntity="HouseholdMember" />
         <relationship name="ownerAppUser" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="AppUser" inverseName="bookEntries" inverseEntity="AppUser" />
