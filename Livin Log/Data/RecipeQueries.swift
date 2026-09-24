@@ -11,14 +11,17 @@
 import Foundation
 
 extension Recipe {
+    // Ingredients and steps tie-break on recordName so their order is deterministic even if two
+    // rows share a position (e.g. both devices added one offline). RecipeStore.save matches
+    // form rows to stored rows by this exact order.
     var sortedIngredients: [RecipeIngredient] {
         let set = ingredients as? Set<RecipeIngredient> ?? []
-        return set.sorted { $0.position < $1.position }
+        return set.sorted { ($0.position, $0.recordName ?? "") < ($1.position, $1.recordName ?? "") }
     }
 
     var sortedSteps: [RecipeStep] {
         let set = steps as? Set<RecipeStep> ?? []
-        return set.sorted { $0.position < $1.position }
+        return set.sorted { ($0.position, $0.recordName ?? "") < ($1.position, $1.recordName ?? "") }
     }
 
     var sortedPhotos: [RecipePhoto] {

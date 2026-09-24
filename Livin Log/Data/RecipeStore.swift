@@ -30,13 +30,17 @@ enum RecipeStore {
     /// `AddEditPuzzleView.savePuzzle()` (`activeHouseholdInContext` → `assignIfInserted` →
     /// `storeForParent`).
     ///
-    /// Ingredient and step rows are deleted and recreated from the passed-in arrays on every
-    /// save rather than diffed against existing rows. That's simpler and correctness-safe for
-    /// the list sizes involved, at the cost of each edit generating fresh CKRecord IDs for them.
-    /// Photos are the exception (Phase 4a): an existing `RecipePhoto` whose bytes are unchanged
-    /// is reused (only its `position` may change), so editing a recipe never re-uploads its
-    /// photo assets; only added photos are created and removed ones deleted. `position` is
-    /// reassigned sequentially from each
+    /// Children are updated in place, never deleted-and-recreated (Phase 4a), so an edit sends
+    /// only the records that actually changed and two devices editing the same recipe update
+    /// the same records instead of each minting new ones (which would duplicate rows):
+    /// - Ingredients and steps are matched by position: the i-th non-blank form row updates the
+    ///   i-th existing row in `sortedIngredients`/`sortedSteps` order (position, then
+    ///   recordName -- the same order the editor was seeded from). Fields are assigned only
+    ///   when they differ; rows are created only for added positions and deleted only for
+    ///   removed ones.
+    /// - Photos are matched by bytes: an unchanged photo keeps its row (only `position` may
+    ///   change), so editing a recipe never re-uploads its photo assets.
+    /// `position` is reassigned sequentially from each
     /// array's order, since this model — like the rest of the app — uses a manual position
     /// attribute instead of Core Data ordered relationships (unsupported under
     /// `NSPersistentCloudKitContainer`).
@@ -114,44 +118,56 @@ enum RecipeStore {
             recipe.categoryRecordNamesRaw = categoryNamesRaw
         }
 
-        if let existingIngredients = recipe.ingredients as? Set<RecipeIngredient> {
-            existingIngredients.forEach(context.delete)
-        }
-        var ingredientPosition: Int32 = 0
-        for input in ingredients {
+        // Ingredients: update in place by position (see the doc comment above).
+        let existingIngredients = recipe.sortedIngredients
+        let ingredientRows = ingredients.compactMap { input -> (name: String, unit: String?, amount: Double)? in
             let trimmedName = input.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedName.isEmpty else { continue }
-
-            let ingredient = RecipeIngredient(context: context)
-            assignIfInserted(ingredient, to: store, in: context)
-            ingredient.id = UUID()
-            ingredient.amount = input.amount
+            guard !trimmedName.isEmpty else { return nil }
             let trimmedUnit = (input.unit ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            ingredient.unit = trimmedUnit.isEmpty ? nil : trimmedUnit
-            ingredient.name = trimmedName
-            ingredient.position = ingredientPosition
-            ingredient.recipe = recipe
-            ingredientPosition += 1
+            return (trimmedName, trimmedUnit.isEmpty ? nil : trimmedUnit, input.amount)
         }
+        for (index, row) in ingredientRows.enumerated() {
+            let position = Int32(index)
+            let ingredient: RecipeIngredient
+            if index < existingIngredients.count {
+                ingredient = existingIngredients[index]
+            } else {
+                ingredient = RecipeIngredient(context: context)
+                assignIfInserted(ingredient, to: store, in: context)
+                ingredient.id = UUID()
+                ingredient.recipe = recipe
+            }
+            if ingredient.name != row.name { ingredient.name = row.name }
+            if ingredient.unit != row.unit { ingredient.unit = row.unit }
+            if ingredient.amount != row.amount { ingredient.amount = row.amount }
+            if ingredient.position != position { ingredient.position = position }
+        }
+        existingIngredients.dropFirst(ingredientRows.count).forEach(context.delete)
 
-        if let existingSteps = recipe.steps as? Set<RecipeStep> {
-            existingSteps.forEach(context.delete)
-        }
-        var stepPosition: Int32 = 0
-        for input in steps {
+        // Steps: same in-place update by position.
+        let existingSteps = recipe.sortedSteps
+        let stepRows = steps.compactMap { input -> (text: String, sectionTitle: String?)? in
             let trimmedText = input.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedText.isEmpty else { continue }
-
-            let step = RecipeStep(context: context)
-            assignIfInserted(step, to: store, in: context)
-            step.id = UUID()
-            step.text = trimmedText
+            guard !trimmedText.isEmpty else { return nil }
             let trimmedSection = (input.sectionTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            step.sectionTitle = trimmedSection.isEmpty ? nil : trimmedSection
-            step.position = stepPosition
-            step.recipe = recipe
-            stepPosition += 1
+            return (trimmedText, trimmedSection.isEmpty ? nil : trimmedSection)
         }
+        for (index, row) in stepRows.enumerated() {
+            let position = Int32(index)
+            let step: RecipeStep
+            if index < existingSteps.count {
+                step = existingSteps[index]
+            } else {
+                step = RecipeStep(context: context)
+                assignIfInserted(step, to: store, in: context)
+                step.id = UUID()
+                step.recipe = recipe
+            }
+            if step.text != row.text { step.text = row.text }
+            if step.sectionTitle != row.sectionTitle { step.sectionTitle = row.sectionTitle }
+            if step.position != position { step.position = position }
+        }
+        existingSteps.dropFirst(stepRows.count).forEach(context.delete)
 
         // Reuse unchanged photos (matched by bytes), create rows only for new ones, delete
         // rows for removed ones -- see the doc comment above.
