@@ -27,6 +27,9 @@ enum SyncRecordMapping {
         static let viewing = "Viewing"
         static let tvShow = "TVShow"
         static let book = "BookEntry"
+        static let quote = "LLQuote"
+        static let puzzle = "LLPuzzle"
+        static let calendarEvent = "LLCalendarEvent"
     }
 
     // MARK: - Synced entity registry (single source of truth)
@@ -73,6 +76,24 @@ enum SyncRecordMapping {
             entityName: "BookEntry",
             recordType: RecordType.book,
             syncedProperties: ["title", "author", "rating", "notes", "spiceLevel", "bookLength", "createdAt", "finishedAt", "coverURL", "coverID", "isbn", "firstPublishYear", "household", "ownerMember"]
+        ),
+        // LLQuote: `ageInMonthsAtSaidAt` is deliberately NOT synced (age is computed at read
+        // time from member.birthday), nor is the retired `child` link.
+        EntitySpec(
+            entityName: "LLQuote",
+            recordType: RecordType.quote,
+            syncedProperties: ["text", "speakerName", "contextText", "saidAt", "createdAt", "updatedAt", "household", "member"]
+        ),
+        EntitySpec(
+            entityName: "LLPuzzle",
+            recordType: RecordType.puzzle,
+            syncedProperties: ["name", "brand", "notes", "pieceCount", "completedAt", "photoData", "createdAt", "updatedAt", "household"]
+        ),
+        // LLCalendarEvent: `notificationsEnabledForEvent` is a per-device preference, kept local.
+        EntitySpec(
+            entityName: "LLCalendarEvent",
+            recordType: RecordType.calendarEvent,
+            syncedProperties: ["name", "tag", "day", "month", "year", "createdAt", "updatedAt", "household"]
         ),
         EntitySpec(
             entityName: "MovieFeedback",
@@ -433,6 +454,148 @@ enum SyncRecordMapping {
         }
     }
 
+    // MARK: - LLQuote
+
+    static func makeRecord(for quote: LLQuote) -> CKRecord? {
+        guard let household = quote.household, let zoneID = zoneID(for: household), let recordName = quote.recordName else { return nil }
+        let record = baseRecord(recordType: RecordType.quote, recordName: recordName, zoneID: zoneID, existingSystemFields: quote.ckSystemFields)
+        record["text"] = quote.text
+        record["speakerName"] = quote.speakerName
+        record["contextText"] = quote.contextText
+        record["saidAt"] = quote.saidAt
+        record["createdAt"] = quote.createdAt
+        record["updatedAt"] = quote.updatedAt
+        record["householdRecordName"] = household.recordName
+        record["memberRecordName"] = quote.member?.recordName
+        record["id"] = quote.id?.uuidString
+        return record
+    }
+
+    static func apply(_ record: CKRecord, to quote: LLQuote, household: Household?, member: HouseholdMember?) {
+        quote.recordName = record.recordID.recordName
+        quote.text = record["text"] as? String
+        quote.speakerName = record["speakerName"] as? String
+        quote.contextText = record["contextText"] as? String
+        quote.saidAt = record["saidAt"] as? Date
+        quote.createdAt = record["createdAt"] as? Date
+        quote.updatedAt = record["updatedAt"] as? Date
+        quote.ckSystemFields = encodeSystemFields(record)
+        if let parsedID = parsedID(from: record) { quote.id = parsedID }
+        quote.householdRecordName = record["householdRecordName"] as? String
+        if let household {
+            quote.household = household
+            quote.setValue(household.id, forKey: "householdId")
+        }
+        // Unlike MovieFeedback's member, a quote's speaker can change from a member to
+        // "Someone else" (no memberRecordName) or to a different member, so the link is always
+        // replaced: nil when there's no member, or when the target hasn't arrived yet (link
+        // retry fills it in from memberRecordName later).
+        let memberRecordName = record["memberRecordName"] as? String
+        quote.memberRecordName = memberRecordName
+        quote.member = memberRecordName == nil ? nil : member
+    }
+
+    // MARK: - LLPuzzle
+
+    static func makeRecord(for puzzle: LLPuzzle) -> CKRecord? {
+        guard let household = puzzle.household, let zoneID = zoneID(for: household), let recordName = puzzle.recordName else { return nil }
+        let record = baseRecord(recordType: RecordType.puzzle, recordName: recordName, zoneID: zoneID, existingSystemFields: puzzle.ckSystemFields)
+        record["name"] = puzzle.name
+        record["brand"] = puzzle.brand
+        record["notes"] = puzzle.notes
+        record["pieceCount"] = Int(puzzle.pieceCount)
+        record["completedAt"] = puzzle.completedAt
+        record["createdAt"] = puzzle.createdAt
+        record["updatedAt"] = puzzle.updatedAt
+        record["householdRecordName"] = household.recordName
+        record["id"] = puzzle.id?.uuidString
+        // The photo goes out only when it changed since the last confirmed upload
+        // (photoUploadedHash, local + unsynced). Otherwise the "photo" key is omitted entirely,
+        // so an edit to name/notes sends only those fields and the server keeps its photo.
+        // Removing a photo still sends the clear (nil hash != uploaded hash). The new hash is
+        // committed to the row only once this save succeeds -- see
+        // SyncController.handleSentRecordZoneChanges.
+        let currentHash = puzzle.photoData.map(SyncImageAsset.contentHash)
+        if currentHash != puzzle.photoUploadedHash {
+            if let photoData = puzzle.photoData, let currentHash {
+                // Staging failure leaves "photo" unset, so the server keeps its current photo.
+                if let asset = SyncImageAsset.stagedAsset(for: photoData, recordName: recordName) {
+                    record["photo"] = asset
+                    SyncImageAsset.pendingPhotoUploads.set(.uploaded(hash: currentHash), for: recordName)
+                }
+            } else {
+                record["photo"] = nil
+                SyncImageAsset.pendingPhotoUploads.set(.cleared, for: recordName)
+            }
+        }
+        return record
+    }
+
+    static func apply(_ record: CKRecord, to puzzle: LLPuzzle, household: Household?) {
+        puzzle.recordName = record.recordID.recordName
+        puzzle.name = record["name"] as? String
+        puzzle.brand = record["brand"] as? String
+        puzzle.notes = record["notes"] as? String
+        puzzle.pieceCount = Int32((record["pieceCount"] as? Int) ?? 0)
+        puzzle.completedAt = record["completedAt"] as? Date
+        puzzle.createdAt = record["createdAt"] as? Date
+        puzzle.updatedAt = record["updatedAt"] as? Date
+        // photoUploadedHash tracks what the server holds, so the next local edit only re-sends
+        // the photo if it has changed since.
+        if let asset = record["photo"] as? CKAsset {
+            if let data = SyncImageAsset.data(from: asset) {
+                puzzle.photoData = data
+                puzzle.photoUploadedHash = SyncImageAsset.contentHash(data)
+            } else {
+                // Asset present but its file isn't readable: keep the local photo rather than
+                // clearing it on a download hiccup.
+                SyncLogger.error(SyncLogger.inbound, "puzzle \(record.recordID.recordName): photo asset had no readable file; kept local photo")
+            }
+        } else {
+            puzzle.photoData = nil
+            puzzle.photoUploadedHash = nil
+        }
+        puzzle.ckSystemFields = encodeSystemFields(record)
+        if let parsedID = parsedID(from: record) { puzzle.id = parsedID }
+        puzzle.householdRecordName = record["householdRecordName"] as? String
+        if let household { puzzle.household = household }
+    }
+
+    // MARK: - LLCalendarEvent
+
+    static func makeRecord(for event: LLCalendarEvent) -> CKRecord? {
+        guard let household = event.household, let zoneID = zoneID(for: household), let recordName = event.recordName else { return nil }
+        let record = baseRecord(recordType: RecordType.calendarEvent, recordName: recordName, zoneID: zoneID, existingSystemFields: event.ckSystemFields)
+        record["name"] = event.name
+        record["tag"] = event.tag
+        record["day"] = Int(event.day)
+        record["month"] = Int(event.month)
+        // Optional: nil means "no year" (AddEditEventView reads/writes it via value(forKey:)).
+        record["year"] = event.value(forKey: "year") as? NSNumber
+        record["createdAt"] = event.createdAt
+        record["updatedAt"] = event.updatedAt
+        record["householdRecordName"] = household.recordName
+        record["id"] = event.id?.uuidString
+        return record
+    }
+
+    static func apply(_ record: CKRecord, to event: LLCalendarEvent, household: Household?) {
+        event.recordName = record.recordID.recordName
+        event.name = record["name"] as? String
+        event.tag = (record["tag"] as? String) ?? "Other"
+        event.day = Int16((record["day"] as? Int) ?? 0)
+        event.month = Int16((record["month"] as? Int) ?? 0)
+        event.setValue(record["year"] as? NSNumber, forKey: "year")
+        event.createdAt = record["createdAt"] as? Date
+        event.updatedAt = record["updatedAt"] as? Date
+        // notificationsEnabledForEvent is never touched here: it stays this device's choice
+        // (a newly-arrived event gets the model default, on).
+        event.ckSystemFields = encodeSystemFields(record)
+        if let parsedID = parsedID(from: record) { event.id = parsedID }
+        event.householdRecordName = record["householdRecordName"] as? String
+        if let household { event.household = household }
+    }
+
     // MARK: - Entity-agnostic lookups (nextRecordZoneChangeBatch doesn't know an ID's entity type)
 
     /// Searches each registered entity in `entities` order (the same order as the hand-written
@@ -458,6 +621,9 @@ enum SyncRecordMapping {
         case let viewing as Viewing: return makeRecord(for: viewing)
         case let show as TVShow: return makeRecord(for: show)
         case let book as BookEntry: return makeRecord(for: book)
+        case let quote as LLQuote: return makeRecord(for: quote)
+        case let puzzle as LLPuzzle: return makeRecord(for: puzzle)
+        case let event as LLCalendarEvent: return makeRecord(for: event)
         default:
             SyncLogger.error(SyncLogger.engine, "makeRecord: no builder for \(object.entity.name ?? "<unknown entity>")")
             return nil

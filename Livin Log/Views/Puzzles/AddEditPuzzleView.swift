@@ -153,7 +153,8 @@ struct AddEditPuzzleView: View {
         .sheet(isPresented: $showingCamera) {
             CameraPicker { image in
                 guard let image else { return }
-                photoData = image.jpegData(compressionQuality: 0.75)
+                // Phase 4a: stored at the synced size (1600px / JPEG 0.7), see SyncImageAsset.
+                photoData = image.jpegData(compressionQuality: 1.0).flatMap(SyncImageAsset.downscaledJPEG)
             }
         }
 
@@ -161,8 +162,7 @@ struct AddEditPuzzleView: View {
             guard let newItem else { return }
             Task {
                 if let data = try? await newItem.loadTransferable(type: Data.self),
-                   let image = UIImage(data: data),
-                   let jpeg = image.jpegData(compressionQuality: 0.75) {
+                   let jpeg = SyncImageAsset.downscaledJPEG(data) {
                     await MainActor.run {
                         photoData = jpeg
                         // ✅ clear so selecting same image again triggers

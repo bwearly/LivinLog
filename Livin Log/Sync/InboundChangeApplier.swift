@@ -11,9 +11,10 @@
 //  SyncController's viewContext observer merges them in (see SyncController.swift).
 //
 //  Records are applied in dependency order -- Household, then HouseholdMember, then Movie, then
-//  TVShow and BookEntry (Phase 4a), then MovieFeedback, then Viewing -- rather than a single
-//  generic "upsert everything, then link everything" pass. This satisfies the same requirement the Phase 1 plan describes ("upsert
-//  first, link in a second pass, because arrival order isn't guaranteed"): a fetch against this
+//  TVShow, BookEntry, LLQuote, LLPuzzle, LLCalendarEvent (Phase 4a), then MovieFeedback, then
+//  Viewing -- rather than a single generic "upsert everything, then link everything" pass. This
+//  satisfies the same requirement the Phase 1 plan describes ("upsert first, link in a second
+//  pass, because arrival order isn't guaranteed"): a fetch against this
 //  context sees its own uncommitted pending inserts/edits, so by the time MovieFeedback (which
 //  can reference all three of Household/HouseholdMember/Movie) is processed, every type it can
 //  link to has already been upserted in this same batch, however CloudKit ordered the raw
@@ -52,6 +53,10 @@ final class InboundChangeApplier {
     }
 
     func apply(_ event: CKSyncEngine.Event.FetchedRecordZoneChanges) {
+        // Set when this batch saved any LLCalendarEvent change, so reminders get rescheduled
+        // (see `.didApplyInboundCalendarEvents`).
+        var savedCalendarEventChanges = false
+
         context.performAndWait {
             var recordsByType: [String: [CKRecord]] = [:]
             var skippedLegacyModifications = 0
@@ -120,6 +125,30 @@ final class InboundChangeApplier {
                 indexAfterApply(recordType: SyncRecordMapping.RecordType.book, record: record, object: book)
             }
 
+            for record in recordsByType[SyncRecordMapping.RecordType.quote] ?? [] {
+                let quote = fetchOrCreateQuote(recordName: record.recordID.recordName)
+                let household = (record["householdRecordName"] as? String).flatMap(fetchHousehold)
+                let member = (record["memberRecordName"] as? String).flatMap(fetchMember)
+                SyncRecordMapping.apply(record, to: quote, household: household, member: member)
+                indexAfterApply(recordType: SyncRecordMapping.RecordType.quote, record: record, object: quote)
+            }
+
+            for record in recordsByType[SyncRecordMapping.RecordType.puzzle] ?? [] {
+                let puzzle = fetchOrCreatePuzzle(recordName: record.recordID.recordName)
+                let household = (record["householdRecordName"] as? String).flatMap(fetchHousehold)
+                SyncRecordMapping.apply(record, to: puzzle, household: household)
+                indexAfterApply(recordType: SyncRecordMapping.RecordType.puzzle, record: record, object: puzzle)
+            }
+
+            let calendarRecords = recordsByType[SyncRecordMapping.RecordType.calendarEvent] ?? []
+            for record in calendarRecords {
+                let calendarEvent = fetchOrCreateCalendarEvent(recordName: record.recordID.recordName)
+                let household = (record["householdRecordName"] as? String).flatMap(fetchHousehold)
+                SyncRecordMapping.apply(record, to: calendarEvent, household: household)
+                indexAfterApply(recordType: SyncRecordMapping.RecordType.calendarEvent, record: record, object: calendarEvent)
+            }
+            var calendarEventsTouched = !calendarRecords.isEmpty
+
             for record in recordsByType[SyncRecordMapping.RecordType.feedback] ?? [] {
                 let feedback = fetchOrCreateFeedback(recordName: record.recordID.recordName)
                 let household = (record["householdRecordName"] as? String).flatMap(fetchHousehold)
@@ -138,7 +167,9 @@ final class InboundChangeApplier {
             }
 
             for deletion in filteredDeletions {
-                applyDeletion(recordName: deletion.recordID.recordName)
+                if applyDeletion(recordName: deletion.recordID.recordName) == "LLCalendarEvent" {
+                    calendarEventsTouched = true
+                }
             }
 
             // Re-run link resolution for every row in the store whose relationship is still nil
@@ -152,11 +183,18 @@ final class InboundChangeApplier {
             guard context.hasChanges else { return }
             do {
                 try context.save()
+                savedCalendarEventChanges = calendarEventsTouched
                 SyncLogger.log(SyncLogger.inbound, "applied \(event.modifications.count - skippedLegacyModifications) modification(s), \(filteredDeletions.count) deletion(s)")
             } catch {
                 SyncLogger.error(SyncLogger.inbound, "save failed: \(String(describing: error))")
                 context.rollback()
             }
+        }
+
+        // Posted after performAndWait returns (i.e. on the caller's actor, not the background
+        // context's queue). RootView re-runs NotificationScheduler.sync on it.
+        if savedCalendarEventChanges {
+            NotificationCenter.default.post(name: .didApplyInboundCalendarEvents, object: nil)
         }
     }
 
@@ -260,6 +298,20 @@ final class InboundChangeApplier {
             book.setValue(member.id, forKey: "ownerMemberId")
         }
 
+        retry(ownerEntityName: "LLQuote", relationshipKey: "household", recordNameKey: "householdRecordName", targetEntityName: "Household") { (quote: LLQuote, household: Household) in
+            quote.household = household
+            quote.setValue(household.id, forKey: "householdId")
+        }
+        retry(ownerEntityName: "LLQuote", relationshipKey: "member", recordNameKey: "memberRecordName", targetEntityName: "HouseholdMember") { (quote: LLQuote, member: HouseholdMember) in
+            quote.member = member
+        }
+        retry(ownerEntityName: "LLPuzzle", relationshipKey: "household", recordNameKey: "householdRecordName", targetEntityName: "Household") { (puzzle: LLPuzzle, household: Household) in
+            puzzle.household = household
+        }
+        retry(ownerEntityName: "LLCalendarEvent", relationshipKey: "household", recordNameKey: "householdRecordName", targetEntityName: "Household") { (calendarEvent: LLCalendarEvent, household: Household) in
+            calendarEvent.household = household
+        }
+
         if !unresolvedCounts.isEmpty {
             SyncLogger.log(SyncLogger.inbound, "unresolved links after retry: \(unresolvedCounts)")
         }
@@ -330,6 +382,33 @@ final class InboundChangeApplier {
         return book
     }
 
+    private func fetchOrCreateQuote(recordName: String) -> LLQuote {
+        if let existing: LLQuote = SyncRecordMapping.fetchByRecordName(entityName: "LLQuote", recordName: recordName, context: context) {
+            return existing
+        }
+        let quote = LLQuote(context: context)
+        quote.recordName = recordName
+        return quote
+    }
+
+    private func fetchOrCreatePuzzle(recordName: String) -> LLPuzzle {
+        if let existing: LLPuzzle = SyncRecordMapping.fetchByRecordName(entityName: "LLPuzzle", recordName: recordName, context: context) {
+            return existing
+        }
+        let puzzle = LLPuzzle(context: context)
+        puzzle.recordName = recordName
+        return puzzle
+    }
+
+    private func fetchOrCreateCalendarEvent(recordName: String) -> LLCalendarEvent {
+        if let existing: LLCalendarEvent = SyncRecordMapping.fetchByRecordName(entityName: "LLCalendarEvent", recordName: recordName, context: context) {
+            return existing
+        }
+        let calendarEvent = LLCalendarEvent(context: context)
+        calendarEvent.recordName = recordName
+        return calendarEvent
+    }
+
     // MARK: - Link resolution (falls back to already-synced rows outside this batch)
 
     private func fetchHousehold(recordName: String) -> Household? {
@@ -357,7 +436,9 @@ final class InboundChangeApplier {
         )
     }
 
-    private func applyDeletion(recordName: String) {
+    /// Returns the deleted row's entity name (nil if nothing matched).
+    @discardableResult
+    private func applyDeletion(recordName: String) -> String? {
         // Registry order (parents first), same order as the hand-written list this replaced.
         for entityName in SyncRecordMapping.entities.map(\.entityName) {
             let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
@@ -367,7 +448,8 @@ final class InboundChangeApplier {
             identityIndex.remove(object.objectID.uriRepresentation().absoluteString)
             context.delete(object)
             SyncLogger.log(SyncLogger.inbound, "deleted \(entityName) recordName=\(recordName)")
-            return
+            return entityName
         }
+        return nil
     }
 }

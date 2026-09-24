@@ -34,6 +34,16 @@ struct RootView: View {
             guard let metadata = note.object as? CKShare.Metadata else { return }
             Task { await appState.handleAcceptedShare(metadata: metadata) }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .didApplyInboundCalendarEvents)) { _ in
+            Task {
+                // Inbound saves reach viewContext via a queued perform (SyncController's merge
+                // observer) -- let that land first so the scheduler sees the new events.
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    context.perform { continuation.resume() }
+                }
+                await NotificationScheduler.sync(context: context, household: appState.household)
+            }
+        }
         .onChange(of: appState.route) { _, newRoute in
             guard newRoute == .main else { return }
             presentPostRouteSheet()

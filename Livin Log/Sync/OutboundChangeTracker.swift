@@ -167,6 +167,12 @@ final class OutboundChangeTracker {
             return ref(recordType: SyncRecordMapping.RecordType.tvShow, recordName: show.recordName, household: show.household)
         case let book as BookEntry:
             return ref(recordType: SyncRecordMapping.RecordType.book, recordName: book.recordName, household: book.household)
+        case let quote as LLQuote:
+            return ref(recordType: SyncRecordMapping.RecordType.quote, recordName: quote.recordName, household: quote.household)
+        case let puzzle as LLPuzzle:
+            return ref(recordType: SyncRecordMapping.RecordType.puzzle, recordName: puzzle.recordName, household: puzzle.household)
+        case let event as LLCalendarEvent:
+            return ref(recordType: SyncRecordMapping.RecordType.calendarEvent, recordName: event.recordName, household: event.household)
         default:
             return nil
         }

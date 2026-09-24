@@ -55,6 +55,9 @@
         <attribute name="tag" attributeType="String" defaultValueString="Other" />
         <attribute name="updatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
         <attribute name="year" optional="YES" attributeType="Integer 16" usesScalarValueType="YES" />
+        <attribute name="recordName" optional="YES" attributeType="String" />
+        <attribute name="ckSystemFields" optional="YES" attributeType="Binary" />
+        <attribute name="householdRecordName" optional="YES" attributeType="String" />
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="calendarEvents" inverseEntity="Household" />
     </entity>
     <entity name="LLChild" representedClassName="LLChild" syncable="YES" codeGenerationType="class">
@@ -75,7 +78,11 @@
         <attribute name="notes" optional="YES" attributeType="String" />
         <attribute name="photoData" optional="YES" attributeType="Binary" allowsExternalBinaryDataStorage="YES" />
         <attribute name="pieceCount" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES" />
+        <attribute name="photoUploadedHash" optional="YES" attributeType="String" />
         <attribute name="updatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
+        <attribute name="recordName" optional="YES" attributeType="String" />
+        <attribute name="ckSystemFields" optional="YES" attributeType="Binary" />
+        <attribute name="householdRecordName" optional="YES" attributeType="String" />
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="puzzles" inverseEntity="Household" />
     </entity>
     <entity name="LLQuote" representedClassName="LLQuote" syncable="YES" codeGenerationType="class">
@@ -89,6 +96,9 @@
         <attribute name="text" optional="YES" attributeType="String" />
         <attribute name="updatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
         <attribute name="memberRecordName" optional="YES" attributeType="String" />
+        <attribute name="recordName" optional="YES" attributeType="String" />
+        <attribute name="ckSystemFields" optional="YES" attributeType="Binary" />
+        <attribute name="householdRecordName" optional="YES" attributeType="String" />
         <relationship name="child" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="LLChild" inverseName="quotes" inverseEntity="LLChild" />
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="quotes" inverseEntity="Household" />
         <relationship name="member" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="HouseholdMember" inverseName="quotes" inverseEntity="HouseholdMember" />

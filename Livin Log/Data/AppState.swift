@@ -15,6 +15,9 @@ extension Notification.Name {
     static let didReceiveCloudKitShare = Notification.Name("didReceiveCloudKitShare")
     static let didRequestAppRestart = Notification.Name("didRequestAppRestart")
     static let didRequestCloudKitResync = Notification.Name("didRequestCloudKitResync")
+    /// Posted by InboundChangeApplier after it saves any inbound LLCalendarEvent change, so
+    /// reminders are rescheduled for events added/edited/deleted on another device.
+    static let didApplyInboundCalendarEvents = Notification.Name("didApplyInboundCalendarEvents")
 }
 
 @MainActor
@@ -505,7 +508,7 @@ final class AppState: ObservableObject {
             throw error
         }
 
-        SyncController.shared.deleteLocalHousehold(zoneID: zoneID)
+        await SyncController.shared.deleteLocalHousehold(zoneID: zoneID)
         await finishHouseholdTeardown(reason: "left household")
     }
 

@@ -68,6 +68,33 @@ extension Viewing {
 }
 
 
+// Phase 4a (Batch 2): stable CloudKit record name stamped at insert, like Movie. `id` is
+// stamped too so every synced row has one to round-trip (callers that set their own `id`
+// after insert, e.g. AddEditQuoteView's `if quote.id == nil`, are unaffected).
+extension LLQuote {
+    public override nonisolated func awakeFromInsert() {
+        super.awakeFromInsert()
+        setPrimitiveValue(UUID(), forKey: "id")
+        setPrimitiveValue(UUID().uuidString, forKey: "recordName")
+    }
+}
+
+extension LLPuzzle {
+    public override nonisolated func awakeFromInsert() {
+        super.awakeFromInsert()
+        setPrimitiveValue(UUID(), forKey: "id")
+        setPrimitiveValue(UUID().uuidString, forKey: "recordName")
+    }
+}
+
+extension LLCalendarEvent {
+    public override nonisolated func awakeFromInsert() {
+        super.awakeFromInsert()
+        setPrimitiveValue(UUID(), forKey: "id")
+        setPrimitiveValue(UUID().uuidString, forKey: "recordName")
+    }
+}
+
 extension AppUser {
     public override nonisolated func awakeFromInsert() {
         super.awakeFromInsert()

@@ -92,6 +92,10 @@ final class SyncController: NSObject {
 
         super.init()
 
+        // Before either engine exists (so nothing can be mid-upload): drop photo files staged
+        // by a previous run whose send never reported back.
+        SyncImageAsset.clearStagingDirectory()
+
         let privateStateSerialization = Self.loadEngineState(from: privateEngineStateURL)
         var privateConfig = CKSyncEngine.Configuration(
             database: ckContainer.privateCloudDatabase,
@@ -190,7 +194,7 @@ final class SyncController: NSObject {
             privateEngine.state.remove(pendingDatabaseChanges: staleZoneSaves)
         }
         privateEngine.state.add(pendingDatabaseChanges: [.deleteZone(zoneID)])
-        deleteLocalHousehold(zoneID: zoneID)
+        await deleteLocalHousehold(zoneID: zoneID)
 
         do {
             try await privateEngine.sendChanges()
@@ -226,12 +230,16 @@ final class SyncController: NSObject {
         }
     }
 
-    /// Deletes the local Household for `zoneID` (Cascade rules take its members/movies/etc.) on
-    /// a "sync"-authored context, so OutboundChangeTracker never turns the cascade into
-    /// `deleteRecord`s, and drops any pending record changes still aimed at that zone. Returns
-    /// false if no matching household exists locally or the save failed.
+    /// The single local-household teardown, used by every path: Leave, Delete, shared-zone loss,
+    /// and private-DB zone deletion (.deleted/.purged). Deletes the local Household for `zoneID`
+    /// (Cascade rules take its members/movies/etc.) on a "sync"-authored context, so
+    /// OutboundChangeTracker never turns the cascade into `deleteRecord`s, and drops any pending
+    /// record changes still aimed at that zone. After a successful delete it waits for the
+    /// delete to merge into the main context, then reschedules reminders once, so the
+    /// household's reminders are removed immediately. Returns false if no matching household
+    /// exists locally or the save failed.
     @discardableResult
-    func deleteLocalHousehold(zoneID: CKRecordZone.ID) -> Bool {
+    func deleteLocalHousehold(zoneID: CKRecordZone.ID) async -> Bool {
         let context = persistentContainer.newBackgroundContext()
         context.transactionAuthor = OutboundChangeTracker.transactionAuthor
         var deleted = false
@@ -247,10 +255,19 @@ final class SyncController: NSObject {
             }
         }
         dropPendingRecordChanges(in: zoneID)
-        if deleted {
-            SyncLogger.log(SyncLogger.engine, "deleted local data for household zone=\(zoneID)")
+        guard deleted else { return false }
+        SyncLogger.log(SyncLogger.engine, "deleted local data for household zone=\(zoneID)")
+
+        // The "sync"-authored save reaches viewContext via a queued perform (the merge
+        // observer); flush it so the scheduler no longer sees this household's events.
+        let viewContext = persistentContainer.viewContext
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            viewContext.perform { continuation.resume() }
         }
-        return deleted
+        // `household: nil` = all remaining events, the same scope as the launch-time sync in
+        // RootView (which runs before any household is selected).
+        await NotificationScheduler.sync(context: viewContext, household: nil)
+        return true
     }
 
     private func dropPendingRecordChanges(in zoneID: CKRecordZone.ID) {
@@ -575,7 +592,8 @@ extension SyncController: CKSyncEngineDelegate {
     /// via `deleteLocalHousehold(zoneID:)`, then re-runs AppState.start() so routing re-resolves
     /// (to another household, or onboarding).
     private func handleSharedZoneLoss(_ zoneID: CKRecordZone.ID) async {
-        guard deleteLocalHousehold(zoneID: zoneID) else { return }
+        // deleteLocalHousehold also reschedules reminders once the delete has merged.
+        guard await deleteLocalHousehold(zoneID: zoneID) else { return }
         await MainActor.run {
             NotificationCenter.default.post(name: .didRequestCloudKitResync, object: nil)
         }
@@ -617,6 +635,16 @@ extension SyncController: CKSyncEngineDelegate {
     private func handleSentRecordZoneChanges(_ event: CKSyncEngine.Event.SentRecordZoneChanges, syncEngine: CKSyncEngine) {
         for saved in event.savedRecords {
             refreshSystemFields(saved, forRecordName: saved.recordID.recordName, recordType: saved.recordType)
+            SyncImageAsset.removeStagedAsset(recordName: saved.recordID.recordName)
+            if let upload = SyncImageAsset.pendingPhotoUploads.take(saved.recordID.recordName) {
+                commitPhotoUpload(upload, forRecordName: saved.recordID.recordName, recordType: saved.recordType)
+            }
+        }
+        // A failed save's staged photo and pending hash are no longer needed: the row's
+        // photoUploadedHash is unchanged, so a retry rebuilds the record with the photo again.
+        for failed in event.failedRecordSaves {
+            SyncImageAsset.removeStagedAsset(recordName: failed.record.recordID.recordName)
+            _ = SyncImageAsset.pendingPhotoUploads.take(failed.record.recordID.recordName)
         }
 
         var newPendingRecordChanges: [CKSyncEngine.PendingRecordZoneChange] = []
@@ -735,6 +763,23 @@ extension SyncController: CKSyncEngineDelegate {
         outboundContext.performAndWait {
             guard let object: NSManagedObject = SyncRecordMapping.fetchByRecordName(entityName: entityName, recordName: recordName, context: outboundContext) else { return }
             object.setValue(data, forKey: "ckSystemFields")
+            try? outboundContext.save()
+        }
+    }
+
+    /// The server now holds this photo (or none): record its hash on the row so later edits to
+    /// other fields omit the photo. Local + unsynced field, "sync"-authored save.
+    private func commitPhotoUpload(_ upload: SyncImageAsset.PhotoUpload, forRecordName recordName: String, recordType: CKRecord.RecordType) {
+        let entityName = Self.entityName(for: recordType)
+        let hash: String?
+        switch upload {
+        case .uploaded(let uploadedHash): hash = uploadedHash
+        case .cleared: hash = nil
+        }
+        outboundContext.performAndWait {
+            guard let object: NSManagedObject = SyncRecordMapping.fetchByRecordName(entityName: entityName, recordName: recordName, context: outboundContext),
+                  object.entity.propertiesByName["photoUploadedHash"] != nil else { return }
+            object.setValue(hash, forKey: "photoUploadedHash")
             try? outboundContext.save()
         }
     }
