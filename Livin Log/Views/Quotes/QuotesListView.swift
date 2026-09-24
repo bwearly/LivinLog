@@ -8,7 +8,7 @@ struct QuotesListView: View {
     let household: Household
 
     @FetchRequest private var quotes: FetchedResults<LLQuote>
-    @FetchRequest private var children: FetchedResults<LLChild>
+    @FetchRequest private var members: FetchedResults<HouseholdMember>
 
     @State private var searchText = ""
     @State private var filters = QuoteFilterState()
@@ -16,7 +16,6 @@ struct QuotesListView: View {
     @State private var showingAddQuote = false
     @State private var editingQuote: LLQuote?
     @State private var showingFilters = false
-    @State private var showingChildrenManager = false
     @State private var didRepairHouseholdLinks = false
     @State private var repairError: String?
 
@@ -36,9 +35,12 @@ struct QuotesListView: View {
             animation: .default
         )
 
-        _children = FetchRequest<LLChild>(
-            sortDescriptors: [NSSortDescriptor(keyPath: \LLChild.name, ascending: true)],
-            predicate: NSPredicate(format: "household == %@", household),
+        _members = FetchRequest<HouseholdMember>(
+            sortDescriptors: [NSSortDescriptor(key: "displayName", ascending: true, selector: #selector(NSString.localizedCaseInsensitiveCompare(_:)))],
+            predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [
+                householdScopedPredicate(household, idKey: "householdId"),
+                NSPredicate(format: "isActive == YES")
+            ]),
             animation: .default
         )
     }
@@ -65,11 +67,12 @@ struct QuotesListView: View {
             result = result.filter { $0.speakerNameValue.caseInsensitiveCompare(selectedSpeaker) == .orderedSame }
         }
 
-        if let selectedChildID = filters.selectedChildID {
-            result = result.filter { $0.child?.objectID == selectedChildID }
+        if let selectedMemberID = filters.selectedMemberID {
+            result = result.filter { $0.member?.objectID == selectedMemberID }
 
             if let ageRange = filters.selectedAgeRange {
-                result = result.filter { ageRange.contains(Int($0.ageInMonthsAtSaidAt)) }
+                // No computable age (no member, or no birthday) never matches a range.
+                result = result.filter { quote in quote.speakerAgeInMonths.map(ageRange.contains) ?? false }
             }
         }
 
@@ -176,14 +179,9 @@ struct QuotesListView: View {
                 }
             }
 
+            // Phase 4a: the "Manage Children" button is gone -- ChildrenManagerView is retired;
+            // birthdays now live on household members (Settings).
             ToolbarItemGroup(placement: .navigationBarTrailing) {
-                Button {
-                    showingChildrenManager = true
-                } label: {
-                    Image(systemName: "figure.and.child.holdinghands")
-                }
-                .accessibilityLabel("Manage Children")
-
                 Button {
                     showingAddQuote = true
                 } label: {
@@ -205,23 +203,13 @@ struct QuotesListView: View {
             NavigationStack {
                 QuoteFiltersSheet(
                     filters: $filters,
-                    children: Array(children),
+                    members: Array(members),
                     recentSpeakers: recentSpeakers,
                     allYears: Set(quotes.compactMap { quote in
                         guard let saidAt = quote.saidAt else { return nil }
                         return Calendar.current.component(.year, from: saidAt)
                     })
-                ) {
-                    showingFilters = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        showingChildrenManager = true
-                    }
-                }
-            }
-        }
-        .sheet(isPresented: $showingChildrenManager) {
-            NavigationStack {
-                ChildrenManagerView(household: household)
+                )
             }
         }
         .task {
@@ -343,7 +331,7 @@ private struct QuoteRowView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
-                if let ageText = quote.childAgeLabel {
+                if let ageText = quote.speakerAgeLabel {
                     SharedViews.AccentPill(ageText, systemImage: "clock", style: .quotes)
                 }
 
@@ -362,7 +350,7 @@ private struct QuoteRowView: View {
 struct QuoteFilterState {
     var speakerQuery = ""
     var selectedRecentSpeaker: String?
-    var selectedChildID: NSManagedObjectID?
+    var selectedMemberID: NSManagedObjectID?
     var selectedAgeRange: QuoteAgeRange?
     var selectedYear: Int?
     var sortOption: QuoteSortOption = .newest
@@ -414,9 +402,17 @@ extension LLQuote {
         set { setValue(newValue, forKey: "contextText") }
     }
 
-    var childAgeLabel: String? {
-        guard ageInMonthsAtSaidAt > 0 else { return nil }
-        return "Age \(Int(ageInMonthsAtSaidAt) / 12)y \(Int(ageInMonthsAtSaidAt) % 12)m"
+    /// Phase 4a: the speaker's age when the quote was said, computed at read time. This is the
+    /// one source for the row, detail view, Quote of the Day, share text and the age-range
+    /// filter. nil unless the quote has a member who has a birthday; nil shows no age and never
+    /// matches an age-range filter. The stored `ageInMonthsAtSaidAt` attribute is no longer read
+    /// or written (disabled, not deleted -- it stays in the model, unused and unsynced).
+    var speakerAgeInMonths: Int? {
+        quoteSpeakerAgeInMonths(birthday: member?.value(forKey: "birthday") as? Date, saidAt: saidAt)
+    }
+
+    var speakerAgeLabel: String? {
+        speakerAgeInMonths.map { formattedQuoteAge(months: $0) }
     }
 
     var shareText: String {
@@ -424,8 +420,8 @@ extension LLQuote {
         if let saidAt {
             value += " (\(saidAt.formatted(date: .abbreviated, time: .omitted)))"
         }
-        if let childAgeLabel {
-            value += " • \(childAgeLabel)"
+        if let speakerAgeLabel {
+            value += " • \(speakerAgeLabel)"
         }
         if !contextTextValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             value += "\nContext: \(contextTextValue)"
@@ -444,6 +440,18 @@ extension LLChild {
         get { (value(forKey: "birthday") as? Date) ?? .now }
         set { setValue(newValue, forKey: "birthday") }
     }
+}
+
+/// The single quote-age calculation (Phase 4a): whole months from `birthday` to `saidAt`, or
+/// nil when either is missing or the quote predates the birthday. Used by
+/// `LLQuote.speakerAgeInMonths` and by AddEditQuoteView's live preview of an unsaved quote.
+func quoteSpeakerAgeInMonths(birthday: Date?, saidAt: Date?) -> Int? {
+    guard let birthday, let saidAt, saidAt >= birthday else { return nil }
+    return Int(ageInMonths(birthday: birthday, at: saidAt))
+}
+
+func formattedQuoteAge(months: Int) -> String {
+    "Age \(months / 12)y \(months % 12)m"
 }
 
 func ageInMonths(birthday: Date, at referenceDate: Date, calendar: Calendar = .current) -> Int32 {

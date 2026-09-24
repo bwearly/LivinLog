@@ -38,10 +38,12 @@
         <attribute name="hasOwnIPhone" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES" />
         <attribute name="invitedAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
         <attribute name="inviteParticipantID" optional="YES" attributeType="String" />
+        <attribute name="birthday" optional="YES" attributeType="Date" usesScalarValueType="NO" />
         <relationship name="feedbacks" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="MovieFeedback" inverseName="member" inverseEntity="MovieFeedback" />
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="members" inverseEntity="Household" />
         <relationship name="memberships" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="HouseholdMembership" inverseName="memberProfile" inverseEntity="HouseholdMembership" />
         <relationship name="bookEntries" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="BookEntry" inverseName="ownerMember" inverseEntity="BookEntry" />
+        <relationship name="quotes" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="LLQuote" inverseName="member" inverseEntity="LLQuote" />
     </entity>
     <entity name="LLCalendarEvent" representedClassName="LLCalendarEvent" syncable="YES" codeGenerationType="class">
         <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
@@ -86,8 +88,10 @@
         <attribute name="speakerName" optional="YES" attributeType="String" />
         <attribute name="text" optional="YES" attributeType="String" />
         <attribute name="updatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />
+        <attribute name="memberRecordName" optional="YES" attributeType="String" />
         <relationship name="child" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="LLChild" inverseName="quotes" inverseEntity="LLChild" />
         <relationship name="household" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Household" inverseName="quotes" inverseEntity="Household" />
+        <relationship name="member" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="HouseholdMember" inverseName="quotes" inverseEntity="HouseholdMember" />
     </entity>
     <entity name="Movie" representedClassName="Movie" syncable="YES" codeGenerationType="class">
         <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO" />

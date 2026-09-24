@@ -5,10 +5,9 @@ struct QuoteFiltersSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @Binding var filters: QuoteFilterState
-    let children: [LLChild]
+    let members: [HouseholdMember]
     let recentSpeakers: [String]
     let allYears: Set<Int>
-    let onManageChildren: () -> Void
 
     var body: some View {
         Form {
@@ -25,25 +24,21 @@ struct QuoteFiltersSheet: View {
                 }
             }
 
-            Section("Child") {
-                Picker("Child", selection: $filters.selectedChildID) {
+            Section("Person") {
+                Picker("Person", selection: $filters.selectedMemberID) {
                     Text("Any").tag(Optional<NSManagedObjectID>.none)
-                    ForEach(children, id: \.objectID) { child in
-                        Text(child.nameValue).tag(Optional(child.objectID))
+                    ForEach(members, id: \.objectID) { member in
+                        Text(member.displayName ?? "Unnamed").tag(Optional(member.objectID))
                     }
                 }
 
-                if filters.selectedChildID != nil {
+                if filters.selectedMemberID != nil {
                     Picker("Age range", selection: $filters.selectedAgeRange) {
                         Text("Any").tag(Optional<QuoteAgeRange>.none)
                         ForEach(QuoteAgeRange.allCases) { range in
                             Text(range.rawValue).tag(Optional(range))
                         }
                     }
-                }
-
-                Button("Manage Children") {
-                    onManageChildren()
                 }
             }
 

@@ -57,7 +57,7 @@ enum SyncRecordMapping {
         EntitySpec(
             entityName: "HouseholdMember",
             recordType: RecordType.member,
-            syncedProperties: ["displayName", "claimedByAppUserId", "isActive", "createdAt", "household", "avatar", "linkedUserRecordName", "role", "hasOwnIPhone", "invitedAt", "inviteParticipantID"]
+            syncedProperties: ["displayName", "claimedByAppUserId", "isActive", "createdAt", "household", "avatar", "linkedUserRecordName", "role", "hasOwnIPhone", "invitedAt", "inviteParticipantID", "birthday"]
         ),
         EntitySpec(
             entityName: "Movie",
@@ -211,6 +211,7 @@ enum SyncRecordMapping {
         record["hasOwnIPhone"] = member.value(forKey: "hasOwnIPhone") as? Bool
         record["invitedAt"] = member.value(forKey: "invitedAt") as? Date
         record["inviteParticipantID"] = member.value(forKey: "inviteParticipantID") as? String
+        record["birthday"] = member.value(forKey: "birthday") as? Date
         record["id"] = member.id?.uuidString
         return record
     }
@@ -227,6 +228,7 @@ enum SyncRecordMapping {
         member.setValue((record["hasOwnIPhone"] as? Bool) ?? false, forKey: "hasOwnIPhone")
         member.setValue(record["invitedAt"] as? Date, forKey: "invitedAt")
         member.setValue(record["inviteParticipantID"] as? String, forKey: "inviteParticipantID")
+        member.setValue(record["birthday"] as? Date, forKey: "birthday")
         member.ckSystemFields = encodeSystemFields(record)
         if let parsedID = parsedID(from: record) { member.id = parsedID }
         // Persisted unconditionally (even when `household` is nil) so a later inbound batch can

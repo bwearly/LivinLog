@@ -19,11 +19,7 @@ struct QuoteDetailView: View {
             Section("Details") {
                 LabeledContent("Said at", value: (quote.saidAt ?? .now).formatted(date: .abbreviated, time: .shortened))
 
-                if let child = quote.child {
-                    LabeledContent("Child", value: child.nameValue)
-                }
-
-                if let age = quote.childAgeLabel {
+                if let age = quote.speakerAgeLabel {
                     LabeledContent("Age", value: age)
                 }
 

@@ -797,6 +797,7 @@ private struct MembersRosterSection: View {
     @State private var pendingRemoveAccess: HouseholdMember?
     @State private var isRemovingAccess = false
     @State private var errorText: String?
+    @State private var editingMember: HouseholdMember?
 
     init(household: Household) {
         self.household = household
@@ -853,6 +854,12 @@ private struct MembersRosterSection: View {
         } message: {
             Text(errorText ?? "")
         }
+        .sheet(item: $editingMember) { target in
+            NavigationStack {
+                EditProfileView(member: target, showsCancel: true)
+            }
+            .environmentObject(appState)
+        }
     }
 
     @ViewBuilder
@@ -860,18 +867,21 @@ private struct MembersRosterSection: View {
         let status = MemberStatus.resolve(for: managedMember, currentUserRecordName: appState.currentUserRecordName)
         let canEditPhoneToggle = isCurrentUserLeader || managedMember.objectID == appState.member?.objectID
 
+        let canEditProfile = appState.canEditProfile(of: managedMember)
+
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
-                Image(systemName: status.isLeader ? "crown.fill" : "person.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(status.isLeader ? .yellow : .secondary)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(managedMember.displayName ?? "Unnamed")
-                        .font(.body)
-                    Text(status.isLeader ? "\(status.label) · Leader" : status.label)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                // Tapping the identity part edits the profile (name, color, birthday) when
+                // allowed; borderless so it doesn't swallow the row's Invite button / toggle.
+                if canEditProfile {
+                    Button {
+                        editingMember = managedMember
+                    } label: {
+                        memberIdentity(managedMember, status: status, showsChevron: true)
+                    }
+                    .buttonStyle(.borderless)
+                } else {
+                    memberIdentity(managedMember, status: status, showsChevron: false)
                 }
 
                 Spacer()
@@ -897,6 +907,29 @@ private struct MembersRosterSection: View {
                     pendingRemoveAccess = managedMember
                 }
                 .disabled(isRemovingAccess)
+            }
+        }
+    }
+
+    private func memberIdentity(_ managedMember: HouseholdMember, status: MemberStatus, showsChevron: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: status.isLeader ? "crown.fill" : "person.circle.fill")
+                .font(.title3)
+                .foregroundStyle(status.isLeader ? .yellow : .secondary)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(managedMember.displayName ?? "Unnamed")
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                Text(status.isLeader ? "\(status.label) · Leader" : status.label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
     }

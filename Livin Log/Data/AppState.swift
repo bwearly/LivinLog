@@ -407,18 +407,56 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Edits the current user's own HouseholdMember.
-    func updateOwnProfile(name: String, avatar: String) throws {
-        guard let member else {
-            throw NSError(domain: "AppState", code: 122, userInfo: [NSLocalizedDescriptionKey: "Could not resolve your member profile."])
+    /// Who may edit a member's profile (name, color, birthday): yourself; the leader, for
+    /// anyone; and anyone, for a member not linked to an iCloud account (a no-phone member such
+    /// as a child, or someone not yet joined) -- mirroring `IdentityStore.canAct`'s rule that an
+    /// unlinked member is actionable by the whole household. A linked adult's profile is theirs.
+    func canEditProfile(of target: HouseholdMember) -> Bool {
+        guard let member else { return false }
+        if target.objectID == member.objectID { return true }
+        if (member.value(forKey: "role") as? String) == "leader" { return true }
+        let linked = (target.value(forKey: "linkedUserRecordName") as? String).flatMap { $0.isEmpty ? nil : $0 }
+        return linked == nil
+    }
+
+    /// Edits a member's profile (see `canEditProfile(of:)`). `birthday` nil clears it.
+    func updateMemberProfile(_ target: HouseholdMember, name: String, avatar: String, birthday: Date?) throws {
+        guard canEditProfile(of: target) else {
+            throw NSError(domain: "AppState", code: 122, userInfo: [NSLocalizedDescriptionKey: "You can't edit this member's profile."])
         }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw NSError(domain: "AppState", code: 123, userInfo: [NSLocalizedDescriptionKey: "Name can't be empty."])
         }
-        member.displayName = trimmed
-        member.setValue(avatar, forKey: "avatar")
-        try container.viewContext.save()
+        let context = container.viewContext
+        guard let scoped = try context.existingObject(with: target.objectID) as? HouseholdMember else {
+            throw NSError(domain: "AppState", code: 128, userInfo: [NSLocalizedDescriptionKey: "That member no longer exists."])
+        }
+        // Assign only what actually differs, so an unchanged Save never produces a sync.
+        let newBirthday = birthday.map(Self.normalizedBirthday)
+        var didChange = false
+        if scoped.displayName != trimmed {
+            scoped.displayName = trimmed
+            didChange = true
+        }
+        if (scoped.value(forKey: "avatar") as? String) != avatar {
+            scoped.setValue(avatar, forKey: "avatar")
+            didChange = true
+        }
+        if (scoped.value(forKey: "birthday") as? Date) != newBirthday {
+            scoped.setValue(newBirthday, forKey: "birthday")
+            didChange = true
+        }
+        guard didChange else { return }
+        try context.save()
+    }
+
+    /// Stores a birthday as noon local time on that day, so a small time-zone difference
+    /// between household devices can't shift it to the previous/next calendar day.
+    static func normalizedBirthday(_ date: Date) -> Date {
+        let calendar = Calendar.current
+        let day = calendar.dateComponents([.year, .month, .day], from: date)
+        return calendar.date(from: DateComponents(year: day.year, month: day.month, day: day.day, hour: 12)) ?? date
     }
 
     // MARK: - Settings: leave / delete

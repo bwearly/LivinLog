@@ -65,8 +65,8 @@ struct QuoteOfDayCard: View {
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
 
-                                if let childAgeLabel = quote.childAgeLabel {
-                                    Text(childAgeLabel)
+                                if let speakerAgeLabel = quote.speakerAgeLabel {
+                                    Text(speakerAgeLabel)
                                         .font(.caption.weight(.semibold))
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 4)

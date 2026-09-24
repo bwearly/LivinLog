@@ -1,3 +1,8 @@
+// Phase 4a: RETIRED -- disabled, not deleted. Nothing presents this view anymore (its
+// entry points in QuotesListView/QuoteFiltersSheet were removed). Children are now ordinary
+// household members with an optional birthday (Settings), and quotes link to a member. The
+// LLChild entity stays in the model, unused.
+
 import SwiftUI
 import CoreData
 
