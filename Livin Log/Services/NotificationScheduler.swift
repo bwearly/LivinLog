@@ -1,6 +1,7 @@
 import Foundation
 import CoreData
 import UserNotifications
+import UIKit
 
 enum NotificationScheduler {
     static let globalEnabledKey = "ll_notify_enabled"
@@ -52,6 +53,58 @@ enum NotificationScheduler {
             return false
         }
     }
+
+    static var isGloballyEnabled: Bool {
+        UserDefaults.standard.object(forKey: globalEnabledKey) as? Bool ?? false
+    }
+
+    /// Turns household-wide reminders on: asks for permission if it hasn't been asked yet, and
+    /// only flips `globalEnabledKey` on when permission is granted. Returns false when denied
+    /// (the caller offers Open Settings).
+    @MainActor
+    static func enableGlobally() async -> Bool {
+        guard await requestAuthorizationIfNeeded() else { return false }
+        UserDefaults.standard.set(true, forKey: globalEnabledKey)
+        return true
+    }
+
+    @MainActor
+    static func disableGlobally() async {
+        UserDefaults.standard.set(false, forKey: globalEnabledKey)
+        await removeAllEventRequests()
+    }
+
+    /// This app's page in iOS Settings (notifications section).
+    static var systemNotificationSettingsURL: URL? {
+        URL(string: UIApplication.openNotificationSettingsURLString)
+    }
+
+#if DEBUG
+    /// Debug-only: fires a notification ~1s from now (moved here from CalendarMainView's old
+    /// test bell; now the Calendar bell's long-press menu item). Shows in the foreground via
+    /// NotificationPresentationDelegate.
+    static func sendTestNotification() {
+        let center = UNUserNotificationCenter.current()
+        Task {
+            guard await requestAuthorizationIfNeeded() else { return }
+
+            let content = UNMutableNotificationContent()
+            content.title = "Livin Log"
+            content.body = "Test notification from CalendarMainView"
+            content.sound = .default
+
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+            let request = UNNotificationRequest(identifier: "LL-TEST-NOTIFICATION", content: content, trigger: trigger)
+
+            center.removePendingNotificationRequests(withIdentifiers: ["LL-TEST-NOTIFICATION"])
+            do {
+                try await center.add(request)
+            } catch {
+                log("test notification failed: \(error.localizedDescription)")
+            }
+        }
+    }
+#endif
 
     static func removeAllEventRequests() async {
         let center = UNUserNotificationCenter.current()

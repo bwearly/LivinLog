@@ -913,17 +913,24 @@ private struct MembersRosterSection: View {
 
     private func memberIdentity(_ managedMember: HouseholdMember, status: MemberStatus, showsChevron: Bool) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: status.isLeader ? "crown.fill" : "person.circle.fill")
-                .font(.title3)
-                .foregroundStyle(status.isLeader ? .yellow : .secondary)
+            // The member's own avatar color (synced HouseholdMember.avatar), so a participant's
+            // color change shows here. The leader crown sits by the status label instead.
+            MemberAvatarBadge(name: managedMember.displayName ?? "", avatar: managedMember.value(forKey: "avatar") as? String)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(managedMember.displayName ?? "Unnamed")
                     .font(.body)
                     .foregroundStyle(.primary)
-                Text(status.isLeader ? "\(status.label) · Leader" : status.label)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text(status.isLeader ? "\(status.label) · Leader" : status.label)
+                    if status.isLeader {
+                        Image(systemName: "crown.fill")
+                            .foregroundStyle(.yellow)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             if showsChevron {

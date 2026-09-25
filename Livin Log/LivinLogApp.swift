@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // initialize now, not on first incidental access, so its remote-change observer is
         // wired up before any Movie/Household write can happen.
         _ = SyncController.shared
+        NotificationPresentationDelegate.install()
         return true
     }
 

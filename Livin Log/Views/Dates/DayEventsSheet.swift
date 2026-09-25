@@ -37,18 +37,24 @@ struct DayEventsSheet: View {
                     ContentUnavailableView("No Events", systemImage: "calendar.badge.exclamationmark", description: Text("No events for this date yet."))
                 } else {
                     ForEach(events) { event in
-                        Button {
-                            activeSheet = .edit(event)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(event.nameText)
-                                    .font(.headline)
-                                Text(event.secondaryInfo)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            Button {
+                                activeSheet = .edit(event)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(event.nameText)
+                                        .font(.headline)
+                                    Text(event.secondaryInfo)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
+
+                            EventReminderBell(event: event, household: household)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }

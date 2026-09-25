@@ -48,27 +48,33 @@ struct EventListView: View {
                                     .font(.headline)
 
                                 ForEach(dayGroup.events) { event in
-                                    Button {
-                                        editingEvent = event
-                                    } label: {
-                                        HStack(spacing: 10) {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(event.nameText)
-                                                    .foregroundStyle(.primary)
-                                                Text(event.secondaryInfo)
-                                                    .font(.caption)
-                                                    .foregroundStyle(.secondary)
+                                    HStack(spacing: 4) {
+                                        Button {
+                                            editingEvent = event
+                                        } label: {
+                                            HStack(spacing: 10) {
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    Text(event.nameText)
+                                                        .foregroundStyle(.primary)
+                                                    Text(event.secondaryInfo)
+                                                        .font(.caption)
+                                                        .foregroundStyle(.secondary)
+                                                }
+
+                                                Spacer(minLength: 0)
+
+                                                Image(systemName: "chevron.right")
+                                                    .font(.caption.weight(.semibold))
+                                                    .foregroundStyle(.tertiary)
                                             }
-
-                                            Spacer(minLength: 0)
-
-                                            Image(systemName: "chevron.right")
-                                                .font(.caption.weight(.semibold))
-                                                .foregroundStyle(.tertiary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .contentShape(Rectangle())
                                         }
-                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .buttonStyle(.plain)
+
+                                        // Outside the row's edit Button so tapping it doesn't open the editor.
+                                        EventReminderBell(event: event, household: household)
                                     }
-                                    .buttonStyle(.plain)
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)

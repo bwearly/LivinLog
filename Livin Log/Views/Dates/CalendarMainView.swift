@@ -89,14 +89,9 @@ struct CalendarMainView: View {
 
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 12) {
-#if DEBUG
-                        Button {
-                            sendTestNotification()
-                        } label: {
-                            Image(systemName: "bell.badge")
-                        }
-                        .accessibilityLabel("Send Test Notification")
-#endif
+                        // Household-wide reminders on/off; Debug builds also get
+                        // "Send Test Notification" on long-press.
+                        RemindersToolbarBell(household: household)
 
                         Button {
                             activeSheet = .add(
@@ -166,46 +161,6 @@ struct CalendarMainView: View {
             .filter { Int($0.month) == month && Int($0.day) == day }
             .sorted { $0.createdAtValue < $1.createdAtValue }
     }
-
-#if DEBUG
-    private func sendTestNotification() {
-        let center = UNUserNotificationCenter.current()
-
-        Task {
-            let settings = await center.notificationSettings()
-
-            // Request permission if needed
-            if settings.authorizationStatus == .notDetermined {
-                do {
-                    _ = try await center.requestAuthorization(options: [.alert, .sound, .badge])
-                } catch {
-                    return
-                }
-            }
-
-            // Build a simple local notification that fires shortly
-            let content = UNMutableNotificationContent()
-            content.title = "Livin Log"
-            content.body = "Test notification from CalendarMainView"
-            content.sound = .default
-
-            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
-            let request = UNNotificationRequest(
-                identifier: "LL-TEST-NOTIFICATION",
-                content: content,
-                trigger: trigger
-            )
-
-            // Replace any existing pending test request
-            center.removePendingNotificationRequests(withIdentifiers: ["LL-TEST-NOTIFICATION"])
-            do {
-                try await center.add(request)
-            } catch {
-                // no-op in debug
-            }
-        }
-    }
-#endif
 }
 
 struct CalendarDaySelection: Identifiable {

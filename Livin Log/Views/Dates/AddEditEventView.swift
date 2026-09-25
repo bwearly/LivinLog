@@ -22,6 +22,7 @@ struct AddEditEventView: View {
     @State private var yearText = ""
     @State private var tag = "Other"
     @State private var notificationsEnabled = true
+    @State private var showNotificationsDeniedAlert = false
 
     private let tags = ["Birthday", "Anniversary", "Family", "Milestone", "Travel", "Medical", "School", "Work", "Other"]
     private let persistentContainer = PersistenceController.shared.container
@@ -67,7 +68,15 @@ struct AddEditEventView: View {
                         }
                     }
 
-                    Toggle("Notify for this event", isOn: $notificationsEnabled)
+                    // Custom binding: only a user flip reaches `set`, so loadExisting() and
+                    // the default initial value never trigger the permission flow.
+                    Toggle("Notify for this event", isOn: Binding(
+                        get: { notificationsEnabled },
+                        set: { newValue in
+                            notificationsEnabled = newValue
+                            if newValue { enableRemindersIfNeeded() }
+                        }
+                    ))
                 }
 
                 if editingEvent != nil {
@@ -94,6 +103,20 @@ struct AddEditEventView: View {
                 }
             }
             .onAppear(perform: loadExisting)
+            .notificationsDeniedAlert(isPresented: $showNotificationsDeniedAlert)
+        }
+    }
+
+    /// Same rule as EventReminderBell: an event's reminder can't fire while household-wide
+    /// reminders are off, so actively turning one on turns those on too (asking permission if
+    /// needed). If permission is denied, the toggle goes back off and Open Settings is offered.
+    private func enableRemindersIfNeeded() {
+        guard !NotificationScheduler.isGloballyEnabled else { return }
+        Task { @MainActor in
+            if !(await NotificationScheduler.enableGlobally()) {
+                notificationsEnabled = false
+                showNotificationsDeniedAlert = true
+            }
         }
     }
 
